@@ -1,0 +1,4 @@
+# Direct test dependency lock captured from E:\Anaconda\envs\torch128 on 2026-08-19.
+pytest==9.1.0
+pytest-asyncio==1.4.0
+

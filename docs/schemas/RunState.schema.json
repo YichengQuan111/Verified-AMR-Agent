@@ -1,0 +1,1065 @@
+{
+  "$defs": {
+    "AMRState": {
+      "additionalProperties": false,
+      "description": "一台 AMR 在某个确定时刻的完整状态快照。",
+      "properties": {
+        "amr_id": {
+          "description": "AMR 的稳定唯一标识",
+          "minLength": 1,
+          "title": "Amr Id",
+          "type": "string"
+        },
+        "position": {
+          "$ref": "#/$defs/GridPosition"
+        },
+        "heading": {
+          "$ref": "#/$defs/Heading"
+        },
+        "battery": {
+          "description": "剩余电量百分比",
+          "maximum": 100,
+          "minimum": 0,
+          "title": "Battery",
+          "type": "number"
+        },
+        "load": {
+          "description": "当前载荷，单位为千克",
+          "minimum": 0,
+          "title": "Load",
+          "type": "number"
+        },
+        "task_status": {
+          "$ref": "#/$defs/AMRTaskStatus"
+        },
+        "health_status": {
+          "$ref": "#/$defs/HealthStatus"
+        },
+        "connection_status": {
+          "$ref": "#/$defs/ConnectionStatus"
+        }
+      },
+      "required": [
+        "amr_id",
+        "position",
+        "heading",
+        "battery",
+        "load",
+        "task_status",
+        "health_status",
+        "connection_status"
+      ],
+      "title": "AMRState",
+      "type": "object"
+    },
+    "AMRTaskStatus": {
+      "description": "P0 场景中 AMR 可观测到的任务阶段。",
+      "enum": [
+        "IDLE",
+        "TO_PICKUP",
+        "LOADING",
+        "TO_DROPOFF",
+        "UNLOADING",
+        "TO_CHARGE",
+        "CHARGING",
+        "OFFLINE"
+      ],
+      "title": "AMRTaskStatus",
+      "type": "string"
+    },
+    "ApprovalRequirement": {
+      "additionalProperties": false,
+      "description": "任务合同中的人工审批门禁。",
+      "properties": {
+        "required": {
+          "title": "Required",
+          "type": "boolean"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Reason"
+        },
+        "required_role": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UserRole"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "required",
+        "reason",
+        "required_role"
+      ],
+      "title": "ApprovalRequirement",
+      "type": "object"
+    },
+    "ConnectionStatus": {
+      "description": "AMR 与控制系统的连接状态。",
+      "enum": [
+        "ONLINE",
+        "DEGRADED",
+        "OFFLINE"
+      ],
+      "title": "ConnectionStatus",
+      "type": "string"
+    },
+    "ConstraintViolation": {
+      "additionalProperties": false,
+      "description": "验证器或仿真器发现的一条可定位约束违规。",
+      "properties": {
+        "code": {
+          "minLength": 1,
+          "title": "Code",
+          "type": "string"
+        },
+        "message": {
+          "minLength": 1,
+          "title": "Message",
+          "type": "string"
+        },
+        "task_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Task Id"
+        },
+        "amr_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Amr Id"
+        },
+        "evidence": {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "title": "Evidence",
+          "type": "object"
+        }
+      },
+      "required": [
+        "code",
+        "message",
+        "task_id",
+        "amr_id",
+        "evidence"
+      ],
+      "title": "ConstraintViolation",
+      "type": "object"
+    },
+    "ExecutionBudgets": {
+      "additionalProperties": false,
+      "description": "一次 Agent 运行的硬预算；所有计数都是上限。",
+      "properties": {
+        "max_total_seconds": {
+          "exclusiveMinimum": 0,
+          "title": "Max Total Seconds",
+          "type": "integer"
+        },
+        "max_input_tokens": {
+          "exclusiveMinimum": 0,
+          "title": "Max Input Tokens",
+          "type": "integer"
+        },
+        "max_output_tokens": {
+          "exclusiveMinimum": 0,
+          "title": "Max Output Tokens",
+          "type": "integer"
+        },
+        "max_tool_steps": {
+          "exclusiveMinimum": 0,
+          "title": "Max Tool Steps",
+          "type": "integer"
+        },
+        "max_replans": {
+          "maximum": 2,
+          "minimum": 0,
+          "title": "Max Replans",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "max_total_seconds",
+        "max_input_tokens",
+        "max_output_tokens",
+        "max_tool_steps",
+        "max_replans"
+      ],
+      "title": "ExecutionBudgets",
+      "type": "object"
+    },
+    "FallbackStrategy": {
+      "description": "步骤失败后允许选择的确定性处置方向。",
+      "enum": [
+        "retry",
+        "replan",
+        "fallback",
+        "human",
+        "fatal"
+      ],
+      "title": "FallbackStrategy",
+      "type": "string"
+    },
+    "GridPosition": {
+      "additionalProperties": false,
+      "description": "30 × 20 仓库栅格中的一个合法位置。\n\n坐标从 0 开始，所以宽度为 30 时 x 最大只能是 29，高度为 20 时 y 最大只能是 19。",
+      "properties": {
+        "x": {
+          "description": "横坐标，允许 0～29",
+          "exclusiveMaximum": 30,
+          "minimum": 0,
+          "title": "X",
+          "type": "integer"
+        },
+        "y": {
+          "description": "纵坐标，允许 0～19",
+          "exclusiveMaximum": 20,
+          "minimum": 0,
+          "title": "Y",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "x",
+        "y"
+      ],
+      "title": "GridPosition",
+      "type": "object"
+    },
+    "Heading": {
+      "description": "AMR 的四个栅格朝向，单位为度。",
+      "enum": [
+        0,
+        90,
+        180,
+        270
+      ],
+      "title": "Heading",
+      "type": "integer"
+    },
+    "HealthStatus": {
+      "description": "AMR 自检健康状态。",
+      "enum": [
+        "HEALTHY",
+        "DEGRADED",
+        "FAULT"
+      ],
+      "title": "HealthStatus",
+      "type": "string"
+    },
+    "JsonValue": {},
+    "Observation": {
+      "additionalProperties": false,
+      "description": "一次工具、仿真、验证或人工操作产生的结构化状态证据。",
+      "properties": {
+        "observation_id": {
+          "minLength": 1,
+          "title": "Observation Id",
+          "type": "string"
+        },
+        "run_id": {
+          "minLength": 1,
+          "title": "Run Id",
+          "type": "string"
+        },
+        "task_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Task Id"
+        },
+        "source": {
+          "$ref": "#/$defs/ObservationSource"
+        },
+        "observed_at": {
+          "format": "date-time",
+          "title": "Observed At",
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/ObservationStatus"
+        },
+        "summary": {
+          "minLength": 1,
+          "title": "Summary",
+          "type": "string"
+        },
+        "state_delta": {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "title": "State Delta",
+          "type": "object"
+        },
+        "evidence_refs": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Evidence Refs",
+          "type": "array"
+        },
+        "tool_result": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ToolResult"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "violations": {
+          "items": {
+            "$ref": "#/$defs/ConstraintViolation"
+          },
+          "title": "Violations",
+          "type": "array"
+        },
+        "requires_replan": {
+          "title": "Requires Replan",
+          "type": "boolean"
+        },
+        "requires_human": {
+          "title": "Requires Human",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "observation_id",
+        "run_id",
+        "task_id",
+        "source",
+        "observed_at",
+        "status",
+        "summary",
+        "state_delta",
+        "evidence_refs",
+        "tool_result",
+        "violations",
+        "requires_replan",
+        "requires_human"
+      ],
+      "title": "Observation",
+      "type": "object"
+    },
+    "ObservationSource": {
+      "description": "状态证据的来源。",
+      "enum": [
+        "tool",
+        "simulator",
+        "validator",
+        "human",
+        "system"
+      ],
+      "title": "ObservationSource",
+      "type": "string"
+    },
+    "ObservationStatus": {
+      "description": "一次观测对当前执行的判断。",
+      "enum": [
+        "ok",
+        "warning",
+        "error",
+        "blocked"
+      ],
+      "title": "ObservationStatus",
+      "type": "string"
+    },
+    "PlanTask": {
+      "additionalProperties": false,
+      "description": "计划 DAG 中一个可独立校验、执行和追踪的原子步骤。",
+      "properties": {
+        "task_id": {
+          "minLength": 1,
+          "title": "Task Id",
+          "type": "string"
+        },
+        "dependencies": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Dependencies",
+          "type": "array"
+        },
+        "tool_name": {
+          "$ref": "#/$defs/ToolName"
+        },
+        "tool_arguments": {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "title": "Tool Arguments",
+          "type": "object"
+        },
+        "target_amr": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Target Amr"
+        },
+        "pickup": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Pickup"
+        },
+        "dropoff": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Dropoff"
+        },
+        "workstation": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Workstation"
+        },
+        "preconditions": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Preconditions",
+          "type": "array"
+        },
+        "completion_criteria": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Completion Criteria",
+          "type": "array"
+        },
+        "time_budget": {
+          "description": "此步骤最多允许的执行时间，单位为秒",
+          "exclusiveMinimum": 0,
+          "title": "Time Budget",
+          "type": "integer"
+        },
+        "energy_budget": {
+          "description": "此步骤最多允许消耗的电量百分比",
+          "maximum": 100,
+          "minimum": 0,
+          "title": "Energy Budget",
+          "type": "number"
+        },
+        "risk_level": {
+          "$ref": "#/$defs/RiskLevel"
+        },
+        "approval_required": {
+          "title": "Approval Required",
+          "type": "boolean"
+        },
+        "fallback_strategy": {
+          "$ref": "#/$defs/FallbackStrategy"
+        },
+        "status": {
+          "$ref": "#/$defs/PlanTaskStatus"
+        },
+        "evidence_refs": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Evidence Refs",
+          "type": "array"
+        },
+        "effect_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Effect Id"
+        }
+      },
+      "required": [
+        "task_id",
+        "dependencies",
+        "tool_name",
+        "tool_arguments",
+        "target_amr",
+        "pickup",
+        "dropoff",
+        "workstation",
+        "preconditions",
+        "completion_criteria",
+        "time_budget",
+        "energy_budget",
+        "risk_level",
+        "approval_required",
+        "fallback_strategy",
+        "status",
+        "evidence_refs",
+        "effect_id"
+      ],
+      "title": "PlanTask",
+      "type": "object"
+    },
+    "PlanTaskStatus": {
+      "description": "计划子任务在运行生命周期中的状态。",
+      "enum": [
+        "pending",
+        "ready",
+        "running",
+        "waiting_approval",
+        "completed",
+        "failed",
+        "cancelled"
+      ],
+      "title": "PlanTaskStatus",
+      "type": "string"
+    },
+    "RiskLevel": {
+      "description": "任务或计划步骤的风险等级。",
+      "enum": [
+        "low",
+        "medium",
+        "high",
+        "critical"
+      ],
+      "title": "RiskLevel",
+      "type": "string"
+    },
+    "RunStatus": {
+      "description": "一次 Agent 运行的生命周期状态。",
+      "enum": [
+        "created",
+        "planning",
+        "validating",
+        "executing",
+        "waiting_approval",
+        "replanning",
+        "completed",
+        "failed",
+        "cancelled"
+      ],
+      "title": "RunStatus",
+      "type": "string"
+    },
+    "TaskConstraints": {
+      "additionalProperties": false,
+      "description": "P0 固定场景中可由确定性校验器检查的业务约束。",
+      "properties": {
+        "map_width": {
+          "const": 30,
+          "title": "Map Width",
+          "type": "integer"
+        },
+        "map_height": {
+          "const": 20,
+          "title": "Map Height",
+          "type": "integer"
+        },
+        "blocked_cells": {
+          "items": {
+            "$ref": "#/$defs/GridPosition"
+          },
+          "title": "Blocked Cells",
+          "type": "array"
+        },
+        "minimum_battery_percent": {
+          "maximum": 100,
+          "minimum": 0,
+          "title": "Minimum Battery Percent",
+          "type": "number"
+        },
+        "maximum_load_kg": {
+          "exclusiveMinimum": 0,
+          "title": "Maximum Load Kg",
+          "type": "number"
+        },
+        "enforce_time_windows": {
+          "title": "Enforce Time Windows",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "map_width",
+        "map_height",
+        "blocked_cells",
+        "minimum_battery_percent",
+        "maximum_load_kg",
+        "enforce_time_windows"
+      ],
+      "title": "TaskConstraints",
+      "type": "object"
+    },
+    "TaskContract": {
+      "additionalProperties": false,
+      "description": "把自然语言目标冻结为可验证、带预算的业务合同。",
+      "properties": {
+        "contract_id": {
+          "minLength": 1,
+          "title": "Contract Id",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": "1.0",
+          "default": "1.0",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "goal": {
+          "minLength": 1,
+          "title": "Goal",
+          "type": "string"
+        },
+        "orders": {
+          "items": {
+            "$ref": "#/$defs/TransportOrder"
+          },
+          "minItems": 1,
+          "title": "Orders",
+          "type": "array"
+        },
+        "environment_ref": {
+          "minLength": 1,
+          "title": "Environment Ref",
+          "type": "string"
+        },
+        "constraints": {
+          "$ref": "#/$defs/TaskConstraints"
+        },
+        "completion_criteria": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Completion Criteria",
+          "type": "array"
+        },
+        "risk_level": {
+          "$ref": "#/$defs/RiskLevel"
+        },
+        "approval": {
+          "$ref": "#/$defs/ApprovalRequirement"
+        },
+        "budgets": {
+          "$ref": "#/$defs/ExecutionBudgets"
+        },
+        "missing_information": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Missing Information",
+          "type": "array"
+        }
+      },
+      "required": [
+        "contract_id",
+        "goal",
+        "orders",
+        "environment_ref",
+        "constraints",
+        "completion_criteria",
+        "risk_level",
+        "approval",
+        "budgets",
+        "missing_information"
+      ],
+      "title": "TaskContract",
+      "type": "object"
+    },
+    "ToolError": {
+      "additionalProperties": false,
+      "description": "工具失败时可序列化、可分类的错误证据。",
+      "properties": {
+        "category": {
+          "$ref": "#/$defs/ToolErrorCategory"
+        },
+        "code": {
+          "minLength": 1,
+          "title": "Code",
+          "type": "string"
+        },
+        "message": {
+          "minLength": 1,
+          "title": "Message",
+          "type": "string"
+        },
+        "retryable": {
+          "title": "Retryable",
+          "type": "boolean"
+        },
+        "details": {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "title": "Details",
+          "type": "object"
+        }
+      },
+      "required": [
+        "category",
+        "code",
+        "message",
+        "retryable",
+        "details"
+      ],
+      "title": "ToolError",
+      "type": "object"
+    },
+    "ToolErrorCategory": {
+      "description": "稳定错误分类，供后续重试、重规划和人工接管策略使用。",
+      "enum": [
+        "invalid_argument",
+        "permission_denied",
+        "timeout",
+        "not_found",
+        "conflict",
+        "unavailable",
+        "unsafe_plan",
+        "internal"
+      ],
+      "title": "ToolErrorCategory",
+      "type": "string"
+    },
+    "ToolName": {
+      "description": "P0-12 计划实现的九个工具名称；P0-04 仅定义白名单。",
+      "enum": [
+        "retrieve_knowledge",
+        "get_fleet_state",
+        "allocate_tasks",
+        "plan_multi_amr_routes",
+        "validate_fleet_plan",
+        "dispatch_simulation",
+        "query_execution_state",
+        "run_verification_suite",
+        "request_approval"
+      ],
+      "title": "ToolName",
+      "type": "string"
+    },
+    "ToolResult": {
+      "additionalProperties": false,
+      "description": "一次工具调用的统一结果、错误和审计证据。",
+      "properties": {
+        "tool_name": {
+          "$ref": "#/$defs/ToolName"
+        },
+        "call_id": {
+          "minLength": 1,
+          "title": "Call Id",
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/ToolResultStatus"
+        },
+        "output": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/JsonValue"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "error": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ToolError"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "started_at": {
+          "format": "date-time",
+          "title": "Started At",
+          "type": "string"
+        },
+        "finished_at": {
+          "format": "date-time",
+          "title": "Finished At",
+          "type": "string"
+        },
+        "duration_ms": {
+          "minimum": 0,
+          "title": "Duration Ms",
+          "type": "integer"
+        },
+        "evidence_refs": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Evidence Refs",
+          "type": "array"
+        },
+        "effect_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Effect Id"
+        }
+      },
+      "required": [
+        "tool_name",
+        "call_id",
+        "status",
+        "output",
+        "error",
+        "started_at",
+        "finished_at",
+        "duration_ms",
+        "evidence_refs",
+        "effect_id"
+      ],
+      "title": "ToolResult",
+      "type": "object"
+    },
+    "ToolResultStatus": {
+      "description": "一次工具调用的终态。",
+      "enum": [
+        "success",
+        "failed",
+        "timeout",
+        "denied"
+      ],
+      "title": "ToolResultStatus",
+      "type": "string"
+    },
+    "TransportOrder": {
+      "additionalProperties": false,
+      "description": "仓库内一次 pickup-transport-dropoff 运输订单。",
+      "properties": {
+        "order_id": {
+          "description": "订单唯一标识",
+          "minLength": 1,
+          "title": "Order Id",
+          "type": "string"
+        },
+        "material_id": {
+          "description": "待运输物料标识",
+          "minLength": 1,
+          "title": "Material Id",
+          "type": "string"
+        },
+        "pickup": {
+          "description": "取货点标识",
+          "minLength": 1,
+          "title": "Pickup",
+          "type": "string"
+        },
+        "dropoff": {
+          "description": "交付点标识",
+          "minLength": 1,
+          "title": "Dropoff",
+          "type": "string"
+        },
+        "priority": {
+          "description": "优先级；5 最高，1 最低",
+          "maximum": 5,
+          "minimum": 1,
+          "title": "Priority",
+          "type": "integer"
+        },
+        "release_time": {
+          "description": "订单可开始时间，单位为仿真秒",
+          "minimum": 0,
+          "title": "Release Time",
+          "type": "integer"
+        },
+        "deadline": {
+          "description": "订单截止时间，单位为仿真秒",
+          "exclusiveMinimum": 0,
+          "title": "Deadline",
+          "type": "integer"
+        },
+        "dependencies": {
+          "description": "必须先完成的订单 ID",
+          "items": {
+            "type": "string"
+          },
+          "title": "Dependencies",
+          "type": "array"
+        }
+      },
+      "required": [
+        "order_id",
+        "material_id",
+        "pickup",
+        "dropoff",
+        "priority",
+        "release_time",
+        "deadline",
+        "dependencies"
+      ],
+      "title": "TransportOrder",
+      "type": "object"
+    },
+    "UserRole": {
+      "description": "P0 固定的两级工具访问角色。",
+      "enum": [
+        "viewer",
+        "operator"
+      ],
+      "title": "UserRole",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "一次 Agent 运行可检查点化的完整聚合状态。",
+  "properties": {
+    "run_id": {
+      "minLength": 1,
+      "title": "Run Id",
+      "type": "string"
+    },
+    "status": {
+      "$ref": "#/$defs/RunStatus"
+    },
+    "plan_version": {
+      "minimum": 1,
+      "title": "Plan Version",
+      "type": "integer"
+    },
+    "task_contract": {
+      "$ref": "#/$defs/TaskContract"
+    },
+    "plan_tasks": {
+      "items": {
+        "$ref": "#/$defs/PlanTask"
+      },
+      "title": "Plan Tasks",
+      "type": "array"
+    },
+    "amr_states": {
+      "items": {
+        "$ref": "#/$defs/AMRState"
+      },
+      "minItems": 1,
+      "title": "Amr States",
+      "type": "array"
+    },
+    "orders": {
+      "items": {
+        "$ref": "#/$defs/TransportOrder"
+      },
+      "minItems": 1,
+      "title": "Orders",
+      "type": "array"
+    },
+    "observations": {
+      "items": {
+        "$ref": "#/$defs/Observation"
+      },
+      "title": "Observations",
+      "type": "array"
+    },
+    "current_task_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Current Task Id"
+    },
+    "completed_task_ids": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Completed Task Ids",
+      "type": "array"
+    },
+    "failed_task_ids": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Failed Task Ids",
+      "type": "array"
+    },
+    "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+    },
+    "updated_at": {
+      "format": "date-time",
+      "title": "Updated At",
+      "type": "string"
+    },
+    "replan_count": {
+      "minimum": 0,
+      "title": "Replan Count",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "run_id",
+    "status",
+    "plan_version",
+    "task_contract",
+    "plan_tasks",
+    "amr_states",
+    "orders",
+    "observations",
+    "current_task_id",
+    "completed_task_ids",
+    "failed_task_ids",
+    "created_at",
+    "updated_at",
+    "replan_count"
+  ],
+  "title": "RunState",
+  "type": "object"
+}

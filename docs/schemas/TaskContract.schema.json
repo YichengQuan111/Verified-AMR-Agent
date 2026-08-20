@@ -1,0 +1,320 @@
+{
+  "$defs": {
+    "ApprovalRequirement": {
+      "additionalProperties": false,
+      "description": "任务合同中的人工审批门禁。",
+      "properties": {
+        "required": {
+          "title": "Required",
+          "type": "boolean"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Reason"
+        },
+        "required_role": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UserRole"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "required",
+        "reason",
+        "required_role"
+      ],
+      "title": "ApprovalRequirement",
+      "type": "object"
+    },
+    "ExecutionBudgets": {
+      "additionalProperties": false,
+      "description": "一次 Agent 运行的硬预算；所有计数都是上限。",
+      "properties": {
+        "max_total_seconds": {
+          "exclusiveMinimum": 0,
+          "title": "Max Total Seconds",
+          "type": "integer"
+        },
+        "max_input_tokens": {
+          "exclusiveMinimum": 0,
+          "title": "Max Input Tokens",
+          "type": "integer"
+        },
+        "max_output_tokens": {
+          "exclusiveMinimum": 0,
+          "title": "Max Output Tokens",
+          "type": "integer"
+        },
+        "max_tool_steps": {
+          "exclusiveMinimum": 0,
+          "title": "Max Tool Steps",
+          "type": "integer"
+        },
+        "max_replans": {
+          "maximum": 2,
+          "minimum": 0,
+          "title": "Max Replans",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "max_total_seconds",
+        "max_input_tokens",
+        "max_output_tokens",
+        "max_tool_steps",
+        "max_replans"
+      ],
+      "title": "ExecutionBudgets",
+      "type": "object"
+    },
+    "GridPosition": {
+      "additionalProperties": false,
+      "description": "30 × 20 仓库栅格中的一个合法位置。\n\n坐标从 0 开始，所以宽度为 30 时 x 最大只能是 29，高度为 20 时 y 最大只能是 19。",
+      "properties": {
+        "x": {
+          "description": "横坐标，允许 0～29",
+          "exclusiveMaximum": 30,
+          "minimum": 0,
+          "title": "X",
+          "type": "integer"
+        },
+        "y": {
+          "description": "纵坐标，允许 0～19",
+          "exclusiveMaximum": 20,
+          "minimum": 0,
+          "title": "Y",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "x",
+        "y"
+      ],
+      "title": "GridPosition",
+      "type": "object"
+    },
+    "RiskLevel": {
+      "description": "任务或计划步骤的风险等级。",
+      "enum": [
+        "low",
+        "medium",
+        "high",
+        "critical"
+      ],
+      "title": "RiskLevel",
+      "type": "string"
+    },
+    "TaskConstraints": {
+      "additionalProperties": false,
+      "description": "P0 固定场景中可由确定性校验器检查的业务约束。",
+      "properties": {
+        "map_width": {
+          "const": 30,
+          "title": "Map Width",
+          "type": "integer"
+        },
+        "map_height": {
+          "const": 20,
+          "title": "Map Height",
+          "type": "integer"
+        },
+        "blocked_cells": {
+          "items": {
+            "$ref": "#/$defs/GridPosition"
+          },
+          "title": "Blocked Cells",
+          "type": "array"
+        },
+        "minimum_battery_percent": {
+          "maximum": 100,
+          "minimum": 0,
+          "title": "Minimum Battery Percent",
+          "type": "number"
+        },
+        "maximum_load_kg": {
+          "exclusiveMinimum": 0,
+          "title": "Maximum Load Kg",
+          "type": "number"
+        },
+        "enforce_time_windows": {
+          "title": "Enforce Time Windows",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "map_width",
+        "map_height",
+        "blocked_cells",
+        "minimum_battery_percent",
+        "maximum_load_kg",
+        "enforce_time_windows"
+      ],
+      "title": "TaskConstraints",
+      "type": "object"
+    },
+    "TransportOrder": {
+      "additionalProperties": false,
+      "description": "仓库内一次 pickup-transport-dropoff 运输订单。",
+      "properties": {
+        "order_id": {
+          "description": "订单唯一标识",
+          "minLength": 1,
+          "title": "Order Id",
+          "type": "string"
+        },
+        "material_id": {
+          "description": "待运输物料标识",
+          "minLength": 1,
+          "title": "Material Id",
+          "type": "string"
+        },
+        "pickup": {
+          "description": "取货点标识",
+          "minLength": 1,
+          "title": "Pickup",
+          "type": "string"
+        },
+        "dropoff": {
+          "description": "交付点标识",
+          "minLength": 1,
+          "title": "Dropoff",
+          "type": "string"
+        },
+        "priority": {
+          "description": "优先级；5 最高，1 最低",
+          "maximum": 5,
+          "minimum": 1,
+          "title": "Priority",
+          "type": "integer"
+        },
+        "release_time": {
+          "description": "订单可开始时间，单位为仿真秒",
+          "minimum": 0,
+          "title": "Release Time",
+          "type": "integer"
+        },
+        "deadline": {
+          "description": "订单截止时间，单位为仿真秒",
+          "exclusiveMinimum": 0,
+          "title": "Deadline",
+          "type": "integer"
+        },
+        "dependencies": {
+          "description": "必须先完成的订单 ID",
+          "items": {
+            "type": "string"
+          },
+          "title": "Dependencies",
+          "type": "array"
+        }
+      },
+      "required": [
+        "order_id",
+        "material_id",
+        "pickup",
+        "dropoff",
+        "priority",
+        "release_time",
+        "deadline",
+        "dependencies"
+      ],
+      "title": "TransportOrder",
+      "type": "object"
+    },
+    "UserRole": {
+      "description": "P0 固定的两级工具访问角色。",
+      "enum": [
+        "viewer",
+        "operator"
+      ],
+      "title": "UserRole",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "把自然语言目标冻结为可验证、带预算的业务合同。",
+  "properties": {
+    "contract_id": {
+      "minLength": 1,
+      "title": "Contract Id",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "goal": {
+      "minLength": 1,
+      "title": "Goal",
+      "type": "string"
+    },
+    "orders": {
+      "items": {
+        "$ref": "#/$defs/TransportOrder"
+      },
+      "minItems": 1,
+      "title": "Orders",
+      "type": "array"
+    },
+    "environment_ref": {
+      "minLength": 1,
+      "title": "Environment Ref",
+      "type": "string"
+    },
+    "constraints": {
+      "$ref": "#/$defs/TaskConstraints"
+    },
+    "completion_criteria": {
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Completion Criteria",
+      "type": "array"
+    },
+    "risk_level": {
+      "$ref": "#/$defs/RiskLevel"
+    },
+    "approval": {
+      "$ref": "#/$defs/ApprovalRequirement"
+    },
+    "budgets": {
+      "$ref": "#/$defs/ExecutionBudgets"
+    },
+    "missing_information": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Missing Information",
+      "type": "array"
+    }
+  },
+  "required": [
+    "contract_id",
+    "goal",
+    "orders",
+    "environment_ref",
+    "constraints",
+    "completion_criteria",
+    "risk_level",
+    "approval",
+    "budgets",
+    "missing_information"
+  ],
+  "title": "TaskContract",
+  "type": "object"
+}

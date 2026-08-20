@@ -1,0 +1,2 @@
+"""Cross-component smoke tests."""
+

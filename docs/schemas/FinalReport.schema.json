@@ -1,0 +1,131 @@
+{
+  "$defs": {
+    "BudgetUsage": {
+      "additionalProperties": false,
+      "description": "调用节点前已经实际消耗的五类预算。",
+      "properties": {
+        "input_tokens": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Input Tokens",
+          "type": "integer"
+        },
+        "output_tokens": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Output Tokens",
+          "type": "integer"
+        },
+        "tool_steps": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Tool Steps",
+          "type": "integer"
+        },
+        "elapsed_seconds": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Elapsed Seconds",
+          "type": "number"
+        },
+        "replans": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Replans",
+          "type": "integer"
+        }
+      },
+      "title": "BudgetUsage",
+      "type": "object"
+    },
+    "FinalReportStatus": {
+      "description": "compose_report 可以声明的最终报告状态。",
+      "enum": [
+        "completed",
+        "failed",
+        "cancelled",
+        "needs_human"
+      ],
+      "title": "FinalReportStatus",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "compose_report Prompt 的结构化、可审计输出。",
+  "properties": {
+    "run_id": {
+      "minLength": 1,
+      "title": "Run Id",
+      "type": "string"
+    },
+    "final_status": {
+      "$ref": "#/$defs/FinalReportStatus"
+    },
+    "state_version": {
+      "minLength": 1,
+      "title": "State Version",
+      "type": "string"
+    },
+    "plan_version": {
+      "minimum": 1,
+      "title": "Plan Version",
+      "type": "integer"
+    },
+    "generated_at": {
+      "format": "date-time",
+      "title": "Generated At",
+      "type": "string"
+    },
+    "summary": {
+      "minLength": 1,
+      "title": "Summary",
+      "type": "string"
+    },
+    "completed_order_ids": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Completed Order Ids",
+      "type": "array"
+    },
+    "incomplete_order_ids": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Incomplete Order Ids",
+      "type": "array"
+    },
+    "evidence_refs": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Evidence Refs",
+      "type": "array"
+    },
+    "unresolved_risks": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Unresolved Risks",
+      "type": "array"
+    },
+    "budget_usage": {
+      "$ref": "#/$defs/BudgetUsage"
+    }
+  },
+  "required": [
+    "run_id",
+    "final_status",
+    "state_version",
+    "plan_version",
+    "generated_at",
+    "summary",
+    "completed_order_ids",
+    "incomplete_order_ids",
+    "evidence_refs",
+    "unresolved_risks",
+    "budget_usage"
+  ],
+  "title": "FinalReport",
+  "type": "object"
+}

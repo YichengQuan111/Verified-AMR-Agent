@@ -1,0 +1,272 @@
+{
+  "$defs": {
+    "FallbackStrategy": {
+      "description": "步骤失败后允许选择的确定性处置方向。",
+      "enum": [
+        "retry",
+        "replan",
+        "fallback",
+        "human",
+        "fatal"
+      ],
+      "title": "FallbackStrategy",
+      "type": "string"
+    },
+    "JsonValue": {},
+    "PlanTask": {
+      "additionalProperties": false,
+      "description": "计划 DAG 中一个可独立校验、执行和追踪的原子步骤。",
+      "properties": {
+        "task_id": {
+          "minLength": 1,
+          "title": "Task Id",
+          "type": "string"
+        },
+        "dependencies": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Dependencies",
+          "type": "array"
+        },
+        "tool_name": {
+          "$ref": "#/$defs/ToolName"
+        },
+        "tool_arguments": {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "title": "Tool Arguments",
+          "type": "object"
+        },
+        "target_amr": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Target Amr"
+        },
+        "pickup": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Pickup"
+        },
+        "dropoff": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Dropoff"
+        },
+        "workstation": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Workstation"
+        },
+        "preconditions": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Preconditions",
+          "type": "array"
+        },
+        "completion_criteria": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Completion Criteria",
+          "type": "array"
+        },
+        "time_budget": {
+          "description": "此步骤最多允许的执行时间，单位为秒",
+          "exclusiveMinimum": 0,
+          "title": "Time Budget",
+          "type": "integer"
+        },
+        "energy_budget": {
+          "description": "此步骤最多允许消耗的电量百分比",
+          "maximum": 100,
+          "minimum": 0,
+          "title": "Energy Budget",
+          "type": "number"
+        },
+        "risk_level": {
+          "$ref": "#/$defs/RiskLevel"
+        },
+        "approval_required": {
+          "title": "Approval Required",
+          "type": "boolean"
+        },
+        "fallback_strategy": {
+          "$ref": "#/$defs/FallbackStrategy"
+        },
+        "status": {
+          "$ref": "#/$defs/PlanTaskStatus"
+        },
+        "evidence_refs": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Evidence Refs",
+          "type": "array"
+        },
+        "effect_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Effect Id"
+        }
+      },
+      "required": [
+        "task_id",
+        "dependencies",
+        "tool_name",
+        "tool_arguments",
+        "target_amr",
+        "pickup",
+        "dropoff",
+        "workstation",
+        "preconditions",
+        "completion_criteria",
+        "time_budget",
+        "energy_budget",
+        "risk_level",
+        "approval_required",
+        "fallback_strategy",
+        "status",
+        "evidence_refs",
+        "effect_id"
+      ],
+      "title": "PlanTask",
+      "type": "object"
+    },
+    "PlanTaskStatus": {
+      "description": "计划子任务在运行生命周期中的状态。",
+      "enum": [
+        "pending",
+        "ready",
+        "running",
+        "waiting_approval",
+        "completed",
+        "failed",
+        "cancelled"
+      ],
+      "title": "PlanTaskStatus",
+      "type": "string"
+    },
+    "RiskLevel": {
+      "description": "任务或计划步骤的风险等级。",
+      "enum": [
+        "low",
+        "medium",
+        "high",
+        "critical"
+      ],
+      "title": "RiskLevel",
+      "type": "string"
+    },
+    "ToolName": {
+      "description": "P0-12 计划实现的九个工具名称；P0-04 仅定义白名单。",
+      "enum": [
+        "retrieve_knowledge",
+        "get_fleet_state",
+        "allocate_tasks",
+        "plan_multi_amr_routes",
+        "validate_fleet_plan",
+        "dispatch_simulation",
+        "query_execution_state",
+        "run_verification_suite",
+        "request_approval"
+      ],
+      "title": "ToolName",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "replan Prompt 的局部重规划输出。",
+  "properties": {
+    "previous_plan_version": {
+      "minimum": 1,
+      "title": "Previous Plan Version",
+      "type": "integer"
+    },
+    "new_plan_version": {
+      "minimum": 2,
+      "title": "New Plan Version",
+      "type": "integer"
+    },
+    "trigger_observation_id": {
+      "minLength": 1,
+      "title": "Trigger Observation Id",
+      "type": "string"
+    },
+    "retained_task_ids": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Retained Task Ids",
+      "type": "array"
+    },
+    "invalidated_task_ids": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Invalidated Task Ids",
+      "type": "array"
+    },
+    "replacement_tasks": {
+      "items": {
+        "$ref": "#/$defs/PlanTask"
+      },
+      "title": "Replacement Tasks",
+      "type": "array"
+    },
+    "reason": {
+      "minLength": 1,
+      "title": "Reason",
+      "type": "string"
+    },
+    "requires_human": {
+      "title": "Requires Human",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "previous_plan_version",
+    "new_plan_version",
+    "trigger_observation_id",
+    "retained_task_ids",
+    "invalidated_task_ids",
+    "replacement_tasks",
+    "reason",
+    "requires_human"
+  ],
+  "title": "ReplanOutput",
+  "type": "object"
+}

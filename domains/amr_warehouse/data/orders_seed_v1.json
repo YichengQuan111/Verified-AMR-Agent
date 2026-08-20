@@ -1,0 +1,34 @@
+{
+  "orders": [
+    {
+      "order_id": "ORDER-001",
+      "material_id": "MAT-001",
+      "pickup": "P1",
+      "dropoff": "S3",
+      "priority": 3,
+      "release_time": 0,
+      "deadline": 120,
+      "dependencies": []
+    },
+    {
+      "order_id": "ORDER-002",
+      "material_id": "MAT-002",
+      "pickup": "P2",
+      "dropoff": "S1",
+      "priority": 2,
+      "release_time": 10,
+      "deadline": 150,
+      "dependencies": []
+    },
+    {
+      "order_id": "ORDER-003",
+      "material_id": "MAT-003",
+      "pickup": "P3",
+      "dropoff": "S4",
+      "priority": 1,
+      "release_time": 20,
+      "deadline": 180,
+      "dependencies": ["ORDER-001"]
+    }
+  ]
+}

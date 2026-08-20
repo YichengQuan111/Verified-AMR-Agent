@@ -1,0 +1,38 @@
+{
+  "map_id": "warehouse_v1",
+  "version": 1,
+  "width": 30,
+  "height": 20,
+  "resolution_m": 1.0,
+
+  "pickup_points": [
+    {"id": "P1", "x": 2, "y": 3},
+    {"id": "P2", "x": 2, "y": 6},
+    {"id": "P3", "x": 2, "y": 9},
+    {"id": "P4", "x": 2, "y": 12},
+    {"id": "P5", "x": 2, "y": 15},
+    {"id": "P6", "x": 2, "y": 18}
+  ],
+
+  "dropoff_points": [
+    {"id": "S1", "x": 27, "y": 3},
+    {"id": "S2", "x": 27, "y": 6},
+    {"id": "S3", "x": 27, "y": 9},
+    {"id": "S4", "x": 27, "y": 12},
+    {"id": "S5", "x": 27, "y": 15},
+    {"id": "S6", "x": 27, "y": 18}
+  ],
+
+  "charging_stations": [
+    {"id": "C1", "x": 1, "y": 1},
+    {"id": "C2", "x": 28, "y": 1}
+  ],
+
+  "obstacles": [],
+
+  "narrow_aisles": [],
+
+  "one_way_edges": [],
+
+  "temporary_blocked_cells": []
+}

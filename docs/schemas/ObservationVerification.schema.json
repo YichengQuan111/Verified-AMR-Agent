@@ -1,0 +1,73 @@
+{
+  "$defs": {
+    "VerificationDecision": {
+      "description": "verify_observation 节点允许返回的下一步建议。",
+      "enum": [
+        "continue",
+        "replan",
+        "human",
+        "finish",
+        "fallback"
+      ],
+      "title": "VerificationDecision",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "verify_observation Prompt 的结构化输出。",
+  "properties": {
+    "observation_id": {
+      "minLength": 1,
+      "title": "Observation Id",
+      "type": "string"
+    },
+    "verified": {
+      "title": "Verified",
+      "type": "boolean"
+    },
+    "decision": {
+      "$ref": "#/$defs/VerificationDecision"
+    },
+    "reason": {
+      "minLength": 1,
+      "title": "Reason",
+      "type": "string"
+    },
+    "evidence_refs": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Evidence Refs",
+      "type": "array"
+    },
+    "affected_entities": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Affected Entities",
+      "type": "array"
+    },
+    "next_task_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Next Task Id"
+    }
+  },
+  "required": [
+    "observation_id",
+    "verified",
+    "decision",
+    "reason",
+    "evidence_refs",
+    "affected_entities",
+    "next_task_id"
+  ],
+  "title": "ObservationVerification",
+  "type": "object"
+}

@@ -1,0 +1,57 @@
+{
+  "version": 1,
+  "amrs": [
+    {
+      "amr_id": "AMR-01",
+      "position": {
+        "x": 1,
+        "y": 2
+      },
+      "heading": 0,
+      "battery": 100,
+      "load": 0,
+      "task_status": "IDLE",
+      "health_status": "HEALTHY",
+      "connection_status": "ONLINE"
+    },
+    {
+      "amr_id": "AMR-02",
+      "position": {
+        "x": 1,
+        "y": 5
+      },
+      "heading": 0,
+      "battery": 90,
+      "load": 0,
+      "task_status": "IDLE",
+      "health_status": "HEALTHY",
+      "connection_status": "ONLINE"
+    },
+    {
+      "amr_id": "AMR-03",
+      "position": {
+        "x": 1,
+        "y": 8
+      },
+      "heading": 0,
+      "battery": 80,
+      "load": 0,
+      "task_status": "IDLE",
+      "health_status": "HEALTHY",
+      "connection_status": "ONLINE"
+    },
+    {
+      "amr_id": "AMR-04",
+      "position": {
+        "x": 1,
+        "y": 11
+      },
+      "heading": 0,
+      "battery": 70,
+      "load": 0,
+      "task_status": "IDLE",
+      "health_status": "HEALTHY",
+      "connection_status": "ONLINE"
+    }
+  ]
+}

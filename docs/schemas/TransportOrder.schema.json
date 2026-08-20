@@ -1,0 +1,69 @@
+{
+  "additionalProperties": false,
+  "description": "仓库内一次 pickup-transport-dropoff 运输订单。",
+  "properties": {
+    "order_id": {
+      "description": "订单唯一标识",
+      "minLength": 1,
+      "title": "Order Id",
+      "type": "string"
+    },
+    "material_id": {
+      "description": "待运输物料标识",
+      "minLength": 1,
+      "title": "Material Id",
+      "type": "string"
+    },
+    "pickup": {
+      "description": "取货点标识",
+      "minLength": 1,
+      "title": "Pickup",
+      "type": "string"
+    },
+    "dropoff": {
+      "description": "交付点标识",
+      "minLength": 1,
+      "title": "Dropoff",
+      "type": "string"
+    },
+    "priority": {
+      "description": "优先级；5 最高，1 最低",
+      "maximum": 5,
+      "minimum": 1,
+      "title": "Priority",
+      "type": "integer"
+    },
+    "release_time": {
+      "description": "订单可开始时间，单位为仿真秒",
+      "minimum": 0,
+      "title": "Release Time",
+      "type": "integer"
+    },
+    "deadline": {
+      "description": "订单截止时间，单位为仿真秒",
+      "exclusiveMinimum": 0,
+      "title": "Deadline",
+      "type": "integer"
+    },
+    "dependencies": {
+      "description": "必须先完成的订单 ID",
+      "items": {
+        "type": "string"
+      },
+      "title": "Dependencies",
+      "type": "array"
+    }
+  },
+  "required": [
+    "order_id",
+    "material_id",
+    "pickup",
+    "dropoff",
+    "priority",
+    "release_time",
+    "deadline",
+    "dependencies"
+  ],
+  "title": "TransportOrder",
+  "type": "object"
+}

@@ -1,0 +1,168 @@
+{
+  "$defs": {
+    "JsonValue": {},
+    "ToolError": {
+      "additionalProperties": false,
+      "description": "工具失败时可序列化、可分类的错误证据。",
+      "properties": {
+        "category": {
+          "$ref": "#/$defs/ToolErrorCategory"
+        },
+        "code": {
+          "minLength": 1,
+          "title": "Code",
+          "type": "string"
+        },
+        "message": {
+          "minLength": 1,
+          "title": "Message",
+          "type": "string"
+        },
+        "retryable": {
+          "title": "Retryable",
+          "type": "boolean"
+        },
+        "details": {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "title": "Details",
+          "type": "object"
+        }
+      },
+      "required": [
+        "category",
+        "code",
+        "message",
+        "retryable",
+        "details"
+      ],
+      "title": "ToolError",
+      "type": "object"
+    },
+    "ToolErrorCategory": {
+      "description": "稳定错误分类，供后续重试、重规划和人工接管策略使用。",
+      "enum": [
+        "invalid_argument",
+        "permission_denied",
+        "timeout",
+        "not_found",
+        "conflict",
+        "unavailable",
+        "unsafe_plan",
+        "internal"
+      ],
+      "title": "ToolErrorCategory",
+      "type": "string"
+    },
+    "ToolName": {
+      "description": "P0-12 计划实现的九个工具名称；P0-04 仅定义白名单。",
+      "enum": [
+        "retrieve_knowledge",
+        "get_fleet_state",
+        "allocate_tasks",
+        "plan_multi_amr_routes",
+        "validate_fleet_plan",
+        "dispatch_simulation",
+        "query_execution_state",
+        "run_verification_suite",
+        "request_approval"
+      ],
+      "title": "ToolName",
+      "type": "string"
+    },
+    "ToolResultStatus": {
+      "description": "一次工具调用的终态。",
+      "enum": [
+        "success",
+        "failed",
+        "timeout",
+        "denied"
+      ],
+      "title": "ToolResultStatus",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "一次工具调用的统一结果、错误和审计证据。",
+  "properties": {
+    "tool_name": {
+      "$ref": "#/$defs/ToolName"
+    },
+    "call_id": {
+      "minLength": 1,
+      "title": "Call Id",
+      "type": "string"
+    },
+    "status": {
+      "$ref": "#/$defs/ToolResultStatus"
+    },
+    "output": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/JsonValue"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "error": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ToolError"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "started_at": {
+      "format": "date-time",
+      "title": "Started At",
+      "type": "string"
+    },
+    "finished_at": {
+      "format": "date-time",
+      "title": "Finished At",
+      "type": "string"
+    },
+    "duration_ms": {
+      "minimum": 0,
+      "title": "Duration Ms",
+      "type": "integer"
+    },
+    "evidence_refs": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Evidence Refs",
+      "type": "array"
+    },
+    "effect_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Effect Id"
+    }
+  },
+  "required": [
+    "tool_name",
+    "call_id",
+    "status",
+    "output",
+    "error",
+    "started_at",
+    "finished_at",
+    "duration_ms",
+    "evidence_refs",
+    "effect_id"
+  ],
+  "title": "ToolResult",
+  "type": "object"
+}

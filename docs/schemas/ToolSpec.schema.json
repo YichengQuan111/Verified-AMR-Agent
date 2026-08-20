@@ -1,0 +1,125 @@
+{
+  "$defs": {
+    "JsonValue": {},
+    "ToolErrorCategory": {
+      "description": "稳定错误分类，供后续重试、重规划和人工接管策略使用。",
+      "enum": [
+        "invalid_argument",
+        "permission_denied",
+        "timeout",
+        "not_found",
+        "conflict",
+        "unavailable",
+        "unsafe_plan",
+        "internal"
+      ],
+      "title": "ToolErrorCategory",
+      "type": "string"
+    },
+    "ToolName": {
+      "description": "P0-12 计划实现的九个工具名称；P0-04 仅定义白名单。",
+      "enum": [
+        "retrieve_knowledge",
+        "get_fleet_state",
+        "allocate_tasks",
+        "plan_multi_amr_routes",
+        "validate_fleet_plan",
+        "dispatch_simulation",
+        "query_execution_state",
+        "run_verification_suite",
+        "request_approval"
+      ],
+      "title": "ToolName",
+      "type": "string"
+    },
+    "UserRole": {
+      "description": "P0 固定的两级工具访问角色。",
+      "enum": [
+        "viewer",
+        "operator"
+      ],
+      "title": "UserRole",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "一个白名单工具的静态注册说明。",
+  "properties": {
+    "tool_name": {
+      "$ref": "#/$defs/ToolName"
+    },
+    "version": {
+      "minLength": 1,
+      "title": "Version",
+      "type": "string"
+    },
+    "description": {
+      "minLength": 1,
+      "title": "Description",
+      "type": "string"
+    },
+    "input_schema": {
+      "additionalProperties": {
+        "$ref": "#/$defs/JsonValue"
+      },
+      "title": "Input Schema",
+      "type": "object"
+    },
+    "output_schema": {
+      "additionalProperties": {
+        "$ref": "#/$defs/JsonValue"
+      },
+      "title": "Output Schema",
+      "type": "object"
+    },
+    "allowed_roles": {
+      "items": {
+        "$ref": "#/$defs/UserRole"
+      },
+      "minItems": 1,
+      "title": "Allowed Roles",
+      "type": "array"
+    },
+    "timeout_seconds": {
+      "exclusiveMinimum": 0,
+      "maximum": 300,
+      "title": "Timeout Seconds",
+      "type": "number"
+    },
+    "idempotent": {
+      "title": "Idempotent",
+      "type": "boolean"
+    },
+    "has_side_effects": {
+      "title": "Has Side Effects",
+      "type": "boolean"
+    },
+    "requires_approval": {
+      "title": "Requires Approval",
+      "type": "boolean"
+    },
+    "error_categories": {
+      "items": {
+        "$ref": "#/$defs/ToolErrorCategory"
+      },
+      "minItems": 1,
+      "title": "Error Categories",
+      "type": "array"
+    }
+  },
+  "required": [
+    "tool_name",
+    "version",
+    "description",
+    "input_schema",
+    "output_schema",
+    "allowed_roles",
+    "timeout_seconds",
+    "idempotent",
+    "has_side_effects",
+    "requires_approval",
+    "error_categories"
+  ],
+  "title": "ToolSpec",
+  "type": "object"
+}

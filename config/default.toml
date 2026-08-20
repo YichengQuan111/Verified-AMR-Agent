@@ -1,0 +1,43 @@
+# 项目默认配置。敏感值可在本机用环境变量覆盖，不要把真实密钥写回本文件。
+[app]
+name = "amr-agent-api"
+version = "0.1.0"
+environment = "development"
+
+[logging]
+level = "INFO"
+# true 时每条日志都是一行 JSON，便于机器解析和后续证据报告。
+json = true
+
+[model_gateway]
+# 一个进程只选择一个 Profile；运行中不执行 Fast/Smart 热切换。
+profile = "fast"
+base_url = "http://127.0.0.1:8080/v1"
+api_key = "dummy"
+connect_timeout_seconds = 3.0
+generation_timeout_seconds = 120.0
+max_schema_repair_attempts = 1
+max_output_tokens = 1024
+# true 时 API 启动前必须通过 /v1/models alias 门禁。
+validate_on_startup = true
+
+[model_gateway.profiles.fast]
+alias = "qwen3.6-fast"
+context_window = 8192
+temperature = 0.0
+reasoning_enabled = false
+reasoning_budget_tokens = 0
+
+[model_gateway.profiles.smart]
+alias = "qwen3.8-smart"
+context_window = 12288
+temperature = 0.0
+reasoning_enabled = true
+# Smart 允许思考，但限制预算，避免只生成 reasoning_content 而没有最终 JSON。
+reasoning_budget_tokens = 512
+
+[database]
+postgres_dsn = "postgresql://amr:123456@localhost:5432/amr_agent"
+
+[retrieval]
+qdrant_url = "http://localhost:6333"
