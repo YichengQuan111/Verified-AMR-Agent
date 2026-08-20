@@ -1,0 +1,109 @@
+{
+  "$defs": {
+    "UserRole": {
+      "description": "P0 固定的两级工具访问角色。",
+      "enum": [
+        "viewer",
+        "operator"
+      ],
+      "title": "UserRole",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "可同时进入向量库和 BM25 的最小可引用知识单元。",
+  "properties": {
+    "chunk_id": {
+      "maxLength": 256,
+      "minLength": 1,
+      "title": "Chunk Id",
+      "type": "string"
+    },
+    "doc_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Doc Id",
+      "type": "string"
+    },
+    "title": {
+      "maxLength": 256,
+      "minLength": 1,
+      "title": "Title",
+      "type": "string"
+    },
+    "section": {
+      "maxLength": 256,
+      "minLength": 1,
+      "title": "Section",
+      "type": "string"
+    },
+    "version": {
+      "maxLength": 64,
+      "minLength": 1,
+      "title": "Version",
+      "type": "string"
+    },
+    "role_scope": {
+      "items": {
+        "$ref": "#/$defs/UserRole"
+      },
+      "minItems": 1,
+      "title": "Role Scope",
+      "type": "array"
+    },
+    "source": {
+      "maxLength": 256,
+      "minLength": 1,
+      "title": "Source",
+      "type": "string"
+    },
+    "checksum": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Checksum",
+      "type": "string"
+    },
+    "text": {
+      "minLength": 1,
+      "title": "Text",
+      "type": "string"
+    },
+    "section_ordinal": {
+      "minimum": 0,
+      "title": "Section Ordinal",
+      "type": "integer"
+    },
+    "part_ordinal": {
+      "minimum": 0,
+      "title": "Part Ordinal",
+      "type": "integer"
+    },
+    "frozen_at": {
+      "anyOf": [
+        {
+          "format": "date",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Frozen At"
+    }
+  },
+  "required": [
+    "chunk_id",
+    "doc_id",
+    "title",
+    "section",
+    "version",
+    "role_scope",
+    "source",
+    "checksum",
+    "text",
+    "section_ordinal",
+    "part_ordinal"
+  ],
+  "title": "KnowledgeChunk",
+  "type": "object"
+}

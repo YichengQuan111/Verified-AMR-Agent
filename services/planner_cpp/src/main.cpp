@@ -17,8 +17,9 @@ int print_version() {
 }
 
 int run_self_test() {
-  // P0-01 只验证 C++ 工程能编译和执行，并确认已冻结的最小场景常量。
-  // 真正的 Hungarian/A*/Validator 将在 P0-08～P0-10 中替换这里的简单检查。
+  // 这个保留的入口只验证 P0-01 的 C++ 工程骨架和冻结常量；P0-08 的
+  // Hungarian/最近空闲分配由独立 task_allocator_cli 与专门 CTest 验证，
+  // 后续 P0-09/P0-10 的路径和计划验证也不应把本冒烟入口当作功能测试。
   constexpr int width = 30;
   constexpr int height = 20;
   constexpr int amr_count = 4;

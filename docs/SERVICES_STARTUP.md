@@ -2,7 +2,7 @@
 
 本文档固化 P0 开发阶段所需服务、固定路径、端口、启动顺序、健康检查与停止方式。所有命令默认在 Windows PowerShell 中执行；特别标注为 `cmd.exe` 的命令除外。
 
-基准日期：2026-08-19  
+基准日期：2026-08-20
 项目根目录：`C:\Users\QYC\Documents\AMR_Agent`
 
 ## 1. 固定环境与端口
@@ -16,6 +16,7 @@
 | LLM API | `http://127.0.0.1:8080/v1` | OpenAI 兼容接口 |
 | PostgreSQL | `localhost:5432` | 运行状态、Checkpoint、Effect Ledger |
 | Qdrant | `http://localhost:6333` | SOP 和设备文档向量检索 |
+| Embedding | `E:\Llama.cpp\Embedding` | Qwen3-Embedding-0.6B；不占用 8080 |
 | AMR Agent API | `http://127.0.0.1:8000` | 当前 FastAPI 服务入口 |
 
 模型别名：
@@ -103,7 +104,21 @@ Invoke-WebRequest -UseBasicParsing 'http://localhost:6333/readyz'
 
 Qdrant Dashboard：`http://localhost:6333/dashboard`
 
-### 3.4 日志与停止
+### 3.4 P0-07 知识索引与评测
+
+Embedding 直接从本地目录加载，不需要启动 Fast/Smart 文本模型。PostgreSQL 与 Qdrant 健康后执行：
+
+```powershell
+$env:HF_HUB_OFFLINE = '1'
+$env:TRANSFORMERS_OFFLINE = '1'
+& 'E:\Anaconda\envs\torch128\python.exe' '.\scripts\index_warehouse_knowledge.py'
+& 'E:\Anaconda\envs\torch128\python.exe' -m evals.rag.run_eval `
+  --output .\tmp\p007_rag_eval.json
+```
+
+索引成功应报告 6 份文档、70 个当前证据 chunk 和动态读取的 1024 维；评测的 `acl_leak_count` 必须为 0。语料或 chunk 规则变化后数量可能变化，应以索引报告与 `docs/RAG.md` 为准，不能把 70/1024 写进运行时代码。
+
+### 3.5 日志与停止
 
 查看最近日志：
 
@@ -241,9 +256,12 @@ $env:LLM_PROFILE = 'fast'  # 切换 Smart 时改为 smart
 $env:LLM_MODEL = 'qwen3.6-fast'  # Smart 时改为 qwen3.8-smart
 $env:POSTGRES_DSN = 'postgresql://amr:123456@localhost:5432/amr_agent'
 $env:QDRANT_URL = 'http://localhost:6333'
+$env:RAG_EMBEDDING_MODEL_PATH = 'E:\Llama.cpp\Embedding'
+$env:RAG_MINIMUM_HYBRID_SCORE = '0.809'
+$env:RAG_MINIMUM_VECTOR_SCORE = '0.499'
 ```
 
-这些环境变量只对当前 PowerShell 会话生效。
+这些环境变量只对当前 PowerShell 会话生效。完整 RAG 配置和阈值校准见 [`RAG.md`](RAG.md)。
 
 ## 7. C++ 开发环境
 
@@ -279,7 +297,14 @@ Ninja: E:\BuildingTools\Common7\IDE\CommonExtensions\Microsoft\CMake\Ninja\ninja
 ctest --test-dir build\cpp --output-on-failure
 ```
 
-在 `CMakeLists.txt` 尚未创建时，不执行上述构建命令。
+P0-08 构建后会生成 `build\cpp\services\planner_cpp\task_allocator_cli.exe`。它只通过 JSON stdin/stdout 工作：
+
+```powershell
+Get-Content .\request.json -Raw | .\build\cpp\services\planner_cpp\task_allocator_cli.exe --algorithm hungarian
+Get-Content .\request.json -Raw | .\build\cpp\services\planner_cpp\task_allocator_cli.exe --algorithm nearest_idle
+```
+
+字段、`INF` sentinel、不可行原因码和退出码见 [`TASK_ALLOCATOR.md`](TASK_ALLOCATOR.md)。在 `CMakeLists.txt` 尚未创建时，不执行上述构建命令。
 
 ## 8. 一次开发会话的最小检查清单
 

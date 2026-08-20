@@ -41,3 +41,20 @@ postgres_dsn = "postgresql://amr:123456@localhost:5432/amr_agent"
 
 [retrieval]
 qdrant_url = "http://localhost:6333"
+collection_name = "amr_warehouse_knowledge"
+# 本地模型路径是当前 P0 固定环境；维度由运行时模型动态读取，不在配置中写死。
+embedding_model_path = "E:\\Llama.cpp\\Embedding"
+embedding_device = "cpu"
+embedding_batch_size = 8
+# 只在单个二级章节超过此上限时进行语义块二次拆分。
+chunk_max_chars = 1800
+default_top_k = 5
+candidate_multiplier = 4
+vector_weight = 0.5
+bm25_weight = 0.5
+bm25_saturation = 3.0
+# 20 例真实评测：可答最低 0.821220、不可答最高 0.797038；取中点约 0.809。
+# 模型、语料或融合方式变化后必须重新观察分布，不应永久照搬此值。
+minimum_hybrid_score = 0.809
+# hybrid 未达标子集：短语义改写 top vector=0.597388，不可答最高=0.400358。
+minimum_vector_score = 0.499

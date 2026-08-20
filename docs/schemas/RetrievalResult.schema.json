@@ -1,0 +1,120 @@
+{
+  "$defs": {
+    "UserRole": {
+      "description": "P0 固定的两级工具访问角色。",
+      "enum": [
+        "viewer",
+        "operator"
+      ],
+      "title": "UserRole",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "带完整来源、正文及两路分数的可追溯检索结果。",
+  "properties": {
+    "chunk_id": {
+      "title": "Chunk Id",
+      "type": "string"
+    },
+    "doc_id": {
+      "title": "Doc Id",
+      "type": "string"
+    },
+    "title": {
+      "title": "Title",
+      "type": "string"
+    },
+    "section": {
+      "title": "Section",
+      "type": "string"
+    },
+    "version": {
+      "title": "Version",
+      "type": "string"
+    },
+    "role_scope": {
+      "items": {
+        "$ref": "#/$defs/UserRole"
+      },
+      "title": "Role Scope",
+      "type": "array"
+    },
+    "source": {
+      "title": "Source",
+      "type": "string"
+    },
+    "checksum": {
+      "title": "Checksum",
+      "type": "string"
+    },
+    "text": {
+      "title": "Text",
+      "type": "string"
+    },
+    "frozen_at": {
+      "anyOf": [
+        {
+          "format": "date",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Frozen At"
+    },
+    "citation": {
+      "minLength": 1,
+      "title": "Citation",
+      "type": "string"
+    },
+    "hybrid_score": {
+      "maximum": 1.0,
+      "minimum": 0.0,
+      "title": "Hybrid Score",
+      "type": "number"
+    },
+    "vector_score": {
+      "default": 0.0,
+      "title": "Vector Score",
+      "type": "number"
+    },
+    "bm25_score": {
+      "default": 0.0,
+      "minimum": 0.0,
+      "title": "Bm25 Score",
+      "type": "number"
+    },
+    "normalized_vector_score": {
+      "maximum": 1.0,
+      "minimum": 0.0,
+      "title": "Normalized Vector Score",
+      "type": "number"
+    },
+    "normalized_bm25_score": {
+      "maximum": 1.0,
+      "minimum": 0.0,
+      "title": "Normalized Bm25 Score",
+      "type": "number"
+    }
+  },
+  "required": [
+    "chunk_id",
+    "doc_id",
+    "title",
+    "section",
+    "version",
+    "role_scope",
+    "source",
+    "checksum",
+    "text",
+    "citation",
+    "hybrid_score",
+    "normalized_vector_score",
+    "normalized_bm25_score"
+  ],
+  "title": "RetrievalResult",
+  "type": "object"
+}

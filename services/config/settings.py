@@ -165,9 +165,51 @@ class DatabaseSettings(StrictSettingsModel):
 
 
 class RetrievalSettings(StrictSettingsModel):
-    """Qdrant 检索服务配置。"""
+    """P0-07 仓储知识检索的可复现配置。
+
+    模型维度不在这里声明，而是在 ``Embedder`` 加载模型后动态读取。融合权重、
+    chunk 上限和拒答阈值必须进入配置，避免在检索代码中散落难以审计的常量。
+    """
 
     qdrant_url: str = "http://localhost:6333"
+    collection_name: str = Field(
+        default="amr_warehouse_knowledge",
+        min_length=1,
+        max_length=128,
+    )
+    embedding_model_path: str = r"E:\Llama.cpp\Embedding"
+    embedding_device: str = "cpu"
+    embedding_batch_size: int = Field(default=8, ge=1, le=128)
+    chunk_max_chars: int = Field(default=1800, ge=256, le=10000)
+    default_top_k: int = Field(default=5, ge=1, le=50)
+    candidate_multiplier: int = Field(default=4, ge=1, le=20)
+    vector_weight: float = Field(default=0.5, ge=0.0, le=1.0)
+    bm25_weight: float = Field(default=0.5, ge=0.0, le=1.0)
+    bm25_saturation: float = Field(default=3.0, gt=0.0)
+    # 由 20 例真实 Qwen3-Embedding 评测的可答最低 0.821220 与不可答最高
+    # 0.797038 取中点并保留三位小数；仍允许配置覆盖并应在语料/模型变化后重测。
+    minimum_hybrid_score: float = Field(default=0.809, ge=0.0, le=1.0)
+    # 对 hybrid 未达标的短语义改写，top vector=0.597388；同组不可答最高
+    # top vector=0.400358，二者中点约 0.499。该门禁只作为 hybrid 的补充。
+    minimum_vector_score: float = Field(default=0.499, ge=-1.0, le=1.0)
+
+    @field_validator("qdrant_url")
+    @classmethod
+    def validate_qdrant_url(cls, value: str) -> str:
+        """限制为 HTTP(S) 并移除末尾斜杠，保证 collection 地址稳定。"""
+
+        normalised = value.rstrip("/")
+        if not normalised.startswith(("http://", "https://")):
+            raise ValueError("retrieval qdrant_url must use http:// or https://")
+        return normalised
+
+    @model_validator(mode="after")
+    def validate_hybrid_weights(self) -> "RetrievalSettings":
+        """两路权重必须恰好组成一个凸组合，便于解释 hybrid score。"""
+
+        if abs((self.vector_weight + self.bm25_weight) - 1.0) > 1e-9:
+            raise ValueError("vector_weight + bm25_weight 必须等于 1.0")
+        return self
 
 
 class AppSettings(StrictSettingsModel):
@@ -261,6 +303,24 @@ def _apply_environment(data: dict[str, Any], environ: Mapping[str, str]) -> dict
         ),
         "POSTGRES_DSN": (("database", "postgres_dsn"), str),
         "QDRANT_URL": (("retrieval", "qdrant_url"), str),
+        "RAG_COLLECTION_NAME": (("retrieval", "collection_name"), str),
+        "RAG_EMBEDDING_MODEL_PATH": (("retrieval", "embedding_model_path"), str),
+        "RAG_EMBEDDING_DEVICE": (("retrieval", "embedding_device"), str),
+        "RAG_EMBEDDING_BATCH_SIZE": (("retrieval", "embedding_batch_size"), int),
+        "RAG_CHUNK_MAX_CHARS": (("retrieval", "chunk_max_chars"), int),
+        "RAG_DEFAULT_TOP_K": (("retrieval", "default_top_k"), int),
+        "RAG_CANDIDATE_MULTIPLIER": (("retrieval", "candidate_multiplier"), int),
+        "RAG_VECTOR_WEIGHT": (("retrieval", "vector_weight"), float),
+        "RAG_BM25_WEIGHT": (("retrieval", "bm25_weight"), float),
+        "RAG_BM25_SATURATION": (("retrieval", "bm25_saturation"), float),
+        "RAG_MINIMUM_HYBRID_SCORE": (
+            ("retrieval", "minimum_hybrid_score"),
+            float,
+        ),
+        "RAG_MINIMUM_VECTOR_SCORE": (
+            ("retrieval", "minimum_vector_score"),
+            float,
+        ),
     }
     for name, (path, parser) in mappings.items():
         if name in environ and environ[name] != "":

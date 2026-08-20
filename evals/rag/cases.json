@@ -1,0 +1,239 @@
+[
+  {
+    "case_id": "rag-001-standard-flow",
+    "category": "explicit_fact",
+    "query": "一笔仓储物料转运从接单到完成的标准流程是什么？",
+    "role_scope": "viewer",
+    "answerable": true,
+    "top_k": 5,
+    "expected_citations": [
+      {"doc_id": "warehouse_transport_sop_v1_0", "section": "2. 标准转运流程"}
+    ],
+    "forbidden_doc_ids": []
+  },
+  {
+    "case_id": "rag-002-one-order-per-cycle",
+    "category": "exact_keyword",
+    "query": "一个滚动调度周期内，一台 AMR 最多新分配几个运输订单？",
+    "role_scope": "viewer",
+    "answerable": true,
+    "top_k": 5,
+    "expected_citations": [
+      {"doc_id": "warehouse_transport_sop_v1_0", "section": "3. 订单与调度边界"}
+    ],
+    "forbidden_doc_ids": []
+  },
+  {
+    "case_id": "rag-003-completion-evidence",
+    "category": "explicit_fact",
+    "query": "哪些可验证事实同时满足后，运输任务才算真正完成？",
+    "role_scope": "viewer",
+    "answerable": true,
+    "top_k": 5,
+    "expected_citations": [
+      {"doc_id": "warehouse_transport_sop_v1_0", "section": "7. 执行与完成判定"}
+    ],
+    "forbidden_doc_ids": []
+  },
+  {
+    "case_id": "rag-004-state-owner-paraphrase",
+    "category": "semantic_paraphrase",
+    "query": "车辆状态应由谁推进，语言模型可以直接改电量和位置吗？",
+    "role_scope": "viewer",
+    "answerable": true,
+    "top_k": 5,
+    "expected_citations": [
+      {"doc_id": "amr_operation_manual_v1_0", "section": "4. 状态变化原则"}
+    ],
+    "forbidden_doc_ids": []
+  },
+  {
+    "case_id": "rag-005-amr-state-fields",
+    "category": "explicit_fact",
+    "query": "每台 AMR 至少要记录哪些关键状态字段？",
+    "role_scope": "viewer",
+    "answerable": true,
+    "top_k": 5,
+    "expected_citations": [
+      {"doc_id": "amr_operation_manual_v1_0", "section": "2. AMR 关键状态字段"}
+    ],
+    "forbidden_doc_ids": []
+  },
+  {
+    "case_id": "rag-006-battery-25",
+    "category": "exact_numeric",
+    "query": "AMR 当前电量 25% 属于哪个区间？",
+    "role_scope": "viewer",
+    "answerable": true,
+    "top_k": 5,
+    "expected_citations": [
+      {"doc_id": "battery_charging_sop_v1_0", "section": "1. 冻结参数"}
+    ],
+    "forbidden_doc_ids": []
+  },
+  {
+    "case_id": "rag-007-battery-full",
+    "category": "exact_numeric",
+    "query": "P0 中充电达到百分之多少才视为完成？",
+    "role_scope": "viewer",
+    "answerable": true,
+    "top_k": 5,
+    "expected_citations": [
+      {"doc_id": "battery_charging_sop_v1_0", "section": "1. 冻结参数"}
+    ],
+    "forbidden_doc_ids": []
+  },
+  {
+    "case_id": "rag-008-loaded-at-18-percent",
+    "category": "cross_document",
+    "query": "AMR 已经取货但只剩 18% 电量，什么条件下还能完成当前交付？",
+    "role_scope": "operator",
+    "answerable": true,
+    "top_k": 6,
+    "expected_citations": [
+      {"doc_id": "battery_charging_sop_v1_0", "section": "5. 执行中低电量"},
+      {"doc_id": "amr_fault_handling_v1_0", "section": "3. 低电量"}
+    ],
+    "forbidden_doc_ids": []
+  },
+  {
+    "case_id": "rag-009-vertex-conflict",
+    "category": "exact_keyword",
+    "query": "什么叫顶点冲突，P0 用什么预约键避免它？",
+    "role_scope": "viewer",
+    "answerable": true,
+    "top_k": 5,
+    "expected_citations": [
+      {"doc_id": "warehouse_traffic_rules_v1_0", "section": "7. 顶点冲突"}
+    ],
+    "forbidden_doc_ids": []
+  },
+  {
+    "case_id": "rag-010-swap-conflict",
+    "category": "semantic_paraphrase",
+    "query": "两台车同一时刻沿一条边迎面互换位置属于哪类冲突？",
+    "role_scope": "viewer",
+    "answerable": true,
+    "top_k": 5,
+    "expected_citations": [
+      {"doc_id": "warehouse_traffic_rules_v1_0", "section": "8. 交换边冲突"}
+    ],
+    "forbidden_doc_ids": []
+  },
+  {
+    "case_id": "rag-011-blocked-path",
+    "category": "explicit_fact",
+    "query": "临时禁行区出现后，引用该区域的未完成旧路径应该怎样处理？",
+    "role_scope": "viewer",
+    "answerable": true,
+    "top_k": 5,
+    "expected_citations": [
+      {"doc_id": "warehouse_traffic_rules_v1_0", "section": "6. 临时禁行区"}
+    ],
+    "forbidden_doc_ids": []
+  },
+  {
+    "case_id": "rag-012-priority-cannot-bypass",
+    "category": "cross_document",
+    "query": "高优先级订单或 operator 审批能否绕过禁行区和 15% 电量安全余量？",
+    "role_scope": "operator",
+    "answerable": true,
+    "top_k": 6,
+    "expected_citations": [
+      {"doc_id": "battery_charging_sop_v1_0", "section": "2. 核心安全原则"},
+      {"doc_id": "dispatch_approval_policy_v1_0", "section": "2. 审批不能覆盖的硬约束"}
+    ],
+    "forbidden_doc_ids": []
+  },
+  {
+    "case_id": "rag-013-timeout-effect-ledger",
+    "category": "explicit_fact",
+    "query": "有副作用的工具超时后，为什么不能立刻重试，必须先检查什么？",
+    "role_scope": "operator",
+    "answerable": true,
+    "top_k": 5,
+    "expected_citations": [
+      {"doc_id": "amr_fault_handling_v1_0", "section": "7. 工具超时"}
+    ],
+    "forbidden_doc_ids": []
+  },
+  {
+    "case_id": "rag-014-replan-limit",
+    "category": "cross_document",
+    "query": "P0 默认最多允许几次局部重规划，达到上限后如何处置？",
+    "role_scope": "operator",
+    "answerable": true,
+    "top_k": 6,
+    "expected_citations": [
+      {"doc_id": "amr_fault_handling_v1_0", "section": "1. 总原则"},
+      {"doc_id": "warehouse_traffic_rules_v1_0", "section": "10. 等待与重新规划"}
+    ],
+    "forbidden_doc_ids": []
+  },
+  {
+    "case_id": "rag-015-approval-timeout",
+    "category": "acl_operator",
+    "query": "审批等待超时后能否默认批准？预算耗尽时怎么办？",
+    "role_scope": "operator",
+    "answerable": true,
+    "top_k": 5,
+    "expected_citations": [
+      {"doc_id": "dispatch_approval_policy_v1_0", "section": "7. 审批超时"}
+    ],
+    "forbidden_doc_ids": []
+  },
+  {
+    "case_id": "rag-016-old-plan-approval",
+    "category": "acl_operator",
+    "query": "旧计划版本的批准记录能直接用于新计划吗？",
+    "role_scope": "operator",
+    "answerable": true,
+    "top_k": 5,
+    "expected_citations": [
+      {"doc_id": "dispatch_approval_policy_v1_0", "section": "8. 审批、幂等与 Checkpoint"}
+    ],
+    "forbidden_doc_ids": []
+  },
+  {
+    "case_id": "rag-017-viewer-timeout-summary",
+    "category": "acl_viewer",
+    "query": "viewer 想了解工具超时后为什么需要先核实副作用状态。",
+    "role_scope": "viewer",
+    "answerable": true,
+    "top_k": 5,
+    "expected_citations": [
+      {"doc_id": "warehouse_transport_sop_v1_0", "section": "8. 异常处理摘要"}
+    ],
+    "forbidden_doc_ids": ["amr_fault_handling_v1_0", "dispatch_approval_policy_v1_0"]
+  },
+  {
+    "case_id": "rag-018-viewer-approval-policy",
+    "category": "acl_viewer",
+    "query": "审批超时是否会自动批准，旧版本审批能否复用？",
+    "role_scope": "viewer",
+    "answerable": false,
+    "top_k": 5,
+    "expected_citations": [],
+    "forbidden_doc_ids": ["amr_fault_handling_v1_0", "dispatch_approval_policy_v1_0"]
+  },
+  {
+    "case_id": "rag-019-wifi-password",
+    "category": "unanswerable",
+    "query": "仓库生产 Wi-Fi 的 SSID 和密码分别是什么？",
+    "role_scope": "viewer",
+    "answerable": false,
+    "top_k": 5,
+    "expected_citations": [],
+    "forbidden_doc_ids": ["amr_fault_handling_v1_0", "dispatch_approval_policy_v1_0"]
+  },
+  {
+    "case_id": "rag-020-fire-extinguisher",
+    "category": "unanswerable",
+    "query": "仓库灭火器规定每隔多少天检查一次，由哪个班组负责？",
+    "role_scope": "operator",
+    "answerable": false,
+    "top_k": 5,
+    "expected_citations": [],
+    "forbidden_doc_ids": []
+  }
+]

@@ -1,4 +1,4 @@
-"""P0-06 应用服务公共入口。"""
+"""P0-06 应用服务公共入口；P0-07 复用其 documents 事务边界。"""
 
 from services.application.contracts import (
     ApprovalView,

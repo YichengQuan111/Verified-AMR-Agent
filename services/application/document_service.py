@@ -102,6 +102,143 @@ class DocumentService:
                 content=record.content,
             )
 
+    def upsert_frozen_knowledge_document(
+        self,
+        document_id: str,
+        metadata: DocumentMetadataInput,
+        content: bytes,
+    ) -> DocumentView:
+        """把受版本控制的 frozen Markdown 幂等同步到既有 documents 表。
+
+        P0-07 使用 Front Matter 的 ``doc_id`` 作为稳定主键。只有带匹配 doc_id 和
+        ``front_matter_status=frozen`` 标记的受管文档能调用此入口，避免索引器
+        覆盖普通上传文档。内容或 ACL 变化会清空 indexed_at，等待 Qdrant 成功后
+        由 ``mark_documents_indexed`` 再原子更新状态。
+        """
+
+        if not document_id or len(document_id) > 64:
+            raise InvalidDocumentError("知识文档 doc_id 长度必须为 1..64")
+        if not content:
+            raise InvalidDocumentError("文档内容不能为空")
+        if len(content) > MAX_DOCUMENT_BYTES:
+            raise DocumentTooLargeError(
+                f"文档超过 {MAX_DOCUMENT_BYTES} 字节上限"
+            )
+        marker = metadata.metadata
+        if marker.get("doc_id") != document_id:
+            raise InvalidDocumentError("metadata.doc_id 必须与 document_id 一致")
+        if marker.get("front_matter_status") != "frozen":
+            raise InvalidDocumentError("只允许同步 status=frozen 的知识文档")
+
+        safe_filename = Path(metadata.filename).name
+        if safe_filename in {"", ".", ".."}:
+            raise InvalidDocumentError("文档文件名无效")
+        checksum = sha256(content).hexdigest()
+        now = datetime.now(timezone.utc)
+        snapshot = metadata.model_copy(
+            update={"filename": safe_filename}
+        ).model_dump(mode="json")
+        try:
+            with self._session_factory() as session:
+                with session.begin():
+                    repository = DocumentRepository(session)
+                    record = repository.get(document_id, for_update=True)
+                    if record is None:
+                        record = DocumentRecord(
+                            document_id=document_id,
+                            filename=safe_filename,
+                            content_type=metadata.content_type,
+                            status="frozen",
+                            version=metadata.version,
+                            role_scope=[role.value for role in metadata.role_scope],
+                            source=metadata.source,
+                            checksum=checksum,
+                            size_bytes=len(content),
+                            storage_uri=(
+                                f"postgresql://documents/{document_id}/content"
+                            ),
+                            content=content,
+                            metadata_snapshot=snapshot,
+                            created_at=now,
+                            updated_at=now,
+                            indexed_at=None,
+                        )
+                        repository.add(record)
+                    else:
+                        previous_marker = record.metadata_snapshot.get("metadata", {})
+                        if previous_marker.get("doc_id") != document_id:
+                            raise PersistenceConflictError(
+                                f"document_id 已被非 P0-07 文档占用: {document_id}"
+                            )
+                        changed = any(
+                            (
+                                record.filename != safe_filename,
+                                record.content_type != metadata.content_type,
+                                record.version != metadata.version,
+                                record.role_scope
+                                != [role.value for role in metadata.role_scope],
+                                record.source != metadata.source,
+                                record.checksum != checksum,
+                                record.metadata_snapshot != snapshot,
+                            )
+                        )
+                        record.filename = safe_filename
+                        record.content_type = metadata.content_type
+                        record.version = metadata.version
+                        record.role_scope = [
+                            role.value for role in metadata.role_scope
+                        ]
+                        record.source = metadata.source
+                        record.checksum = checksum
+                        record.size_bytes = len(content)
+                        record.content = content
+                        record.metadata_snapshot = snapshot
+                        if changed:
+                            record.status = "frozen"
+                            record.indexed_at = None
+                            record.updated_at = now
+                    session.flush()
+                    result = self._to_document_view(record)
+        except IntegrityError as exc:
+            raise PersistenceConflictError("知识文档同步冲突，事务已回滚") from exc
+        return result
+
+    def mark_documents_indexed(
+        self,
+        document_ids: list[str],
+        *,
+        indexed_at: datetime | None = None,
+    ) -> list[DocumentView]:
+        """Qdrant 全部写入成功后，在一个事务中标记本批文档已索引。"""
+
+        unique_ids = sorted(set(document_ids))
+        if not unique_ids:
+            raise InvalidDocumentError("待标记的 document_ids 不能为空")
+        timestamp = indexed_at or datetime.now(timezone.utc)
+        results: list[DocumentView] = []
+        with self._session_factory() as session:
+            with session.begin():
+                repository = DocumentRepository(session)
+                records: list[DocumentRecord] = []
+                for document_id in unique_ids:
+                    record = repository.get(document_id, for_update=True)
+                    if record is None:
+                        raise ResourceNotFoundError(f"文档不存在: {document_id}")
+                    marker = record.metadata_snapshot.get("metadata", {})
+                    if marker.get("front_matter_status") != "frozen":
+                        raise InvalidDocumentError(
+                            f"非 frozen 知识文档不能标记索引: {document_id}"
+                        )
+                    records.append(record)
+                # 先确认整批都存在且合法，再修改任何一行，避免部分标记成功。
+                for record in records:
+                    record.status = "indexed"
+                    record.indexed_at = timestamp
+                    record.updated_at = timestamp
+                    results.append(self._to_document_view(record))
+                session.flush()
+        return results
+
     @staticmethod
     def _to_document_view(record: DocumentRecord) -> DocumentView:
         """把文档行映射为不包含正文的公共元数据。"""

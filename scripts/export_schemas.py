@@ -25,6 +25,11 @@ from agent.context.contracts import (  # noqa: E402
     PlanTasksOutput,
     ReplanOutput,
 )
+from services.retrieval.contracts import (  # noqa: E402
+    KnowledgeChunk,
+    RetrievalResponse,
+    RetrievalResult,
+)
 
 
 SCHEMA_DIRECTORY = PROJECT_ROOT / "docs" / "schemas"
@@ -43,6 +48,11 @@ SCHEMA_MODELS: dict[str, type[BaseModel]] = {
     "ObservationVerification.schema.json": ObservationVerification,
     "ReplanOutput.schema.json": ReplanOutput,
     "FinalReport.schema.json": FinalReport,
+    # P0-07 的 Qdrant payload、单条引用和拒答响应是后续 retrieve_knowledge
+    # 工具的公共 JSON 边界，必须与运行时 Pydantic 契约同步导出。
+    "KnowledgeChunk.schema.json": KnowledgeChunk,
+    "RetrievalResult.schema.json": RetrievalResult,
+    "RetrievalResponse.schema.json": RetrievalResponse,
 }
 
 

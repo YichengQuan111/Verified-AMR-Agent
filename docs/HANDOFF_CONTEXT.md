@@ -1,8 +1,8 @@
 # AMR Agent 项目交接上下文
 
-最后更新：2026-08-19  
-当前已完成：P0-00、P0-01、P0-02、P0-03、P0-04、P0-05、P0-06  
-当前下一步：P0-07 实现文档解析、分块、混合检索与 ACL
+最后更新：2026-08-20
+当前已完成：P0-00、P0-01、P0-02、P0-03、P0-04、P0-05、P0-06、P0-07、P0-08
+当前下一步：P0-09 实现 C++ A* 与时空预约
 
 ## 1. 文档用途与维护要求
 
@@ -38,12 +38,15 @@
 | FastAPI | `http://127.0.0.1:8000` |
 | PostgreSQL | `localhost:5432` / database `amr_agent` |
 | Qdrant | `http://localhost:6333` |
+| Embedding 模型 | `E:\Llama.cpp\Embedding`（Qwen3-Embedding-0.6B） |
 
 ### 3.2 当前外部状态
 
-- 2026-08-19 完成最新 P0-05 2-shot 在线验收后，本次启动的 Fast Qwen 已关闭，8080 已确认释放；Smart 没有启动。
-- PostgreSQL 17 与 Qdrant 容器在 P0-06 最终验收后均保持运行；PostgreSQL 已迁移到 `0001_p006_core (head)`，public schema 包含 8 张核心表和辅助表 `alembic_version`。后续任务开始时仍应重新运行 `docker compose ps`，不要把本条当作永久在线保证。
-- 根目录截至 2026-08-19 未检测到 `.git`，当前不是 Git 仓库；后续如需版本控制应由用户明确决定初始化时点。
+- 2026-08-20 P0-07 最终检查时 Docker Desktop 4.87 / Engine 29.7.2 可连接；PostgreSQL 17 与 Qdrant 1.19.0 容器正在运行，5432/6333 有监听。PostgreSQL 当前 revision 为 `0001_p006_core (head)`，8 张核心表完整，辅助表只有 `alembic_version`。
+- Qdrant collection `amr_warehouse_knowledge` 当前存在 70 个 points；6 份 frozen 文档已在 PostgreSQL 中标为 `indexed` 并带 `indexed_at`。新会话仍必须重查服务，不能把本条当作永久在线保证。
+- 本地 `E:\Llama.cpp\Embedding` 已实际离线加载；权重约 1.19 GB，SentenceTransformers 6.0.0 动态读得 dimension=1024，文档/query 编码均成功。模型、维度和 chunk 数没有写死在运行代码中。
+- 8000/8080 当前无监听；FastAPI 和 Fast/Smart 文本 Qwen 均未运行。P0-07 Embedding 直接加载本地模型，不需要启动 8080 文本模型。
+- Git 仍在 `main`，基线提交为 `e6a4f07 Initial commit: AMR Agent P0-06`；P0-07 变更尚未提交。`git status` 仍警告无法读取历史遗留目录 `UsersQYCDocumentsAMR_Agenttmppytest_runsrun_20260819_210302`，本步未对该不明权限目录执行删除或移动。
 
 ## 4. 已完成能力与关键决策
 
@@ -155,6 +158,44 @@
 
 `RunService.create_run()` 明确执行 `INSERT runs → flush → INSERT events → flush`。真实 PostgreSQL 测试用已存在的 `event_id` 让第二次 INSERT 失败，SQL 监听确认两条 INSERT 均实际发出且顺序正确；异常后查询新 `run_id` 不存在，证明第一条 INSERT 被同一事务回滚。
 
+### 4.8 P0-07：仓储 SOP RAG
+
+公共入口统一从 `services.retrieval` 导入。完整链路已实现：
+
+- `MarkdownDocumentLoader`：安全解析 YAML Front Matter、UTF-8、原始字节 SHA-256、frozen-only 和重复 doc ID 门禁。
+- `MarkdownChunker`：优先按 H2 section 切分，只在超长 section 内按语义块二次拆分；只有问题无答案的 `RAG 示例问题` 不生成证据 chunk。
+- `Embedder`：分别提供 `embed_documents()` / `embed_query()`，使用本地 Qwen3 query/document prompt，维度从实际模型动态读取。
+- `QdrantVectorStore`：collection 默认 `amr_warehouse_knowledge`，cosine dense vector，完整 chunk payload，UUIDv5 point，支持 rebuild 和按 doc ID 替换；`role_scope`/`doc_id` 在 `query_filter` 中执行。
+- `BM25Index`：使用 `jieba.lcut()` + `BM25Okapi`，先按角色/文档范围过滤语料，再评分。
+- `HybridRetriever`：vector/BM25 归一化后按默认 0.5/0.5 融合，不实现 Reranker；结果返回完整引用和 hybrid/vector/BM25 数值。
+- `RetrievalResponse`：top hybrid 低于 0.809 且 top raw vector 低于 0.499 时返回 `insufficient_evidence` 并强制 `results=[]`；阈值均可配置。
+- `RetrievalResult.to_context_evidence()`：转换为 P0-05 `ContextEvidence(source_type="rag")`，chunk ID 作为唯一 source ID，文档身份/section/version/citation 保留在内容中。
+
+索引器通过 `DocumentService.upsert_frozen_knowledge_document()` 同步 P0-06 `documents` 表，再用 `get_document()` 回读正文。只有 Qdrant 全批成功后才调用 `mark_documents_indexed()`；本步没有新增数据库 revision。
+
+公共 JSON Schema 新增：`KnowledgeChunk.schema.json`、`RetrievalResult.schema.json`、`RetrievalResponse.schema.json`。运行入口：
+
+```powershell
+E:\Anaconda\envs\torch128\python.exe scripts\index_warehouse_knowledge.py
+E:\Anaconda\envs\torch128\python.exe scripts\query_warehouse_knowledge.py "问题" --role viewer
+E:\Anaconda\envs\torch128\python.exe -m evals.rag.run_eval --output tmp\p007_rag_eval.json
+```
+
+### 4.9 P0-08：C++ Hungarian 任务分配
+
+公共 C++ 入口位于 `services/planner_cpp/include/task_allocator/task_allocator.hpp`，实现位于 `services/planner_cpp/src/task_allocator.cpp`。`allocate_hungarian()` 和 `allocate_nearest_idle()` 都复用 P0-04 的 AMR/订单字段语义；前者是生产算法，后者是独立最近空闲 baseline，不共享匹配结果或选择逻辑。
+
+CLI 为 `task_allocator_cli`，默认或 `--algorithm hungarian` 执行生产算法，`--algorithm nearest_idle` 执行基线。请求顶层 `schema_version` 固定为 `"1.0"`，直接复用 `AMRState`、`TransportOrder`、嵌套 `position`，并新增本模块 envelope 字段：`location_positions`、`completed_order_ids`、显式五项 `weights` 和电量/速度/能耗 `config`。响应包含 `algorithm/status/assignments/cost_matrix/pair_evaluations/unassigned_orders/unassigned_amrs/total_cost`；不可行矩阵项使用 JSON 字符串 `"INF"`，每个组合提供稳定 `reason_codes`。
+
+关键设计：
+
+- 代价为 `wd*distance_to_pickup + wt*lateness_risk + wb*battery_risk + wl*load_penalty - wp*priority_bonus`，时间估算使用 Manhattan route 的 ceil 行驶时间；迟到风险进入代价但由 P0-10 Validator 做最终时间窗硬校验。
+- 电量沿用冻结 30/20/10/15 规则：电量不高于 20% 的普通新任务、预计完成后低于 15% 安全余量、电量临界、非空闲/非健康/非在线、依赖未完成和缺少工位都使组合不可行。
+- Hungarian 在真实矩阵外加 dummy 行/列，先最大化可行匹配数再最小化代价；所有 ID 先按字典序排序，等价代价稳定破平。P0-08 不处理障碍、单向边、实际路径和时空冲突，交给 P0-09/P0-10。
+- JSON 编解码器为本模块严格子集实现，不引入 Anaconda/Boost 等偶然路径依赖；拒绝未知字段、重复键、非有限数值，CLI stdin 上限 4 MiB。
+
+详细字段、原因码、退出码和示例见 `docs/TASK_ALLOCATOR.md`。P0-08 没有修改 P0-07 RAG payload、阈值、collection 或数据库 revision。
+
 ## 5. 最近验证证据
 
 ### 5.1 离线统一回归
@@ -165,14 +206,16 @@
 .\scripts\run_smoke.ps1
 ```
 
-P0-06 最新结果：
+P0-08 最终结果：
 
-- 环境与直接依赖锁：全部匹配。
-- Python：99/99 通过；P0-06 新增 6 个离线 ORM/迁移/API 边界测试和 4 个真实 PostgreSQL 集成测试，全部通过。既有 P0-04/P0-05 测试保持通过。
-- C++：构建成功，CTest 1/1 通过。
+- 环境与直接依赖锁：`.\scripts\run_smoke.ps1` 全部匹配，MSVC/CMake/Ninja 路径和 Python 包版本门禁通过。
+- Python：110/110 通过；P0-08 没有修改 Python 运行时代码或 Schema，P0-04～P0-07 回归保持通过。
+- C++：在导入 `VsDevCmd.bat -arch=x64 -host_arch=x64` 后构建成功，CTest 7/7 通过；覆盖原有冒烟、正常、低电量、无可行、订单多于车辆、边界和 JSON 契约。
 - C++ `__cplusplus`：201703（C++17）。
 - Alembic：重复 `upgrade` 成功，当前 revision 为 `0001_p006_core (head)`；8 张核心表缺失数 0，辅助表只有 `alembic_version`。
-- ORM/数据库逐表字段比对：差异为空；集成测试清理后 8 张业务表均为 0 条测试数据。
+- Qdrant 健康门禁通过，正式 collection 存在；集成测试只删除自己的 UUID collection。PostgreSQL/Qdrant 测试行/点均按精确 ID 清理，6 份正式知识文档和 70 个正式 points 保留。
+- 完成本步后外部状态复核：`docker compose ps` 显示 `amr-postgres`/`amr-qdrant` 运行，5432/6333 监听；8000/8080 未监听，未启动 FastAPI 或文本 Qwen。
+- 唯一警告为 jieba 依赖内部使用已废弃 `pkg_resources` 的 DeprecationWarning，不影响本次结果。
 
 公共 Schema 导出命令：
 
@@ -180,9 +223,16 @@ P0-06 最新结果：
 E:\Anaconda\envs\torch128\python.exe scripts\export_schemas.py
 ```
 
-结果：命令退出码为 0，P0-04 八个核心 Schema 与 P0-05 四个新增输出 Schema，共 12 个文件成功生成；测试还会校验提交的 JSON 与当前 `model_json_schema()` 完全一致。
+结果：命令退出码为 0，P0-04 八个、P0-05 四个、P0-07 三个公共 Schema，共 15 个文件成功生成；测试校验提交 JSON 与当前 `model_json_schema()` 完全一致。
 
-### 5.2 真实模型验证
+### 5.2 P0-07 真实 Embedding / Qdrant 评测
+
+- `scripts/index_warehouse_knowledge.py`：6/6 frozen Markdown 成功，非 frozen 跳过 0，生成 70 个证据 chunks；实际 Embedding dimension=1024；PostgreSQL 同步与 Qdrant rebuild 成功。
+- `python -m evals.rag.run_eval`：20 例中 17 可答、3 不可答；Recall@K=1.0，MRR=0.970588，Section Recall@K=1.0，Citation Correctness=1.0（88/88），Answerability Accuracy=1.0，ACL leak count=0。
+- hybrid 单阈值对短改写不完全可分，因此保留配置化 vector 补充门禁：hybrid 未达标子集中，可答 top vector=0.597388，不可答为 0.320516～0.400358，建议中点=0.498873，默认取 0.499。
+- 手工 CLI 复核：短改写“AMR 当前电量 25% 属于哪个区间？”为 `answerable`；viewer 查询 operator 审批策略和 Wi-Fi 密码均为 `insufficient_evidence`，结果正文数 0。
+
+### 5.3 真实文本模型验证（历史 P0-05）
 
 - Fast `qwen3.6-fast`：最新 alias/版本门禁通过；基础结构化请求 20/20 通过；版本 `1.1.0` 的五个 2-shot 节点 5/5 通过。25 次请求全部首次生成成功，没有触发 Schema 修复。
 - 五节点本次实际总 Token：14,837；分别为 `understand_goal=3,734`、`plan_tasks=3,577`、`verify_observation=1,811`、`replan=3,336`、`compose_report=2,379`。这些是本次固定样例的 llama.cpp usage，不是未来生产预算常量。
@@ -300,19 +350,30 @@ DAG 使用 `agent.planning.dag.topological_sort()` 中的 Kahn 算法：计算�
 - P0-13 直接调用五个具名函数，并把 `NodeExecutionResult.route` 映射到状态图边；不能让 LLM 自己决定是否忽略预算门禁。
 - P0-14 重规划必须用 `ReplanOutput` 的版本加一、保留/失效/替换任务集合，并继续受最多两次重规划约束。
 
+### 7.4 P0-08 直接复用与验收边界
+
+- 直接复用 `TransportOrder`、`AMRState`、`GridPosition` 和当前嵌套 `position: {x,y}` 表示，不另造坐标或订单格式。
+- Hungarian 代价至少包含到取货点距离、迟到风险、订单优先级、电量风险和当前负载；具体权重需进入显式配置/JSON 契约并有基线对照。
+- 不可行 AMR—订单组合使用明确的 INF/不可行表示并返回原因，不能只给大代价后仍允许匹配。
+- “最近空闲 AMR”只能作为独立正确性/策略基线，不得混入生产 Hungarian 实现。
+- 交付物应包含 C++ 库/可执行程序、稳定 JSON stdin/stdout 契约和 CTest，覆盖正常、低电量、无可行分配和订单多于车辆。
+- P0-08 不需要修改 P0-07 RAG payload、阈值或 collection；如需引用电量规则，使用冻结文档/契约，但算法合法性由确定性代码和测试负责。
+
 ## 8. 已知限制与注意事项
 
 - P0-06 API/Service 已实际消费 `TaskContract`、`PlanTasksOutput` 和 `PlanTask` 并把快照写入 PostgreSQL；C++、仿真器和工具注册表的跨语言/跨服务兼容性仍需后续工作包验证。
 - 完整 `warehouse_v1.json` 通过 `environment_ref` 引用，不属于本次要求的八个核心 Schema；本次只验证 AMR/订单种子和所有内嵌 `GridPosition`。P0-09 如需独立地图输入 Schema，应在不改变现有坐标表示的前提下补充。
 - 九个工具目前只有名称和顶层参数契约，没有任何工具实现、JSON Schema 执行器或角色认证；这些分别属于 P0-12 和 P0-16。
-- C++ 目前只有工程冒烟程序，没有规划算法。
-- API 已有第 4.7 节的 8 个业务接口，但没有身份认证/授权中间件；文档 `role_scope` 只是已持久化 ACL 元数据，真正的访问判定属于 P0-07/P0-16。
-- PostgreSQL 已接入业务仓储层；Qdrant 仍未被业务检索代码使用，属于 P0-07。
+- P0-08 已实现 Hungarian 分配与 baseline；P0-09/P0-10 尚未实现路径、时空预约和车队计划验证。
+- API 已有第 4.7 节的 8 个业务接口，但没有身份认证/授权中间件。P0-07 检索器会执行给定 `UserRole` 的 ACL，然而角色真实性仍由未来 P0-16 认证/授权层保证；外部调用方不能被允许自行声称 operator。
+- PostgreSQL 已接入业务仓储层，Qdrant 已由 P0-07 正式使用；BM25 按 P0 Scope 保持进程内，重启时从同一 frozen 语料重建。
 - `requirements.lock` 锁定的是直接依赖，不是完整传递依赖快照。
 - `docs/P001_P003_FILE_GUIDE.md` 是 P0-01/P0-03 历史基线；后续文件职责统一登记在 `docs/FILE_PURPOSES.md`。
 - P0-05 的 2-shot Prompt 已在 Fast Qwen 上完成一轮五节点真实冒烟，并覆盖结构与关键业务事实；每节点目前只有一个固定在线样例，不能把 5/5 外推为复杂场景成功率。Smart Profile 的版本 `1.1.0` 五节点测试也尚未执行。
-- 文档当前只以 `status=stored` 保存原始字节和元数据，未做解析、分块、向量化、BM25、RRF 或 Qdrant 写入；这些属于 P0-07。
-- `tool_calls/effects` 已有表和 Repository，但没有真实工具执行或副作用逻辑；RAG、C++ 算法、仿真、真实工具、LangGraph 主闭环和评测执行器均尚未实现，即没有实现任何 P0-07+ 功能。
+- P0-07 的 20 例阈值只覆盖当前 6 份冻结语料和 Qwen3-Embedding-0.6B；开放域泛化尚未验证。语料、模型、prompt、chunking、权重或归一化改变后必须重新观察可答/不可答完整分布。
+- P0-07 只提供检索库、CLI 和 RAG 评测，尚未注册成九工具白名单中的 `retrieve_knowledge` 真实工具；该适配、调用者身份绑定和 ToolResult 审计属于 P0-12/P0-16。
+- P0 按正式 Scope 不实现 Reranker；当前 Citation Correctness 验证引用逐字段回指源 chunk，语义相关性由 Recall/MRR/section recall 分开衡量。
+- `tool_calls/effects` 已有表和 Repository，但没有真实工具执行或副作用逻辑；C++ 算法、仿真、真实工具和 LangGraph 主闭环仍尚未实现。
 
 ## 9. 交接更新模板
 
@@ -396,3 +457,37 @@ DAG 使用 `agent.planning.dag.topological_sort()` 中的 Kahn 算法：计算�
 - 外部服务当前状态：PostgreSQL 17 与 Qdrant 容器仍运行；PostgreSQL 当前为 revision head，表保留；Qwen 没有启动，8080 延续 P0-05 验收后的关闭状态。
 - 已知限制/风险：SSE 只输出请求时已有事件的有限快照；公开 API 尚无认证；文档正文当前限制 10 MiB 并存于 PostgreSQL；`tool_calls/effects` 尚无真实写入者。Alembic 首次执行日志的 revision 中文说明曾受终端代码页影响显示乱码，但 revision 内容、后续 `current` 输出和迁移结果均正常。
 - 下一步直接需要的信息：P0-07 应通过 `DocumentService.get_document()` 取得正文，通过 `documents.role_scope/version/source/checksum/status/indexed_at/metadata_snapshot` 复用 ACL、版本和索引状态；写 Qdrant 后应在新前向迁移或既有字段中更新状态，不能删除/替换 8 张核心表。检索结果必须转换为 P0-05 `ContextEvidence(source_type="rag")` 并保留 source/version/time/citation。
+
+### 2026-08-20 · 新会话交接准备
+
+- 完成：重写项目 README，使其覆盖固定 Scope、P0-00～06 状态、模型/上下文/API/数据库边界、接口、目录、启动验证命令和 P0-07 正式要求；新增 `docs/NEXT_SESSION_PROMPT.md`，作为下一 Codex 会话可直接复制的 P0-07 初始任务说明。
+- 未完成：没有修改运行时代码、配置、数据库、Schema 或测试，也没有开始实现 P0-07；当前下一步仍为 P0-07，不能把本次文档整理视为工作包完成。
+- 新增/变化的公共契约：无。新提示词只是交接与验收说明，不是新的业务 Schema 或 API 契约。
+- 关键设计决策及原因：README 只保存稳定项目事实和最近验证基线，不把瞬时服务状态写成长期在线保证；提示词同时记录 2026-08-20 观察值并强制下一会话重新核验。P0-07 要求来自正式路线第 93～99 段，额外约束来自已经落地的 P0-05/P0-06 公共边界。
+- 验证命令与结果：README 的 8 个相对链接全部存在，两份 Markdown 代码围栏均配对；`git diff --check` 通过；不依赖数据库的单元测试 94/94 通过。由于 Docker Engine 当前关闭，本次未运行需要真实 PostgreSQL 的 `run_smoke.ps1`，不得把 P0-06 的 99/99 历史基线冒充为本次全量回归。
+- 外部服务当前状态：Docker API 不可连接；5432、6333、8080 均无监听；PostgreSQL、Qdrant、Fast/Smart Qwen 均未运行。本次没有擅自启动服务。
+- 已知限制/风险：常见缓存位置未发现本地 Embedding 模型，但没有扫描所有磁盘；P0-07 必须先确定 model_id/版本/维度/归一化和获取方式。Git 状态会报告一个历史 pytest 畸形目录的权限警告，后续只能在解析绝对目标和确认它是生成物后再安全处理。README 与提示词为 Markdown，无 DOCX 布局变更，因此没有 DOCX 渲染 QA 需求。
+- 下一步直接需要的信息：新会话复制 `docs/NEXT_SESSION_PROMPT.md` 中的完整提示词；先读 AGENTS/HANDOFF/正式路线、运行 `git status`、启动 Docker/PostgreSQL/Qdrant、检查迁移和本地 Embedding，再推进 P0-07。完成 P0-07 后必须更新/替换提示词中的瞬时状态与下一工作包信息。
+
+### 2026-08-20 · P0-07 仓储 SOP RAG
+
+- 完成：实现 frozen Markdown Loader、H2 section-aware Chunker、独立 Qwen3 Embedder、Qdrant 向量库、进程内 jieba/BM25、配置化混合检索、检索期 ACL、完整 Citation、证据不足拒答、PostgreSQL 文档状态同步、索引/查询 CLI，以及固定 20 例评测执行器；6 份知识文档形成 70 个正式 chunks/points。
+- 未完成：按 P0 Scope 没有实现 Reranker；尚未把检索器注册成九工具白名单中的 `retrieve_knowledge`，没有接入公开 API 的已认证调用者角色，也没有开始 P0-08。文本生成 Fast/Smart Qwen 本步不需要且当前未运行。
+- 新增/变化的公共契约：`KnowledgeDocument`、`LoadedCorpus`、`KnowledgeChunk`、`VectorSearchHit`、`BM25SearchHit`、`RetrievalResult`、`RetrievalResponse`、`RetrievalStatus`、`KnowledgeIndexReport`；`Embedder.embed_documents()` / `embed_query()`；`HybridRetriever.retrieve()`；`KnowledgeIndexer.rebuild()`；`DocumentService.upsert_frozen_knowledge_document()` / `mark_documents_indexed()`。新增 `KnowledgeChunk`、`RetrievalResult`、`RetrievalResponse` 三份 JSON Schema；数据库没有新增 revision，继续使用 `0001_p006_core`。
+- 关键设计决策及原因：chunk 先按 H2 保留 section 语义，只有超长 section 才按语义块和句界二次拆分；仅含问题、不含答案的“RAG 示例问题”不作为证据。Qdrant 使用 payload filter 在召回阶段限制 `role_scope`，BM25 在建候选语料前限制角色，禁止先召回后隐藏。Embedding dimension 从本地模型动态读取为 1024；两路分数分别归一化后默认 0.5/0.5 融合，不加 Reranker。拒答阈值没有凭经验固定，而是保留配置并根据 20 例分布采用 hybrid 0.809 与 raw vector 0.499 的联合门禁；拒答响应强制清空 `results`。文档表先同步 frozen 内容，只有 Qdrant 全批成功后才原子标记 `indexed`。
+- 验证命令与结果：实现前重新运行基线 pytest 99/99；P0-07 专项单元测试 9/9、真实 PostgreSQL/Qdrant 集成测试 2/2；`scripts/index_warehouse_knowledge.py` 成功索引 6/6 文档、70 chunks、dimension 1024；`python -m evals.rag.run_eval` 得到 Recall@K 1.0、MRR 0.970588、Section Recall@K 1.0、Citation Correctness 1.0（88/88）、Answerability Accuracy 1.0、ACL leak count 0。第一次最终 `run_smoke.ps1` 在测试前因已验证环境的 sentence-transformers 6.0.0 与历史 direct lock 5.5.1 不一致而正确失败；同步声明/锁文件后完整重跑成功：依赖全部匹配、pytest 110/110、CTest 1/1、迁移/8 表/Qdrant 门禁全部通过。`scripts/export_schemas.py` 成功导出并校验 15 份 Schema。
+- 外部服务当前状态：Docker Desktop/Engine 正常；PostgreSQL 17 与 Qdrant 1.19.0 容器运行，5432/6333 监听；PostgreSQL revision 为 `0001_p006_core (head)`；Qdrant 正式 collection `amr_warehouse_knowledge` 有 70 points；本地 `E:\Llama.cpp\Embedding` 可离线加载并实测 dimension 1024；8000/8080 未监听，没有文本模型或 API 进程遗留。
+- 已知限制/风险：角色 ACL 的执行逻辑已验证，但角色真实性必须由 P0-16 认证层绑定，不能让外部请求自行声明 operator。当前阈值只由 6 份冻结语料和 20 例校准；语料、模型、prompt、chunking、权重或分数归一化改变后必须重跑完整分布。BM25 是进程内索引，进程重启后需从同一 frozen 语料重建。jieba 产生一个来自其依赖内部 `pkg_resources` 的弃用警告，不影响结果。Git 仍会报告历史畸形 pytest 目录权限警告，本步没有删除或移动该不明目录。
+- 下一步直接需要的信息：P0-08 直接复用 P0-04 的 `TransportOrder`、`AMRState`、`GridPosition` 和嵌套坐标；实现独立 Hungarian 与最近空闲基线，显式报告不可行组合及原因，并交付 C++ library/executable、JSON stdin/stdout 契约和 CTest。P0-08 不应修改 P0-07 payload、阈值、collection 或数据库 revision。
+
+### 2026-08-20 · P0-08 C++ Hungarian 任务分配
+
+- 完成：新增独立 `task_allocator` C++17 静态库、`task_allocator_cli` JSON stdin/stdout 可执行程序和 `nearest_idle_amr` 独立 baseline。Hungarian 支持矩形 AMR—订单矩阵，通过 dummy 行/列表示未匹配并优先最大化可行匹配数。
+- 完成：代价显式包含到 pickup 距离、迟到风险、订单优先级奖励、电量风险和当前负载；电量沿用 30/20/10/15 冻结规则。不可行组合在内部使用 `1e12` INF，JSON 使用标准字符串 `"INF"`，并返回稳定 `reason_codes/reasons`。
+- 完成：严格 JSON 请求 envelope 复用 P0-04 `AMRState`、`TransportOrder`、`GridPosition`，新增 `location_positions`、`completed_order_ids`、五项 `weights` 和显式 `config`；未知字段、重复键、非有限数字、越界坐标和 4 MiB 以上 stdin 被拒绝。公共契约详见 `docs/TASK_ALLOCATOR.md`。
+- 未完成：没有实现 P0-09 A*、障碍/单向边、时空预约、P0-10 车队计划验证，也没有接入 P0-12 工具注册表或 Python 调用方；P0-08 只计算 Manhattan 分配代价，不声称路线合法。
+- 关键设计决策及原因：不引用 Anaconda 中偶然存在的 Boost/JSON 库，使用本模块严格子集编解码器，避免 CMake 绑定个人 Python 环境；baseline 独立实现选择逻辑，不能作为生产 Hungarian 的隐式 fallback；按 ID 排序和微小 tie-break 保证跨次运行稳定。
+- 验证命令与结果：基线 CMake 配置后直接 build 暴露未初始化 MSVC 环境；导入 `E:\BuildingTools\Common7\Tools\VsDevCmd.bat -arch=x64 -host_arch=x64` 后重新配置/构建成功。`ctest --test-dir build/cpp --output-on-failure` 实测 7/7 通过；覆盖 `planner_cpp_smoke`、正常、低电量、无可行、订单多于车辆、边界/依赖/重复 ID/依赖环和 JSON 契约。CLI stdin 实测正常 Hungarian、nearest_idle、未知字段错误和全 INF 响应均输出合法 JSON，`--version` 报告 `0.1.0`/C++17；随后执行完整 `.\scripts\run_smoke.ps1`，环境门禁、Python 110/110、迁移/Qdrant 检查和 CTest 7/7 全部通过。`scripts/export_schemas.py` 本步未重跑，因为没有修改 Pydantic Schema。
+- 外部服务当前状态：P0-08 算法本身不依赖模型、FastAPI、PostgreSQL 或 Qdrant，也没有改变这些服务；统一 smoke 使用现有 PostgreSQL/Qdrant。结束复核显示 `amr-postgres`/`amr-qdrant` 运行且 5432/6333 监听，8000/8080 未监听。C++ 构建依赖固定 MSVC/CMake/Ninja 路径并需要先初始化开发环境。
+- 已知限制/风险：JSON 编解码器是本模块严格子集，不是通用 JSON 库；后续若扩展请求字段必须同步文档、解析门禁和 CTest。分配器不处理实际障碍/路径冲突；`TransportOrder` 没有订单重量，当前负载只能作为代价和已超上限阻断，不能替代未来订单容量字段。
+- 下一步直接需要的信息：P0-09 应从 `AllocationResult.assignments` 或 CLI `assignments` 读取 AMR/订单匹配，复用 `location_positions` 与 P0-04 嵌套坐标；路线合法性必须在 A*/Validator 中重新裁决，不能把 P0-08 的 Manhattan 距离当作可执行路径。启动下一步前先检查 `docs/TASK_ALLOCATOR.md`、P0-04 Schema 和当前 CTest 7/7 基线。

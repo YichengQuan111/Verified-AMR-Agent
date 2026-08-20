@@ -41,12 +41,16 @@ try {
     & $Python '.\scripts\migrate_database.py' 'upgrade'
     if ($LASTEXITCODE -ne 0) { throw 'Database migration/check failed.' }
 
-    # 第 3 步：运行全部 Python 单元、契约、真实 PostgreSQL 集成和冒烟测试。
+    # 第 3 步：P0-07 的向量 ACL 集成测试依赖真实 Qdrant，先给出清晰健康门禁。
+    & $Python '.\scripts\check_qdrant.py'
+    if ($LASTEXITCODE -ne 0) { throw 'Qdrant health check failed.' }
+
+    # 第 4 步：运行全部 Python 单元、契约、真实 PostgreSQL/Qdrant 集成和冒烟测试。
     & $Python -m pytest -q --basetemp $pytestBaseTemp -p no:cacheprovider
     if ($LASTEXITCODE -ne 0) { throw 'Python smoke tests failed.' }
 
     if (-not $SkipCpp) {
-        # 第 4 步：先验证所有固定工具路径，避免后面得到难以理解的命令错误。
+        # 第 5 步：先验证所有固定工具路径，避免后面得到难以理解的命令错误。
         foreach ($requiredPath in @($vsDevCmd, $cmake, $ninja, $ctest)) {
             if (-not (Test-Path -LiteralPath $requiredPath -PathType Leaf)) {
                 throw "C++ tool not found: $requiredPath"
@@ -66,18 +70,18 @@ try {
             }
         }
 
-        # 第 5 步：源码与构建产物分离，所有生成文件写入 build/cpp。
+        # 第 6 步：源码与构建产物分离，所有生成文件写入 build/cpp。
         & $cmake -S $projectRoot -B $buildDir -G Ninja `
             -DCMAKE_BUILD_TYPE=Release `
             "-DCMAKE_MAKE_PROGRAM=$ninja" `
             -DBUILD_TESTING=ON
         if ($LASTEXITCODE -ne 0) { throw 'CMake configuration failed.' }
 
-        # 第 6 步：编译 C++17 冒烟程序。
+        # 第 7 步：编译 C++17 冒烟程序。
         & $cmake --build $buildDir
         if ($LASTEXITCODE -ne 0) { throw 'C++ build failed.' }
 
-        # 第 7 步：运行 CTest；失败时显示被测程序的完整输出。
+        # 第 8 步：运行 CTest；失败时显示被测程序的完整输出。
         & $ctest --test-dir $buildDir --output-on-failure
         if ($LASTEXITCODE -ne 0) { throw 'C++ smoke tests failed.' }
     }

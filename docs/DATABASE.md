@@ -75,11 +75,21 @@ COMMIT
 | GET | `/documents/{document_id}` | 查询不含正文的文档元数据。 |
 | POST | `/evals/runs` | 创建 `run_kind=eval` 的持久化运行。 |
 
-API 错误只返回稳定应用错误码，不泄漏 SQL、数据库密码或约束内部细节。文档原始字节可由 `DocumentService.get_document()` 提供给 P0-07 受控索引器，当前公共 GET 只返回元数据。
+API 错误只返回稳定应用错误码，不泄漏 SQL、数据库密码或约束内部细节。文档原始字节由 `DocumentService.get_document()` 提供给 P0-07 受控索引器，当前公共 GET 仍只返回元数据。
 
-## 6. 当前边界
+## 6. P0-07 对 documents 表的复用
+
+P0-07 没有新增或修改数据库 revision，当前仍为 `0001_p006_core (head)`。索引器使用 Front Matter `doc_id` 作为 6 份冻结知识文档的稳定 `documents.document_id`，并调用：
+
+- `DocumentService.upsert_frozen_knowledge_document()`：幂等同步正文、版本、ACL、source、checksum 和受管元数据；内容变化时把状态恢复为 `frozen` 并清空 `indexed_at`。
+- `DocumentService.get_document()`：从 PostgreSQL 重新读取原始字节，再次解析 Front Matter 和校验 checksum；索引器不旁路 Service 直接读取 ORM。
+- `DocumentService.mark_documents_indexed()`：只有 Qdrant 全批写入成功后，才在单事务中把所有本批文档改为 `status=indexed` 并设置相同 `indexed_at`。
+
+重复同步相同 checksum 时保留既有 `indexed_at`；Qdrant 写入失败不会产生“数据库声称已索引”的部分状态。普通 `/documents` 上传仍使用随机 document ID 和初始 `status=stored`，不会被知识库 upsert 入口覆盖。
+
+## 7. 当前边界
 
 - P0-06 只实现持久化、接口和事务，不执行工具、检索、C++ 规划、仿真、LangGraph 主闭环或评测套件。
 - `tool_calls` 与 `effects` 已有 ORM/Repository/约束，但要等 P0-12/P0-13 的真实工具执行路径写入。
-- `documents.status` 当前为 `stored`，`indexed_at` 为 `null`；分块、向量化和混合检索属于 P0-07。
+- 普通上传文档仍是 `status=stored`、`indexed_at=null`；6 份 P0-07 冻结知识文档在当前成功索引后为 `status=indexed` 并带时间戳。
 - SSE 当前返回请求时已经持久化的有限事件快照，不实现长时间轮询或消息代理。

@@ -185,8 +185,18 @@ class DocumentRepository:
     def add(self, record: DocumentRecord) -> None:
         self.session.add(record)
 
-    def get(self, document_id: str) -> DocumentRecord | None:
-        return self.session.get(DocumentRecord, document_id)
+    def get(
+        self,
+        document_id: str,
+        *,
+        for_update: bool = False,
+    ) -> DocumentRecord | None:
+        statement = select(DocumentRecord).where(
+            DocumentRecord.document_id == document_id
+        )
+        if for_update:
+            statement = statement.with_for_update()
+        return self.session.scalar(statement)
 
 
 __all__ = [
