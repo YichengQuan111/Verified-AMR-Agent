@@ -259,6 +259,27 @@ P0-01/P0-03 涉及的全部文件、用途、学习顺序、修改前后差异�
 | 修改 | `docs/FILE_PURPOSES.md` | 登记本步所有 C++、CLI、测试、契约和交接文件职责。 | 文件职责入口保持完整，自动生成物与源码交付物分离。 |
 | 修改 | `docs/HANDOFF_CONTEXT.md` | 记录 P0-08 公共 API/JSON 契约、设计决策、真实测试、环境状态、限制和 P0-09 下一步。 | 下一 Agent 可直接复用 `task_allocator_cli` 和 7/7 CTest 事实。 |
 
+## 2026-08-20：P0-09 C++ A* 与时空预约表
+
+本步核心 C++ 代码均补充中文注释，重点说明 `(x,y,heading,t)` 数据流、曼哈顿启发式、动作代价、预约表顶点/交换边安全门禁、无解返回和 Dijkstra 独立边界；测试代码注释说明冲突反例和性能夹具。Markdown 文档只记录公共契约，因此无核心代码注释需求。`build/`、测试可执行文件和 CMake 中间文件属于自动生成物，不登记为源码交付物。
+
+| 变更 | 文件 | 作用 | 下游影响 |
+|---|---|---|---|
+| 修改 | `services/planner_cpp/CMakeLists.txt` | 新增 `route_planner` 静态库、`route_planner_cli` 和路由测试目标；保留 P0-08 目标，统一启用 C++17、MSVC `/utf-8` 和 CTest。 | P0-10 车队验证器可链接同一路径库，Python 后续通过固定 CLI 调用，不复制算法。 |
+| 新建 | `services/planner_cpp/include/route_planner/route_planner.hpp` | 定义地图/边、分配绑定、动作路径、计划结果、稳定错误、`ReservationTable` 及 A*/Dijkstra 公共入口。 | P0-10 Validator、P0-11 仿真和 P0-12 工具适配复用同一坐标/时间/路径语义。 |
+| 新建 | `services/planner_cpp/include/route_planner/json_codec.hpp` | 声明 route_planner 请求/响应 JSON 转换，复用 P0-08 严格 JSON 值模型但不复用任务分配逻辑。 | Python 调用方只依赖稳定 stdin/stdout 契约。 |
+| 新建 | `services/planner_cpp/src/route_planner.cpp` | 实现输入归一化、障碍/禁行边/单向边校验、按优先级调度、生产 A*、时空预约表和无解原因。 | 生产路线必须通过该确定性实现；失败不会隐式降级到 baseline。 |
+| 新建 | `services/planner_cpp/src/route_json_codec.cpp` | 实现 route_planner 的严格请求解析、稳定响应序列化和错误 envelope；拒绝未知字段、重复键、非有限数和越界坐标。 | P0-12 工具注册表可固定字段白名单和退出码，不读取任意路径。 |
+| 新建 | `services/planner_cpp/src/route_planner_main.cpp` | 提供 `route_planner_cli`，白名单 `astar/dijkstra`、4 MiB stdin 上限、业务不可行与输入/内部错误的稳定退出码。 | Python 后续通过固定工作目录和外部超时调用，不使用 `shell=True`。 |
+| 新建 | `services/planner_cpp/tests/route_planner_tests.cpp` | 覆盖障碍、边界、禁行边、单向边、等待、顶点预约、交换边预约、无解、Dijkstra 对照、可复现性、四车性能和 JSON 契约。 | CTest 为 P0-09 及 P0-10 回归提供 12 个独立门禁。 |
+| 新建 | `docs/ROUTE_PLANNER.md` | 记录算法边界、输入/输出 JSON、动作时间语义、预约安全规则、退出码和 CLI 示例；本步无核心代码注释需求。 | 跨语言消费者和后续 Validator 以此为路线契约唯一入口。 |
+| 修改 | `README.md` | 将 P0-09 标记完成，更新当前下一步、目录职责、CTest 统计并增加 A*/预约使用说明。 | 项目首页不再把路线/冲突处理描述成未来占位。 |
+| 修改 | `docs/PROJECT_SETUP.md` | 更新 `services/planner_cpp` 当前职责，并登记 route_planner CLI 和契约入口。 | 新会话能区分 P0-08 分配器与 P0-09 路径器。 |
+| 修改 | `docs/SERVICES_STARTUP.md` | 增加 route_planner 构建产物、A*/Dijkstra 调用和契约链接。 | Windows 启动/验收顺序可复用同一 MSVC/CMake 环境。 |
+| 修改 | `docs/LESSONS_LEARNED.md` | 记录 P0-09 的等待夹具与启发式/动作代价测试陷阱，避免把“可绕行”误测成“已等待”。 | 后续冲突/性能测试继续使用真实预约反例，而非只看结果状态。 |
+| 修改 | `docs/FILE_PURPOSES.md` | 登记本步全部路由源码、测试、CLI、契约和文档职责。 | 文件职责入口保持完整，自动生成物与源码交付物分离。 |
+| 修改 | `docs/HANDOFF_CONTEXT.md` | 记录 P0-09 公共 API/JSON、设计决策、实际测试、环境状态、限制和 P0-10 交接信息。 | 下一 Agent 可直接复用预约表、路径时间语义和 CTest 基线。 |
+
 ## 自动生成物
 
 以下内容不是源码，不需要逐文件登记：

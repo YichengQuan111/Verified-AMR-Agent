@@ -306,6 +306,15 @@ Get-Content .\request.json -Raw | .\build\cpp\services\planner_cpp\task_allocato
 
 字段、`INF` sentinel、不可行原因码和退出码见 [`TASK_ALLOCATOR.md`](TASK_ALLOCATOR.md)。在 `CMakeLists.txt` 尚未创建时，不执行上述构建命令。
 
+P0-09 构建后会生成 `build\cpp\services\planner_cpp\route_planner_cli.exe`。A* 是生产算法，Dijkstra 只用于正确性基线；两者都只通过 JSON stdin/stdout 工作：
+
+```powershell
+Get-Content .\route_request.json -Raw | .\build\cpp\services\planner_cpp\route_planner_cli.exe --algorithm astar
+Get-Content .\route_request.json -Raw | .\build\cpp\services\planner_cpp\route_planner_cli.exe --algorithm dijkstra
+```
+
+路线字段、预约冲突规则、失败退出码和 `infeasible` 业务结果见 [`ROUTE_PLANNER.md`](ROUTE_PLANNER.md)。
+
 ## 8. 一次开发会话的最小检查清单
 
 按顺序执行并确认全部通过：

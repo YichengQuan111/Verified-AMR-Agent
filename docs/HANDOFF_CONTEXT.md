@@ -1,8 +1,8 @@
 # AMR Agent 项目交接上下文
 
 最后更新：2026-08-20
-当前已完成：P0-00、P0-01、P0-02、P0-03、P0-04、P0-05、P0-06、P0-07、P0-08
-当前下一步：P0-09 实现 C++ A* 与时空预约
+当前已完成：P0-00、P0-01、P0-02、P0-03、P0-04、P0-05、P0-06、P0-07、P0-08、P0-09
+当前下一步：P0-10 实现 C++ 车队计划验证器
 
 ## 1. 文档用途与维护要求
 
@@ -196,6 +196,19 @@ CLI 为 `task_allocator_cli`，默认或 `--algorithm hungarian` 执行生产算
 
 详细字段、原因码、退出码和示例见 `docs/TASK_ALLOCATOR.md`。P0-08 没有修改 P0-07 RAG payload、阈值、collection 或数据库 revision。
 
+### 4.10 P0-09：C++ A* 与时空预约表
+
+公共 C++ 入口位于 `services/planner_cpp/include/route_planner/route_planner.hpp`，实现位于 `services/planner_cpp/src/route_planner.cpp`；JSON 编解码位于 `route_planner/json_codec.hpp` 与 `route_json_codec.cpp`。`route_planner` 复用 P0-04 的 `AMRState`、`TransportOrder`、`GridPosition` 和 P0-08 的 `Location`，不读取 `environment_ref` 对应的任意文件路径，地图快照必须随请求内存传入。
+
+公共 API 与固定决策：
+
+- `plan_routes_astar()` 是生产入口，状态为 `(x,y,heading,t)`；前进、左/右转和等待都消耗一个离散时间步，`move_cost/turn_cost/wait_cost` 进入 `g` 代价。启发式固定为 Manhattan 距离乘移动代价，不把转向/等待估计塞进启发式。
+- `plan_routes_dijkstra()` 是独立时间扩展 Dijkstra，使用自己的 `g` 开放表且 `h=0`，不调用 A*、不读取 A* 的开放/关闭集；它只能由调用方显式选择，不能作为生产失败 fallback。
+- `ReservationTable` 用 `(cell,t)` 登记顶点，用有向 `(edge,t)` 登记运动边；`can_transition()` 同时拒绝正向重复边和反向交换边。路径终点保持预约到 `max_time`，避免后续路线穿过停靠 AMR。
+- 多车按订单 `priority` 降序、`release_time` 升序、`order_id`、`amr_id` 稳定排序；每台车的完整 `pickup → dropoff` 路径成功后才写入预约表。任何车无安全路径时整体返回 `status=infeasible`，失败路线不填充 path。
+- 地图硬约束包含边界、`blocked_cells`、`blocked_edges`、`one_way_edges` 和有限 `max_time`。CLI 顶层请求字段固定为 `schema_version/environment_ref/map_width/map_height/blocked_cells/blocked_edges/one_way_edges/amrs/orders/location_positions/assignments/completed_order_ids/start_time/max_time/costs`；`assignments` 可直接使用 P0-08 输出中的 `components` 快照，但路线会重新计算；详细 JSON 和退出码见 `docs/ROUTE_PLANNER.md`。
+- 路由返回 `path` 的每个时刻、朝向、动作和累计 `g_cost`，并给出 `pickup_time/dropoff_time`；deadline 由 P0-10 Validator 做最终硬校验，本步不伪装为路线安全结论。
+
 ## 5. 最近验证证据
 
 ### 5.1 离线统一回归
@@ -212,6 +225,8 @@ P0-08 最终结果：
 - Python：110/110 通过；P0-08 没有修改 Python 运行时代码或 Schema，P0-04～P0-07 回归保持通过。
 - C++：在导入 `VsDevCmd.bat -arch=x64 -host_arch=x64` 后构建成功，CTest 7/7 通过；覆盖原有冒烟、正常、低电量、无可行、订单多于车辆、边界和 JSON 契约。
 - C++ `__cplusplus`：201703（C++17）。
+- P0-09 增量验证：在导入 `VsDevCmd.bat -arch=x64 -host_arch=x64` 后，`route_planner`/CLI/测试目标构建成功；专项 CTest 12/12 通过；完整 CTest 19/19 通过，覆盖障碍、边界、禁行边、单向边、等待、顶点冲突、交换边冲突、无解、Dijkstra、可复现性、性能和 JSON 契约。`route_planner_tests --case performance` 实测 `performance_ms=4`、`expanded_states=88`。
+- P0-09 CLI 冒烟：`route_planner_cli --version` 输出 `0.1.0`/C++17；同一 5×3 请求的 A* 与 Dijkstra 都返回 complete，路径/代价一致，A* 扩展 5 个状态、Dijkstra 扩展 51 个状态。
 - Alembic：重复 `upgrade` 成功，当前 revision 为 `0001_p006_core (head)`；8 张核心表缺失数 0，辅助表只有 `alembic_version`。
 - Qdrant 健康门禁通过，正式 collection 存在；集成测试只删除自己的 UUID collection。PostgreSQL/Qdrant 测试行/点均按精确 ID 清理，6 份正式知识文档和 70 个正式 points 保留。
 - 完成本步后外部状态复核：`docker compose ps` 显示 `amr-postgres`/`amr-qdrant` 运行，5432/6333 监听；8000/8080 未监听，未启动 FastAPI 或文本 Qwen。
@@ -362,9 +377,11 @@ DAG 使用 `agent.planning.dag.topological_sort()` 中的 Kahn 算法：计算�
 ## 8. 已知限制与注意事项
 
 - P0-06 API/Service 已实际消费 `TaskContract`、`PlanTasksOutput` 和 `PlanTask` 并把快照写入 PostgreSQL；C++、仿真器和工具注册表的跨语言/跨服务兼容性仍需后续工作包验证。
-- 完整 `warehouse_v1.json` 通过 `environment_ref` 引用，不属于本次要求的八个核心 Schema；本次只验证 AMR/订单种子和所有内嵌 `GridPosition`。P0-09 如需独立地图输入 Schema，应在不改变现有坐标表示的前提下补充。
+- 完整 `warehouse_v1.json` 通过 `environment_ref` 标识，不属于本次要求的八个核心 Schema；P0-09 的 C++ CLI 使用 `docs/ROUTE_PLANNER.md` 定义的独立严格地图 envelope，并要求调用方把已获取的地图快照显式传入，不能让 C++ 按 ref 自行读文件。
 - 九个工具目前只有名称和顶层参数契约，没有任何工具实现、JSON Schema 执行器或角色认证；这些分别属于 P0-12 和 P0-16。
-- P0-08 已实现 Hungarian 分配与 baseline；P0-09/P0-10 尚未实现路径、时空预约和车队计划验证。
+- P0-08 已实现 Hungarian 分配与 baseline；P0-09 已实现路径与时空预约，但尚未实现 P0-10 车队计划 Validator、P0-11 仿真、P0-12 工具注册表或 Python 调用适配。
+- P0-09 采用按优先级的 prioritized planning，不实现 Scope 明确排除的 CBS/ECBS；在固定顺序下若后续车辆无安全解会返回 infeasible，不会回溯重排或忽略冲突。route_planner 当前没有独立 Pydantic 地图 Schema，跨语言调用应先按 `docs/ROUTE_PLANNER.md` 的严格 JSON envelope 适配。
+- P0-09 不直接控制底盘、不从 `environment_ref` 读取地图、不做安全距离/工位容量/最终 deadline 校验；这些边界继续由 P0-10/P0-11/P0-12 负责。
 - API 已有第 4.7 节的 8 个业务接口，但没有身份认证/授权中间件。P0-07 检索器会执行给定 `UserRole` 的 ACL，然而角色真实性仍由未来 P0-16 认证/授权层保证；外部调用方不能被允许自行声称 operator。
 - PostgreSQL 已接入业务仓储层，Qdrant 已由 P0-07 正式使用；BM25 按 P0 Scope 保持进程内，重启时从同一 frozen 语料重建。
 - `requirements.lock` 锁定的是直接依赖，不是完整传递依赖快照。
@@ -491,3 +508,14 @@ DAG 使用 `agent.planning.dag.topological_sort()` 中的 Kahn 算法：计算�
 - 外部服务当前状态：P0-08 算法本身不依赖模型、FastAPI、PostgreSQL 或 Qdrant，也没有改变这些服务；统一 smoke 使用现有 PostgreSQL/Qdrant。结束复核显示 `amr-postgres`/`amr-qdrant` 运行且 5432/6333 监听，8000/8080 未监听。C++ 构建依赖固定 MSVC/CMake/Ninja 路径并需要先初始化开发环境。
 - 已知限制/风险：JSON 编解码器是本模块严格子集，不是通用 JSON 库；后续若扩展请求字段必须同步文档、解析门禁和 CTest。分配器不处理实际障碍/路径冲突；`TransportOrder` 没有订单重量，当前负载只能作为代价和已超上限阻断，不能替代未来订单容量字段。
 - 下一步直接需要的信息：P0-09 应从 `AllocationResult.assignments` 或 CLI `assignments` 读取 AMR/订单匹配，复用 `location_positions` 与 P0-04 嵌套坐标；路线合法性必须在 A*/Validator 中重新裁决，不能把 P0-08 的 Manhattan 距离当作可执行路径。启动下一步前先检查 `docs/TASK_ALLOCATOR.md`、P0-04 Schema 和当前 CTest 7/7 基线。
+
+### 2026-08-20 · P0-09 C++ A* 与时空预约表
+
+- 完成：新增 `route_planner` 静态库、`route_planner_cli` 和独立 `route_planner_tests`；实现 `(x,y,heading,t)` A*、前进/转向/等待代价、曼哈顿启发式、按优先级的多车规划、`(cell,t)` 顶点预约、`(edge,t)` 交换边预约、障碍/禁行边/单向边/边界硬约束和明确 `infeasible` 结果。
+- 完成：实现完全独立的时间扩展 Dijkstra baseline；它不调用 A*，不作为生产失败 fallback。路径输出包含逐时刻位置/朝向/动作/累计代价，终点占用保持预约到 `max_time`。
+- 新增/变化的公共接口：`RouteMap`、`RouteAssignment`、`RouteRequest`、`RouteStep`、`PlannedRoute`、`RoutePlanResult`、`RouteError`、`ReservationTable`、`plan_routes_astar()`、`plan_routes_dijkstra()`、`plan_multi_amr_routes()`；CLI `--algorithm astar|dijkstra`，JSON schema_version 固定为 `1.0`，assignment 可接收 P0-08 的可选 `components` 审计快照，具体字段见 `docs/ROUTE_PLANNER.md`。没有修改 P0-04 Pydantic Schema、数据库字段或迁移。
+- 关键设计决策：路线输入必须携带内存地图快照，`environment_ref` 只作为审计标识，防止 C++ 从不受控路径读取或猜测环境；prioritized planning 固定使用 priority/release/ID tie-break，不实现 Scope 排除的 CBS/ECBS；deadline 仍交给 P0-10 最终 Validator。
+- 验证命令与结果：`.\scripts\run_smoke.ps1` 实际通过，环境/依赖门禁、Alembic/Qdrant 检查通过，Python `110 passed, 1 warning`；CMake/C++ 构建成功；完整 `ctest --test-dir build/cpp --output-on-failure` 为 `19/19` 通过，其中 P0-09 专项为 `12/12`；性能场景实测 `performance_ms=4`、`expanded_states=88`。唯一警告是既有 jieba `pkg_resources` 弃用警告，不影响结果。
+- 外部服务当前状态：本步没有启动模型、FastAPI、PostgreSQL 或 Qdrant；smoke 复核显示 PostgreSQL/Qdrant 容器与 5432/6333 正常，8000/8080 未监听。C++ 构建仍依赖固定 MSVC/CMake/Ninja 路径，必须先导入 `E:\BuildingTools\Common7\Tools\VsDevCmd.bat`。
+- 已知限制/风险：当前是固定优先级顺序的 prioritized planning，后续车无安全路径直接整体不可行，不回溯换序；未实现 P0-10 的安全距离、工位容量、deadline/载荷/电量最终校验，未接入 P0-12 Python 工具注册表；当前没有独立地图 Pydantic Schema，任何跨语言消费者必须严格遵守 route JSON 文档。
+- 下一步直接需要的信息：P0-10 应直接消费 `RoutePlanResult.routes[*].path` 和 `ReservationTable` 的冲突语义，再验证时间窗、工位容量、安全距离、电量等业务/运动规则；P0-12 适配时调用固定 `route_planner_cli.exe`，不要把 Dijkstra 当 fallback，也不要让 LLM 绕过 `status=infeasible`。

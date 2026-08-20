@@ -4,6 +4,22 @@ add_library(task_allocator STATIC src/task_allocator.cpp src/json_codec.cpp)
 target_include_directories(task_allocator PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_compile_features(task_allocator PUBLIC cxx_std_17)
 
+# P0-09 路径库复用 P0-08 的领域结构和严格 JSON 值模型，但不复用任务分配
+# 算法；A* 与 Dijkstra 的搜索实现均只在 route_planner 内部访问地图和预约表。
+add_library(route_planner STATIC src/route_planner.cpp src/route_json_codec.cpp)
+target_include_directories(route_planner PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(route_planner PUBLIC task_allocator)
+target_compile_features(route_planner PUBLIC cxx_std_17)
+
+# route_planner_cli 是 Python 后续通过固定可执行文件调用的 JSON 边界；算法
+# 参数显式二选一，避免把 Dijkstra 误当成生产 A* 的隐式失败回退。
+add_executable(route_planner_cli src/route_planner_main.cpp)
+target_link_libraries(route_planner_cli PRIVATE route_planner)
+target_compile_definitions(
+  route_planner_cli
+  PRIVATE AMR_AGENT_VERSION="${PROJECT_VERSION}"
+)
+
 # 保留 P0-01 工程冒烟入口，避免新算法替换后丢失原有构建门禁。
 add_executable(amr_planner_smoke src/main.cpp)
 
@@ -20,6 +36,11 @@ target_compile_definitions(
 add_executable(task_allocator_tests tests/task_allocator_tests.cpp)
 target_link_libraries(task_allocator_tests PRIVATE task_allocator)
 
+# 路由测试按场景拆成独立 CTest，失败时可以直接定位到障碍、预约、无解或
+# 性能门禁；测试只使用公共 route_planner 头，不复制生产搜索实现。
+add_executable(route_planner_tests tests/route_planner_tests.cpp)
+target_link_libraries(route_planner_tests PRIVATE route_planner)
+
 # 同时在目标级别声明 C++17，防止该子模块被其他顶层工程引用时丢失约束。
 target_compile_features(amr_planner_smoke PRIVATE cxx_std_17)
 # 把顶层 project 版本编译进程序，--version 输出无需运行时读取文件。
@@ -28,7 +49,7 @@ target_compile_definitions(
   PRIVATE AMR_AGENT_VERSION="${PROJECT_VERSION}"
 )
 
-set(PLANNER_CPP_TARGETS task_allocator amr_planner_smoke task_allocator_cli task_allocator_tests)
+set(PLANNER_CPP_TARGETS task_allocator route_planner route_planner_cli amr_planner_smoke task_allocator_cli task_allocator_tests route_planner_tests)
 foreach(target_name IN LISTS PLANNER_CPP_TARGETS)
   if(MSVC)
     # /utf-8 让 MSVC 按 UTF-8 读取中文注释；/Zc:__cplusplus 让
@@ -56,4 +77,18 @@ if(BUILD_TESTING)
   add_test(NAME task_allocator_more_orders COMMAND task_allocator_tests --case more_orders)
   add_test(NAME task_allocator_edge_cases COMMAND task_allocator_tests --case edge_cases)
   add_test(NAME task_allocator_json_contract COMMAND task_allocator_tests --case json_contract)
+
+  add_test(NAME route_planner_obstacles COMMAND route_planner_tests --case obstacles)
+  add_test(NAME route_planner_boundary COMMAND route_planner_tests --case boundary)
+  add_test(NAME route_planner_forbidden_edges COMMAND route_planner_tests --case forbidden_edges)
+  add_test(NAME route_planner_one_way_edges COMMAND route_planner_tests --case one_way_edges)
+  add_test(NAME route_planner_wait COMMAND route_planner_tests --case wait)
+  add_test(NAME route_planner_vertex_conflict COMMAND route_planner_tests --case vertex_conflict)
+  add_test(NAME route_planner_swap_edge_conflict COMMAND route_planner_tests --case swap_edge_conflict)
+  add_test(NAME route_planner_no_solution COMMAND route_planner_tests --case no_solution)
+  add_test(NAME route_planner_dijkstra_baseline COMMAND route_planner_tests --case dijkstra_baseline)
+  add_test(NAME route_planner_reproducibility COMMAND route_planner_tests --case reproducibility)
+  add_test(NAME route_planner_performance COMMAND route_planner_tests --case performance)
+  add_test(NAME route_planner_json_contract COMMAND route_planner_tests --case json_contract)
+  set_tests_properties(route_planner_performance PROPERTIES TIMEOUT 5)
 endif()

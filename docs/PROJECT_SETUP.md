@@ -14,7 +14,7 @@
 | `services/persistence` | P0-06 SQLAlchemy ORM、会话工厂与无事务 Repository |
 | `services/retrieval` | P0-07 Loader、section chunk、Embedding、Qdrant/BM25、ACL、融合、引用与拒答 |
 | `evals/rag` | P0-07 固定 20 例数据及 Recall/MRR/Citation/ACL 执行器 |
-| `services/planner_cpp` | P0-08 C++17 `task_allocator` 库、Hungarian/最近空闲 baseline、JSON CLI 和 CTest；P0-09/P0-10 继续扩展同一服务 |
+| `services/planner_cpp` | P0-08 `task_allocator` 与 P0-09 `route_planner` C++17 库、独立 baseline、JSON CLI 和 CTest；P0-10 继续扩展同一服务 |
 | `services/amr_simulator` | 后续离散事件仿真 |
 | `services/validation` | 后续受控测试和证据报告 |
 | `evals` | 版本化评测集与 Harness |
@@ -72,3 +72,5 @@ E:\Anaconda\envs\torch128\python.exe
 构建产物固定写入 `build/cpp`，不与源码混放。
 
 P0-08 的 CLI 目标为 `task_allocator_cli`，生产算法使用 `--algorithm hungarian`，独立基线使用 `--algorithm nearest_idle`；请求/响应契约见 [TASK_ALLOCATOR.md](TASK_ALLOCATOR.md)。
+
+P0-09 的 CLI 目标为 `route_planner_cli`，生产算法使用 `--algorithm astar`，独立基线使用 `--algorithm dijkstra`；请求/响应契约见 [ROUTE_PLANNER.md](ROUTE_PLANNER.md)。

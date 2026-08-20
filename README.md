@@ -13,7 +13,7 @@
   → 带引用的证据报告
 ```
 
-当前已经完成 **P0-00～P0-08**，下一工作包是 **P0-09：A* 路径规划**。
+当前已经完成 **P0-00～P0-09**，下一工作包是 **P0-10：车队计划验证**。
 
 ## 1. 固定范围
 
@@ -40,8 +40,9 @@
 | P0-06 | 已完成 | FastAPI、Router/Service/Repository、8 张 PostgreSQL 核心表、事务回滚和接口集成测试。 |
 | P0-07 | 已完成 | 6 份冻结文档、章节切块、本地 Embedding、Qdrant + BM25 混合检索、检索期 ACL、引用、拒答和 20 例评测。 |
 | P0-08 | 已完成 | 独立 C++17 `task_allocator` 库、Hungarian/最近空闲 baseline、严格 JSON stdin/stdout 和 7 个 CTest 场景。 |
+| P0-09 | 已完成 | 独立 C++17 `route_planner`、A*、时空 `(cell,t)/(edge,t)` 预约、Dijkstra baseline、严格 JSON CLI 和 12 个路由 CTest 场景。 |
 
-明确尚未实现：P0-09～10 C++ 算法、P0-11 仿真、P0-12 工具注册表、P0-13 LangGraph 主闭环及其后续能力。
+明确尚未实现：P0-10 车队计划验证、P0-11 仿真、P0-12 工具注册表、P0-13 LangGraph 主闭环及其后续能力。
 
 ## 3. 已落地架构
 
@@ -107,7 +108,7 @@ BEGIN → INSERT runs → flush → INSERT events → flush → COMMIT
 | `services/application/` | 运行、计划、审批和文档事务 Service。 |
 | `services/persistence/` | SQLAlchemy ORM、Session 工厂和 Repository。 |
 | `services/retrieval/` | P0-07 文档加载、分块、Embedding、Qdrant/BM25、混合融合、ACL、拒答与引用。 |
-| `services/planner_cpp/` | P0-08 C++17 Hungarian 任务分配、最近空闲 baseline、严格 JSON 编解码和 CTest。 |
+| `services/planner_cpp/` | P0-08 C++17 Hungarian/最近空闲分配与 P0-09 A*/Dijkstra 路径、时空预约、严格 JSON 编解码和 CTest。 |
 | `evals/rag/` | 20 例固定 RAG 数据与 Recall/MRR/Citation/ACL 执行器。 |
 | `domains/amr_warehouse/` | 仓储领域契约和种子数据。 |
 | `migrations/` | Alembic 前向迁移。 |
@@ -168,7 +169,7 @@ docker compose ps
 最近一次完整验证基线（2026-08-20）：
 
 - pytest：110/110 通过。
-- P0-08 CTest：7/7 通过（含原有 C++ 工程冒烟、正常/低电量/无可行/订单多于车辆/边界/JSON 契约）。
+- CTest：19/19 通过（含原有 C++ 工程冒烟、P0-08 7 个回归和 P0-09 12 个路由/冲突/性能/JSON 场景）。
 - Alembic：`0001_p006_core (head)`，8 张核心表缺失数 0。
 - Qdrant：健康检查通过，`amr_warehouse_knowledge` 保留 70 个正式 points。
 - Fast Qwen：基础结构化输出 20/20；5 个 P0-05 2-shot 节点 5/5。
@@ -219,7 +220,17 @@ Get-Content .\request.json -Raw | .\build\cpp\services\planner_cpp\task_allocato
 
 P0-08 只用 Manhattan 距离做分配代价，不处理障碍、单向边、时空冲突或实际路线；这些由 P0-09/P0-10 负责。
 
-## 10. 协作与交接入口
+## 10. P0-09 C++ A* 与时空预约
+
+`route_planner` 使用 `(x, y, heading, t)` 时间扩展状态，前进、转向和等待都有明确代价；生产 A* 使用曼哈顿启发式，独立 Dijkstra 只作为正确性基线。多 AMR 按订单优先级、发布时间和稳定 ID 规划，路径写入 `(cell,t)` 与 `(edge,t)` 预约表，禁止顶点冲突和交换边冲突。障碍、禁行边、单向边、边界和有限 `max_time` 都是硬约束，无解时返回 `status=infeasible` 且失败路线不携带路径。
+
+请求/响应字段、动作时间语义、退出码和调用示例见 [docs/ROUTE_PLANNER.md](docs/ROUTE_PLANNER.md)。编译后可直接执行：
+
+```powershell
+Get-Content .\route_request.json -Raw | .\build\cpp\services\planner_cpp\route_planner_cli.exe --algorithm astar
+```
+
+## 11. 协作与交接入口
 
 开始任何新任务前，按顺序阅读：
 
