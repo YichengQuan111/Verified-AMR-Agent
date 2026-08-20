@@ -1,0 +1,120 @@
+{
+  "$defs": {
+    "VerificationCaseOutput": {
+      "additionalProperties": false,
+      "description": "一个固定验证命令的结果摘要，不把可执行命令暴露成输入契约。",
+      "properties": {
+        "case_id": {
+          "title": "Case Id",
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "passed",
+            "failed",
+            "timeout"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "exit_code": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Exit Code"
+        },
+        "duration_ms": {
+          "minimum": 0,
+          "title": "Duration Ms",
+          "type": "integer"
+        },
+        "stdout_digest": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Stdout Digest",
+          "type": "string"
+        },
+        "stderr_digest": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Stderr Digest",
+          "type": "string"
+        }
+      },
+      "required": [
+        "case_id",
+        "status",
+        "exit_code",
+        "duration_ms",
+        "stdout_digest",
+        "stderr_digest"
+      ],
+      "title": "VerificationCaseOutput",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "受控验证套件的汇总。",
+  "properties": {
+    "suite_id": {
+      "title": "Suite Id",
+      "type": "string"
+    },
+    "run_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Run Id"
+    },
+    "status": {
+      "enum": [
+        "passed",
+        "failed",
+        "timeout"
+      ],
+      "title": "Status",
+      "type": "string"
+    },
+    "case_count": {
+      "minimum": 0,
+      "title": "Case Count",
+      "type": "integer"
+    },
+    "passed_count": {
+      "minimum": 0,
+      "title": "Passed Count",
+      "type": "integer"
+    },
+    "failed_count": {
+      "minimum": 0,
+      "title": "Failed Count",
+      "type": "integer"
+    },
+    "cases": {
+      "items": {
+        "$ref": "#/$defs/VerificationCaseOutput"
+      },
+      "title": "Cases",
+      "type": "array"
+    }
+  },
+  "required": [
+    "suite_id",
+    "run_id",
+    "status",
+    "case_count",
+    "passed_count",
+    "failed_count",
+    "cases"
+  ],
+  "title": "VerificationSuiteOutput",
+  "type": "object"
+}

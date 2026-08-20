@@ -324,6 +324,45 @@ Get-Content .\fleet_plan_request.json -Raw | .\build\cpp\services\planner_cpp\fl
 
 业务非法计划使用退出码 `0` 并在 JSON 中返回 `status=invalid`、稳定错误码和定位证据；输入契约/参数错误使用退出码 `2`，内部错误使用退出码 `3`。请求字段、错误字典、证据结构和离散时间边界见 [`FLEET_PLAN_VALIDATOR.md`](FLEET_PLAN_VALIDATOR.md)。
 
+## 7.1 P0-11 Python 仿真
+
+P0-11 不启动常驻服务。调用方在已构建 P0-10 CLI 的项目根目录运行：
+
+```powershell
+& 'E:\Anaconda\envs\torch128\python.exe' -m pytest tests\unit\test_p011_simulator.py -q
+```
+
+业务调用使用 `services.amr_simulator.AMRSimulator`。它会先以固定可执行文件和
+JSON stdin 调用 P0-10；Validator 不是 `valid` 时仿真立即失败，不会回退到 Python
+自判。通过后按 P0-09 `path[*].time` 推进 1 秒 tick，输出 P0-04 Observation、
+事件日志、充电站快照和可选 Eval 故障注入。完整边界见 [`AMR_SIMULATOR.md`](AMR_SIMULATOR.md)。
+
+## 7.2 P0-12 白名单工具
+
+P0-12 不启动新的常驻服务。固定 C++ 产物和 Python 依赖准备好后，从项目根目录
+构造统一注册表：
+
+```powershell
+& 'E:\Anaconda\envs\torch128\python.exe' -c "from agent.tools import build_tool_registry; print([item.tool_name.value for item in build_tool_registry().specs()])"
+```
+
+输出必须恰好包含九个工具：`retrieve_knowledge`、`get_fleet_state`、
+`allocate_tasks`、`plan_multi_amr_routes`、`validate_fleet_plan`、
+`dispatch_simulation`、`query_execution_state`、`run_verification_suite`、
+`request_approval`。分配、A*、Validator 的 Python 适配器只会调用本节前文列出的
+三个固定 exe，使用 `shell=False`、JSON stdin/stdout 和工具级超时；没有固定构建产物
+时工具返回 `unavailable`，不会改用 PATH 中的同名程序或任意命令。
+
+运行 P0-12 专项契约/安全测试：
+
+```powershell
+& 'E:\Anaconda\envs\torch128\python.exe' -m pytest tests\unit\test_p012_tools.py -q
+```
+
+详细 Schema、角色、幂等、副作用和失败映射见 [`P012_TOOLS.md`](P012_TOOLS.md)。
+`retrieve_knowledge` 只有实际调用时才连接 Qdrant/Embedding；默认状态/审批存储是
+进程内适配器，后续可在组装注册表时替换为 P0-06/P0-16 实现。
+
 ## 8. 一次开发会话的最小检查清单
 
 按顺序执行并确认全部通过：

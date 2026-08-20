@@ -1,0 +1,317 @@
+{
+  "$defs": {
+    "AllocationAssignmentOutput": {
+      "additionalProperties": false,
+      "properties": {
+        "amr_id": {
+          "title": "Amr Id",
+          "type": "string"
+        },
+        "order_id": {
+          "title": "Order Id",
+          "type": "string"
+        },
+        "components": {
+          "$ref": "#/$defs/AllocationCostBreakdown"
+        }
+      },
+      "required": [
+        "amr_id",
+        "order_id",
+        "components"
+      ],
+      "title": "AllocationAssignmentOutput",
+      "type": "object"
+    },
+    "AllocationCandidateReason": {
+      "additionalProperties": false,
+      "properties": {
+        "amr_id": {
+          "title": "Amr Id",
+          "type": "string"
+        },
+        "reason_codes": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Reason Codes",
+          "type": "array"
+        },
+        "reasons": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Reasons",
+          "type": "array"
+        }
+      },
+      "required": [
+        "amr_id",
+        "reason_codes",
+        "reasons"
+      ],
+      "title": "AllocationCandidateReason",
+      "type": "object"
+    },
+    "AllocationCostBreakdown": {
+      "additionalProperties": false,
+      "description": "P0-08 返回的可解释代价分解。",
+      "properties": {
+        "distance_to_pickup": {
+          "title": "Distance To Pickup",
+          "type": "number"
+        },
+        "route_distance": {
+          "title": "Route Distance",
+          "type": "number"
+        },
+        "estimated_completion_time": {
+          "title": "Estimated Completion Time",
+          "type": "number"
+        },
+        "lateness_risk": {
+          "title": "Lateness Risk",
+          "type": "number"
+        },
+        "priority_bonus": {
+          "title": "Priority Bonus",
+          "type": "number"
+        },
+        "battery_risk": {
+          "title": "Battery Risk",
+          "type": "number"
+        },
+        "estimated_battery_after": {
+          "title": "Estimated Battery After",
+          "type": "number"
+        },
+        "load_penalty": {
+          "title": "Load Penalty",
+          "type": "number"
+        },
+        "total_cost": {
+          "title": "Total Cost",
+          "type": "number"
+        }
+      },
+      "required": [
+        "distance_to_pickup",
+        "route_distance",
+        "estimated_completion_time",
+        "lateness_risk",
+        "priority_bonus",
+        "battery_risk",
+        "estimated_battery_after",
+        "load_penalty",
+        "total_cost"
+      ],
+      "title": "AllocationCostBreakdown",
+      "type": "object"
+    },
+    "AllocationPairOutput": {
+      "additionalProperties": false,
+      "properties": {
+        "amr_id": {
+          "title": "Amr Id",
+          "type": "string"
+        },
+        "order_id": {
+          "title": "Order Id",
+          "type": "string"
+        },
+        "cost": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "const": "INF",
+              "type": "string"
+            }
+          ],
+          "title": "Cost"
+        },
+        "reason_codes": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Reason Codes",
+          "type": "array"
+        },
+        "reasons": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Reasons",
+          "type": "array"
+        },
+        "status": {
+          "enum": [
+            "feasible",
+            "infeasible"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "components": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AllocationCostBreakdown"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "amr_id",
+        "order_id",
+        "cost",
+        "reason_codes",
+        "reasons",
+        "status",
+        "components"
+      ],
+      "title": "AllocationPairOutput",
+      "type": "object"
+    },
+    "AllocationUnassignedOrder": {
+      "additionalProperties": false,
+      "properties": {
+        "order_id": {
+          "title": "Order Id",
+          "type": "string"
+        },
+        "reason_code": {
+          "title": "Reason Code",
+          "type": "string"
+        },
+        "reason_codes": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Reason Codes",
+          "type": "array"
+        },
+        "candidate_reasons": {
+          "items": {
+            "$ref": "#/$defs/AllocationCandidateReason"
+          },
+          "title": "Candidate Reasons",
+          "type": "array"
+        }
+      },
+      "required": [
+        "order_id",
+        "reason_code",
+        "reason_codes",
+        "candidate_reasons"
+      ],
+      "title": "AllocationUnassignedOrder",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "P0-08 JSON 响应；INF 只能是字符串，不能污染标准 JSON。",
+  "properties": {
+    "algorithm": {
+      "const": "hungarian",
+      "title": "Algorithm",
+      "type": "string"
+    },
+    "amr_ids": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Amr Ids",
+      "type": "array"
+    },
+    "assignments": {
+      "items": {
+        "$ref": "#/$defs/AllocationAssignmentOutput"
+      },
+      "title": "Assignments",
+      "type": "array"
+    },
+    "cost_matrix": {
+      "items": {
+        "items": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "const": "INF",
+              "type": "string"
+            }
+          ]
+        },
+        "type": "array"
+      },
+      "title": "Cost Matrix",
+      "type": "array"
+    },
+    "order_ids": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Order Ids",
+      "type": "array"
+    },
+    "pair_evaluations": {
+      "items": {
+        "$ref": "#/$defs/AllocationPairOutput"
+      },
+      "title": "Pair Evaluations",
+      "type": "array"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "status": {
+      "enum": [
+        "complete",
+        "partial",
+        "no_feasible_assignment"
+      ],
+      "title": "Status",
+      "type": "string"
+    },
+    "total_cost": {
+      "title": "Total Cost",
+      "type": "number"
+    },
+    "unassigned_amrs": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Unassigned Amrs",
+      "type": "array"
+    },
+    "unassigned_orders": {
+      "items": {
+        "$ref": "#/$defs/AllocationUnassignedOrder"
+      },
+      "title": "Unassigned Orders",
+      "type": "array"
+    }
+  },
+  "required": [
+    "algorithm",
+    "amr_ids",
+    "assignments",
+    "cost_matrix",
+    "order_ids",
+    "pair_evaluations",
+    "schema_version",
+    "status",
+    "total_cost",
+    "unassigned_amrs",
+    "unassigned_orders"
+  ],
+  "title": "AllocationResponse",
+  "type": "object"
+}

@@ -1,0 +1,64 @@
+{
+  "$defs": {
+    "JsonValue": {}
+  },
+  "additionalProperties": false,
+  "description": "运行状态查询输出；snapshot 保留来源系统的完整 JSON 快照。",
+  "properties": {
+    "run_id": {
+      "title": "Run Id",
+      "type": "string"
+    },
+    "source": {
+      "enum": [
+        "run_state",
+        "simulation"
+      ],
+      "title": "Source",
+      "type": "string"
+    },
+    "status": {
+      "title": "Status",
+      "type": "string"
+    },
+    "selected_task_ids": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Selected Task Ids",
+      "type": "array"
+    },
+    "selected_amr_ids": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Selected Amr Ids",
+      "type": "array"
+    },
+    "snapshot": {
+      "additionalProperties": {
+        "$ref": "#/$defs/JsonValue"
+      },
+      "title": "Snapshot",
+      "type": "object"
+    },
+    "evidence_refs": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Evidence Refs",
+      "type": "array"
+    }
+  },
+  "required": [
+    "run_id",
+    "source",
+    "status",
+    "selected_task_ids",
+    "selected_amr_ids",
+    "snapshot",
+    "evidence_refs"
+  ],
+  "title": "ExecutionStateOutput",
+  "type": "object"
+}

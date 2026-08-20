@@ -67,43 +67,57 @@
       "title": "AMRTaskStatus",
       "type": "string"
     },
-    "ApprovalRequirement": {
+    "ChargingStationState": {
       "additionalProperties": false,
-      "description": "任务合同中的人工审批门禁。",
+      "description": "充电站占用和累计供电的结构化快照。",
       "properties": {
-        "required": {
-          "title": "Required",
-          "type": "boolean"
+        "station_id": {
+          "minLength": 1,
+          "title": "Station Id",
+          "type": "string"
         },
-        "reason": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "title": "Reason"
+        "position": {
+          "$ref": "#/$defs/GridPosition"
         },
-        "required_role": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/UserRole"
-            },
-            {
-              "type": "null"
-            }
-          ]
+        "capacity": {
+          "title": "Capacity",
+          "type": "integer"
+        },
+        "status": {
+          "$ref": "#/$defs/ChargingStationStatus"
+        },
+        "charging_amr_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Charging Amr Ids",
+          "type": "array"
+        },
+        "total_energy_delivered_percent": {
+          "minimum": 0.0,
+          "title": "Total Energy Delivered Percent",
+          "type": "number"
         }
       },
       "required": [
-        "required",
-        "reason",
-        "required_role"
+        "station_id",
+        "position",
+        "capacity",
+        "status",
+        "charging_amr_ids",
+        "total_energy_delivered_percent"
       ],
-      "title": "ApprovalRequirement",
+      "title": "ChargingStationState",
       "type": "object"
+    },
+    "ChargingStationStatus": {
+      "description": "充电站在当前 tick 的资源状态。",
+      "enum": [
+        "available",
+        "occupied"
+      ],
+      "title": "ChargingStationStatus",
+      "type": "string"
     },
     "ConnectionStatus": {
       "description": "AMR 与控制系统的连接状态。",
@@ -168,59 +182,6 @@
       ],
       "title": "ConstraintViolation",
       "type": "object"
-    },
-    "ExecutionBudgets": {
-      "additionalProperties": false,
-      "description": "一次 Agent 运行的硬预算；所有计数都是上限。",
-      "properties": {
-        "max_total_seconds": {
-          "exclusiveMinimum": 0,
-          "title": "Max Total Seconds",
-          "type": "integer"
-        },
-        "max_input_tokens": {
-          "exclusiveMinimum": 0,
-          "title": "Max Input Tokens",
-          "type": "integer"
-        },
-        "max_output_tokens": {
-          "exclusiveMinimum": 0,
-          "title": "Max Output Tokens",
-          "type": "integer"
-        },
-        "max_tool_steps": {
-          "exclusiveMinimum": 0,
-          "title": "Max Tool Steps",
-          "type": "integer"
-        },
-        "max_replans": {
-          "maximum": 2,
-          "minimum": 0,
-          "title": "Max Replans",
-          "type": "integer"
-        }
-      },
-      "required": [
-        "max_total_seconds",
-        "max_input_tokens",
-        "max_output_tokens",
-        "max_tool_steps",
-        "max_replans"
-      ],
-      "title": "ExecutionBudgets",
-      "type": "object"
-    },
-    "FallbackStrategy": {
-      "description": "步骤失败后允许选择的确定性处置方向。",
-      "enum": [
-        "retry",
-        "replan",
-        "fallback",
-        "human",
-        "fatal"
-      ],
-      "title": "FallbackStrategy",
-      "type": "string"
     },
     "GridPosition": {
       "additionalProperties": false,
@@ -392,125 +353,119 @@
       "title": "ObservationStatus",
       "type": "string"
     },
-    "PlanTask": {
+    "SimulationEvent": {
       "additionalProperties": false,
-      "description": "计划 DAG 中一个可独立校验、执行和追踪的原子步骤。",
+      "description": "单个确定性仿真事件。\n\n``time`` 是离散仿真秒，不使用墙上时钟；``payload`` 只保存 JSON 值，便于\n后续 P0-06 events、Trace 和 Eval 直接序列化而不执行任意对象。",
       "properties": {
-        "task_id": {
+        "event_id": {
           "minLength": 1,
-          "title": "Task Id",
+          "title": "Event Id",
           "type": "string"
         },
-        "dependencies": {
-          "items": {
-            "type": "string"
-          },
-          "title": "Dependencies",
-          "type": "array"
+        "simulation_id": {
+          "minLength": 1,
+          "title": "Simulation Id",
+          "type": "string"
         },
-        "tool_name": {
-          "$ref": "#/$defs/ToolName"
+        "time": {
+          "minimum": 0,
+          "title": "Time",
+          "type": "integer"
         },
-        "tool_arguments": {
+        "event_type": {
+          "minLength": 1,
+          "title": "Event Type",
+          "type": "string"
+        },
+        "severity": {
+          "enum": [
+            "info",
+            "warning",
+            "error"
+          ],
+          "title": "Severity",
+          "type": "string"
+        },
+        "amr_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Amr Id"
+        },
+        "order_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Order Id"
+        },
+        "workstation_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Workstation Id"
+        },
+        "charging_station_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Charging Station Id"
+        },
+        "payload": {
           "additionalProperties": {
             "$ref": "#/$defs/JsonValue"
           },
-          "title": "Tool Arguments",
+          "title": "Payload",
           "type": "object"
-        },
-        "target_amr": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "title": "Target Amr"
-        },
-        "pickup": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "title": "Pickup"
-        },
-        "dropoff": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "title": "Dropoff"
-        },
-        "workstation": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "title": "Workstation"
-        },
-        "preconditions": {
-          "items": {
-            "type": "string"
-          },
-          "title": "Preconditions",
-          "type": "array"
-        },
-        "completion_criteria": {
-          "items": {
-            "type": "string"
-          },
-          "minItems": 1,
-          "title": "Completion Criteria",
-          "type": "array"
-        },
-        "time_budget": {
-          "description": "此步骤最多允许的执行时间，单位为秒",
-          "exclusiveMinimum": 0,
-          "title": "Time Budget",
-          "type": "integer"
-        },
-        "energy_budget": {
-          "description": "此步骤最多允许消耗的电量百分比",
-          "maximum": 100,
-          "minimum": 0,
-          "title": "Energy Budget",
-          "type": "number"
-        },
-        "risk_level": {
-          "$ref": "#/$defs/RiskLevel"
-        },
-        "approval_required": {
-          "title": "Approval Required",
-          "type": "boolean"
-        },
-        "fallback_strategy": {
-          "$ref": "#/$defs/FallbackStrategy"
+        }
+      },
+      "required": [
+        "event_id",
+        "simulation_id",
+        "time",
+        "event_type",
+        "severity",
+        "payload"
+      ],
+      "title": "SimulationEvent",
+      "type": "object"
+    },
+    "SimulationOrderState": {
+      "additionalProperties": false,
+      "description": "订单的可审计运行态，不修改 P0-04 的 TransportOrder 定义。",
+      "properties": {
+        "order_id": {
+          "minLength": 1,
+          "title": "Order Id",
+          "type": "string"
         },
         "status": {
-          "$ref": "#/$defs/PlanTaskStatus"
+          "$ref": "#/$defs/SimulationOrderStatus"
         },
-        "evidence_refs": {
-          "items": {
-            "type": "string"
-          },
-          "title": "Evidence Refs",
-          "type": "array"
-        },
-        "effect_id": {
+        "assigned_amr_id": {
           "anyOf": [
             {
               "type": "string"
@@ -519,196 +474,85 @@
               "type": "null"
             }
           ],
-          "title": "Effect Id"
+          "title": "Assigned Amr Id"
+        },
+        "payload_kg": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Payload Kg"
+        },
+        "pickup_time": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Pickup Time"
+        },
+        "dropoff_time": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Dropoff Time"
+        },
+        "blocked_reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Blocked Reason"
         }
       },
       "required": [
-        "task_id",
-        "dependencies",
-        "tool_name",
-        "tool_arguments",
-        "target_amr",
-        "pickup",
-        "dropoff",
-        "workstation",
-        "preconditions",
-        "completion_criteria",
-        "time_budget",
-        "energy_budget",
-        "risk_level",
-        "approval_required",
-        "fallback_strategy",
+        "order_id",
         "status",
-        "evidence_refs",
-        "effect_id"
+        "assigned_amr_id",
+        "payload_kg",
+        "pickup_time",
+        "dropoff_time",
+        "blocked_reason"
       ],
-      "title": "PlanTask",
+      "title": "SimulationOrderState",
       "type": "object"
     },
-    "PlanTaskStatus": {
-      "description": "计划子任务在运行生命周期中的状态。",
+    "SimulationOrderStatus": {
+      "description": "订单在仿真中的最小生命周期。",
       "enum": [
         "pending",
-        "ready",
-        "running",
-        "waiting_approval",
+        "in_progress",
         "completed",
-        "failed",
-        "cancelled"
+        "blocked"
       ],
-      "title": "PlanTaskStatus",
+      "title": "SimulationOrderStatus",
       "type": "string"
     },
-    "RiskLevel": {
-      "description": "任务或计划步骤的风险等级。",
+    "SimulationStatus": {
+      "description": "仿真终态：完成、故障阻塞或运行到时间上限。",
       "enum": [
-        "low",
-        "medium",
-        "high",
-        "critical"
-      ],
-      "title": "RiskLevel",
-      "type": "string"
-    },
-    "RunStatus": {
-      "description": "一次 Agent 运行的生命周期状态。",
-      "enum": [
-        "created",
-        "planning",
-        "validating",
-        "executing",
-        "waiting_approval",
-        "replanning",
         "completed",
-        "failed",
-        "cancelled"
+        "blocked",
+        "timeout"
       ],
-      "title": "RunStatus",
+      "title": "SimulationStatus",
       "type": "string"
-    },
-    "TaskConstraints": {
-      "additionalProperties": false,
-      "description": "P0 固定场景中可由确定性校验器检查的业务约束。",
-      "properties": {
-        "map_width": {
-          "const": 30,
-          "title": "Map Width",
-          "type": "integer"
-        },
-        "map_height": {
-          "const": 20,
-          "title": "Map Height",
-          "type": "integer"
-        },
-        "blocked_cells": {
-          "items": {
-            "$ref": "#/$defs/GridPosition"
-          },
-          "title": "Blocked Cells",
-          "type": "array"
-        },
-        "minimum_battery_percent": {
-          "maximum": 100,
-          "minimum": 0,
-          "title": "Minimum Battery Percent",
-          "type": "number"
-        },
-        "maximum_load_kg": {
-          "exclusiveMinimum": 0,
-          "title": "Maximum Load Kg",
-          "type": "number"
-        },
-        "enforce_time_windows": {
-          "title": "Enforce Time Windows",
-          "type": "boolean"
-        }
-      },
-      "required": [
-        "map_width",
-        "map_height",
-        "blocked_cells",
-        "minimum_battery_percent",
-        "maximum_load_kg",
-        "enforce_time_windows"
-      ],
-      "title": "TaskConstraints",
-      "type": "object"
-    },
-    "TaskContract": {
-      "additionalProperties": false,
-      "description": "把自然语言目标冻结为可验证、带预算的业务合同。",
-      "properties": {
-        "contract_id": {
-          "minLength": 1,
-          "title": "Contract Id",
-          "type": "string"
-        },
-        "schema_version": {
-          "const": "1.0",
-          "default": "1.0",
-          "title": "Schema Version",
-          "type": "string"
-        },
-        "goal": {
-          "minLength": 1,
-          "title": "Goal",
-          "type": "string"
-        },
-        "orders": {
-          "items": {
-            "$ref": "#/$defs/TransportOrder"
-          },
-          "minItems": 1,
-          "title": "Orders",
-          "type": "array"
-        },
-        "environment_ref": {
-          "minLength": 1,
-          "title": "Environment Ref",
-          "type": "string"
-        },
-        "constraints": {
-          "$ref": "#/$defs/TaskConstraints"
-        },
-        "completion_criteria": {
-          "items": {
-            "type": "string"
-          },
-          "minItems": 1,
-          "title": "Completion Criteria",
-          "type": "array"
-        },
-        "risk_level": {
-          "$ref": "#/$defs/RiskLevel"
-        },
-        "approval": {
-          "$ref": "#/$defs/ApprovalRequirement"
-        },
-        "budgets": {
-          "$ref": "#/$defs/ExecutionBudgets"
-        },
-        "missing_information": {
-          "items": {
-            "type": "string"
-          },
-          "title": "Missing Information",
-          "type": "array"
-        }
-      },
-      "required": [
-        "contract_id",
-        "goal",
-        "orders",
-        "environment_ref",
-        "constraints",
-        "completion_criteria",
-        "risk_level",
-        "approval",
-        "budgets",
-        "missing_information"
-      ],
-      "title": "TaskContract",
-      "type": "object"
     },
     "ToolError": {
       "additionalProperties": false,
@@ -945,75 +789,6 @@
       "title": "ToolResultStatus",
       "type": "string"
     },
-    "TransportOrder": {
-      "additionalProperties": false,
-      "description": "仓库内一次 pickup-transport-dropoff 运输订单。",
-      "properties": {
-        "order_id": {
-          "description": "订单唯一标识",
-          "minLength": 1,
-          "title": "Order Id",
-          "type": "string"
-        },
-        "material_id": {
-          "description": "待运输物料标识",
-          "minLength": 1,
-          "title": "Material Id",
-          "type": "string"
-        },
-        "pickup": {
-          "description": "取货点标识",
-          "minLength": 1,
-          "title": "Pickup",
-          "type": "string"
-        },
-        "dropoff": {
-          "description": "交付点标识",
-          "minLength": 1,
-          "title": "Dropoff",
-          "type": "string"
-        },
-        "priority": {
-          "description": "优先级；5 最高，1 最低",
-          "maximum": 5,
-          "minimum": 1,
-          "title": "Priority",
-          "type": "integer"
-        },
-        "release_time": {
-          "description": "订单可开始时间，单位为仿真秒",
-          "minimum": 0,
-          "title": "Release Time",
-          "type": "integer"
-        },
-        "deadline": {
-          "description": "订单截止时间，单位为仿真秒",
-          "exclusiveMinimum": 0,
-          "title": "Deadline",
-          "type": "integer"
-        },
-        "dependencies": {
-          "description": "必须先完成的订单 ID",
-          "items": {
-            "type": "string"
-          },
-          "title": "Dependencies",
-          "type": "array"
-        }
-      },
-      "required": [
-        "order_id",
-        "material_id",
-        "pickup",
-        "dropoff",
-        "priority",
-        "release_time",
-        "deadline",
-        "dependencies"
-      ],
-      "title": "TransportOrder",
-      "type": "object"
-    },
     "UserRole": {
       "description": "P0 固定的两级工具访问角色。",
       "enum": [
@@ -1022,48 +797,131 @@
       ],
       "title": "UserRole",
       "type": "string"
+    },
+    "WorkstationState": {
+      "additionalProperties": false,
+      "description": "工位的离散事件状态；容量由 P0-10 计划配置决定。",
+      "properties": {
+        "workstation_id": {
+          "minLength": 1,
+          "title": "Workstation Id",
+          "type": "string"
+        },
+        "position": {
+          "$ref": "#/$defs/GridPosition"
+        },
+        "capacity": {
+          "title": "Capacity",
+          "type": "integer"
+        },
+        "occupied_amr_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Occupied Amr Ids",
+          "type": "array"
+        },
+        "last_event_time": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Last Event Time"
+        },
+        "last_event_type": {
+          "anyOf": [
+            {
+              "enum": [
+                "pickup",
+                "dropoff"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Last Event Type"
+        },
+        "service_count": {
+          "minimum": 0,
+          "title": "Service Count",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "workstation_id",
+        "position",
+        "capacity",
+        "occupied_amr_ids",
+        "last_event_time",
+        "last_event_type",
+        "service_count"
+      ],
+      "title": "WorkstationState",
+      "type": "object"
     }
   },
   "additionalProperties": false,
-  "description": "一次 Agent 运行可检查点化的完整聚合状态。",
+  "description": "仿真最终快照、Observation 和事件日志。",
   "properties": {
-    "run_id": {
+    "simulation_id": {
       "minLength": 1,
-      "title": "Run Id",
+      "title": "Simulation Id",
       "type": "string"
     },
-    "status": {
-      "$ref": "#/$defs/RunStatus"
-    },
-    "plan_version": {
-      "minimum": 1,
-      "title": "Plan Version",
+    "seed": {
+      "title": "Seed",
       "type": "integer"
     },
-    "task_contract": {
-      "$ref": "#/$defs/TaskContract"
+    "status": {
+      "$ref": "#/$defs/SimulationStatus"
     },
-    "plan_tasks": {
-      "items": {
-        "$ref": "#/$defs/PlanTask"
+    "start_time": {
+      "title": "Start Time",
+      "type": "integer"
+    },
+    "end_time": {
+      "title": "End Time",
+      "type": "integer"
+    },
+    "validation_result": {
+      "additionalProperties": {
+        "$ref": "#/$defs/JsonValue"
       },
-      "title": "Plan Tasks",
-      "type": "array"
+      "title": "Validation Result",
+      "type": "object"
     },
-    "amr_states": {
+    "amrs": {
       "items": {
         "$ref": "#/$defs/AMRState"
       },
-      "minItems": 1,
-      "title": "Amr States",
+      "title": "Amrs",
       "type": "array"
     },
     "orders": {
       "items": {
-        "$ref": "#/$defs/TransportOrder"
+        "$ref": "#/$defs/SimulationOrderState"
       },
-      "minItems": 1,
       "title": "Orders",
+      "type": "array"
+    },
+    "workstations": {
+      "items": {
+        "$ref": "#/$defs/WorkstationState"
+      },
+      "title": "Workstations",
+      "type": "array"
+    },
+    "charging_stations": {
+      "items": {
+        "$ref": "#/$defs/ChargingStationState"
+      },
+      "title": "Charging Stations",
       "type": "array"
     },
     "observations": {
@@ -1073,63 +931,28 @@
       "title": "Observations",
       "type": "array"
     },
-    "current_task_id": {
-      "anyOf": [
-        {
-          "type": "string"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "title": "Current Task Id"
-    },
-    "completed_task_ids": {
+    "events": {
       "items": {
-        "type": "string"
+        "$ref": "#/$defs/SimulationEvent"
       },
-      "title": "Completed Task Ids",
+      "title": "Events",
       "type": "array"
-    },
-    "failed_task_ids": {
-      "items": {
-        "type": "string"
-      },
-      "title": "Failed Task Ids",
-      "type": "array"
-    },
-    "created_at": {
-      "format": "date-time",
-      "title": "Created At",
-      "type": "string"
-    },
-    "updated_at": {
-      "format": "date-time",
-      "title": "Updated At",
-      "type": "string"
-    },
-    "replan_count": {
-      "minimum": 0,
-      "title": "Replan Count",
-      "type": "integer"
     }
   },
   "required": [
-    "run_id",
+    "simulation_id",
+    "seed",
     "status",
-    "plan_version",
-    "task_contract",
-    "plan_tasks",
-    "amr_states",
+    "start_time",
+    "end_time",
+    "validation_result",
+    "amrs",
     "orders",
+    "workstations",
+    "charging_stations",
     "observations",
-    "current_task_id",
-    "completed_task_ids",
-    "failed_task_ids",
-    "created_at",
-    "updated_at",
-    "replan_count"
+    "events"
   ],
-  "title": "RunState",
+  "title": "SimulationResult",
   "type": "object"
 }

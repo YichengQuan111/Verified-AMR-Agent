@@ -1,8 +1,8 @@
 # AMR Agent 项目交接上下文
 
 最后更新：2026-08-20
-当前已完成：P0-00、P0-01、P0-02、P0-03、P0-04、P0-05、P0-06、P0-07、P0-08、P0-09、P0-10
-当前下一步：P0-11 离散事件仿真
+当前已完成：P0-00、P0-01、P0-02、P0-03、P0-04、P0-05、P0-06、P0-07、P0-08、P0-09、P0-10、P0-11、P0-12
+当前下一步：P0-13 PEVR 主闭环
 
 ## 1. 文档用途与维护要求
 
@@ -218,6 +218,15 @@ CLI 为 `task_allocator_cli`，默认或 `--algorithm hungarian` 执行生产算
 - 安全边界：`status`、`reason_code`、`reason` 只作为 P0-09 审计字段；`llm_valid`、`skip_validation`、`approved` 等未知字段在 JSON 边界拒绝。业务非法计划以退出码 `0` 返回 `status=invalid`，参数/契约错误为 `2`，内部异常为 `3`；调用方必须检查 `valid/status/errors`，不能只看进程成功。
 - 详细契约入口：`docs/FLEET_PLAN_VALIDATOR.md`；错误字典可通过 `fleet_plan_validator_cli.exe --error-dictionary` 导出。没有修改 P0-04 Pydantic Schema、数据库字段、Alembic revision 或模型服务。
 
+### 4.12 P0-11：Python AMR 离散事件仿真
+
+- 完成：新增 `services.amr_simulator`，接收 P0-10 同形状的 `SimulationPlan`，执行前通过固定 `build/cpp/services/planner_cpp/fleet_plan_validator_cli.exe --validate`；Validator 不是 `status=valid`、`valid=true` 且 `errors=[]` 时立即抛出 `PlanValidationError`/`ValidatorExecutionError`，不回退到 Python 自判。
+- 新增公共接口：`AMRSimulator`、`DiscreteEventSimulator`、`simulate_plan()`、`SimulationPlan`、`FleetPlanRoute`、`RouteStep`、`SimulationResult`、`SimulationEvent`、`SimulatorConfig`、`ChargingStationSpec`、`SimulationOrderState`、`WorkstationState`、`ChargingStationState`、`FaultInjection`/`FaultType`，以及 Validator 客户端和异常。P0-09 的动作/时间字段保持 `start/move/turn_left/turn_right/wait`，P0-04 AMR 状态继续使用八个固定状态枚举。
+- 状态与数据流：固定 `tick_seconds=1`，按原始 `path[*].time` 执行位置/朝向；`move` 使用 P0-10 同名能耗配置扣电；pickup/dropoff 在到达 tick 生成零时长 `LOADING`/`UNLOADING` 和工位事件；终点不释放、不瞬移。低电量已在充电站才进入 `CHARGING`，否则进入 `TO_CHARGE` 原地等待；故障安全停机为 `OFFLINE`。
+- 观测/事件契约：每个 tick 生成一个 `agent.runtime.Observation(source=simulator)`，`state_delta` 同时包含 AMR、订单、工位和充电站快照；`SimulationEvent` 以仿真内单调序号生成 ID。`observed_at` 为固定 Unix epoch 加 tick 秒，不使用墙上时钟；事件和遍历均按稳定 ID 排序。
+- 故障边界：`offline`、`battery_drain`、`stuck` 只能从仿真/Eval 参数传入，不写入 `agent.tools.ToolName` 或正常 ToolSpec；当前故障均安全停机，未完成订单变为 `blocked`，Observation 设置 `requires_replan=true`。若未来支持恢复，必须先扩展计划时间戳和证据契约。
+- 专题入口：`docs/AMR_SIMULATOR.md`；专项测试：`tests/unit/test_p011_simulator.py`；新增 `docs/schemas/SimulationPlan.schema.json`、`SimulationEvent.schema.json`、`SimulationResult.schema.json`，由 `scripts/export_schemas.py` 统一生成。没有新增数据库 revision、常驻服务、ROS/真实底盘或 P0-12 工具注册。
+
 ## 5. 最近验证证据
 
 ### 5.1 离线统一回归
@@ -272,7 +281,18 @@ E:\Anaconda\envs\torch128\python.exe scripts\export_schemas.py
 - 最终统一回归：实际执行 `.\scripts\run_smoke.ps1` 退出码为 0，环境/依赖门禁通过，Alembic 为 `0001_p006_core (head)` 且核心表缺失 0，Qdrant collection 健康，pytest `110 passed, 1 warning`，完整 CTest `33/33`。唯一警告为既有 jieba `pkg_resources` 弃用警告，不影响结果。
 - 环境与服务：P0-10 本身不依赖 FastAPI、文本 Qwen、PostgreSQL 或 Qdrant，本次没有启动模型/API；最终复核 `docker compose ps` 显示 `amr-postgres`/`amr-qdrant` 运行，5432/6333 监听，8000/8080 未监听。C++ 构建依赖固定 MSVC/CMake/Ninja 路径和 UTF-8 编译选项。
 - 已知限制/风险：容量当前按同一工位 ID、同一离散 pickup/dropoff 事件时刻聚合，尚未表达 P0-11 的服务持续时间；载荷通过执行期 `payload_kg` 补充，尚未修改 P0-04 `TransportOrder`。验证器是库和固定 CLI，尚未注册为 P0-12 Python 工具。
-- 下一步直接需要的信息：P0-11 仿真必须复用 `FleetPlanRequest`、`ValidationResult` 的时间/载荷/终点占用语义，并在执行前再次调用 Validator；如引入服务持续时间或动态装卸，先扩展公共契约、错误字典和反例测试，再改变容量规则。
+- 下一步直接需要的信息：P0-11 已复用 `FleetPlanRequest`、`ValidationResult` 的时间/载荷/终点占用语义；P0-12 应把 `AMRSimulator` 包装成受控 `dispatch_simulation` 工具，固定传入已验证计划并把 `SimulationResult` 转换为 `ToolResult`/Observation，不能把 `FaultInjection` 注册为正常工具。
+
+### 5.5 P0-11 Python 仿真验收
+
+- 验证命令：`E:\Anaconda\envs\torch128\python.exe -m pytest tests\unit\test_p011_simulator.py -q`，实际结果 `8 passed in 0.14s`；`compileall` 对 `services\amr_simulator` 与专项测试实际通过。
+- 覆盖事实：正常路径的 `IDLE/TO_PICKUP/LOADING/TO_DROPOFF/UNLOADING` 迁移、订单 pickup/dropoff、按 move 扣电、工位服务计数；低电量充电的容量/速率/`CHARGING`→`IDLE`；无充电路径时 `TO_CHARGE` 原地等待；offline 与 battery_drain 安全停机、订单 blocked、Observation `requires_replan`；P0-10 非法 dropoff 时间戳前置拒绝；同 plan/seed 完整 JSON 重放一致；FaultType 不在 ToolName 白名单。
+- 实际 CLI 门禁：专项测试通过真实 `build\cpp\services\planner_cpp\fleet_plan_validator_cli.exe`；另以无订单 idle plan 实测 `status=valid/valid=true/errors=[]`，以错误 `dropoff_time` 实测返回 `dropoff_time_mismatch` 并由 Python 抛出 `PlanValidationError`。
+- Schema 导出：`E:\Anaconda\envs\torch128\python.exe scripts\export_schemas.py` 实测退出码为 0，新增 3 份 P0-11 Schema，与 `model_json_schema()` 一致；全量 Schema 当前为 18 份。
+- P0-09→P0-11 手工联调：实际调用 `build/cpp/services/planner_cpp/route_planner_cli.exe --algorithm astar` 得到 `route_status=complete`、`path_len=6`，将其原始 `path/pickup_time/dropoff_time` 注入 P0-10 request 后运行仿真，结果 `sim_status=completed`、`dropoff=5`、终点 `{x:6,y:1}`。
+- 服务状态：P0-11 不启动常驻服务，不修改 PostgreSQL/Qdrant；最终 `.\scripts\run_smoke.ps1` 已实际退出码 0，环境/依赖门禁、PostgreSQL 迁移与 8 表检查、Qdrant 健康检查、pytest `118 passed, 1 warning`、CMake/Ninja 重建和 CTest `33/33` 全部通过。随后 `docker compose ps` 实测 `amr-postgres`/`amr-qdrant` 均 Up，5432/6333 监听；8000/8080 无监听；未启动模型/API。
+- 已知限制：P0-10 当前只验证运输路线，仿真充电站由 `SimulatorConfig` 单独传入；没有未验证的充电移动路径，因此低电量且不在站点时只进入 `TO_CHARGE`，不会瞬移。当前故障均终止执行，不支持恢复后跳过时间戳路径；故障注入只供 Eval，不是 Agent 工具。
+- 下一步直接需要的信息：P0-12 接入时固定调用 `AMRSimulator`/`simulate_plan`，将 Validator 失败映射为 `unsafe_plan`/`invalid_argument`，将 blocked Observation 转为受控 `ToolResult`，不得放宽 P0-10 前置门禁或把 FaultInjection 暴露给正常 Agent。
 
 ## 6. P0-04 已固定的公共约定
 
@@ -396,21 +416,21 @@ DAG 使用 `agent.planning.dag.topological_sort()` 中的 Kahn 算法：计算�
 
 ## 8. 已知限制与注意事项
 
-- P0-06 API/Service 已实际消费 `TaskContract`、`PlanTasksOutput` 和 `PlanTask` 并把快照写入 PostgreSQL；C++、仿真器和工具注册表的跨语言/跨服务兼容性仍需后续工作包验证。
+- P0-06 API/Service 已实际消费 `TaskContract`、`PlanTasksOutput` 和 `PlanTask` 并把快照写入 PostgreSQL；P0-12 已用固定 JSON 边界完成 C++、仿真器和工具注册表的集成回归。工具默认状态/审批适配器仍是进程内实现，持久化接入留给 P0-14/P0-16。
 - 完整 `warehouse_v1.json` 通过 `environment_ref` 标识，不属于本次要求的八个核心 Schema；P0-09 的 C++ CLI 使用 `docs/ROUTE_PLANNER.md` 定义的独立严格地图 envelope，并要求调用方把已获取的地图快照显式传入，不能让 C++ 按 ref 自行读文件。
-- 九个工具目前只有名称和顶层参数契约，没有任何工具实现、JSON Schema 执行器或角色认证；这些分别属于 P0-12 和 P0-16。
-- P0-08 已实现 Hungarian 分配与 baseline；P0-09 已实现路径与时空预约；P0-10 已实现独立计划 Validator，但尚未实现 P0-11 仿真、P0-12 工具注册表或 Python 调用适配。
+- 九个工具已经由 `build_tool_registry()` 实现，并具有 Pydantic/JSON Schema、角色门禁、超时、错误、审计和幂等执行器；外部身份认证与角色真实性仍属于 P0-16，不能让调用方自行声明 operator。
+- P0-08 Hungarian、P0-09 A*、P0-10 独立 Validator 和 P0-11 Python 仿真均已通过 P0-12 固定适配器串联；baseline 算法与 Eval `FaultInjection` 没有进入正常工具表。
 - P0-09 采用按优先级的 prioritized planning，不实现 Scope 明确排除的 CBS/ECBS；在固定顺序下若后续车辆无安全解会返回 infeasible，不会回溯重排或忽略冲突。route_planner 当前没有独立 Pydantic 地图 Schema，跨语言调用应先按 `docs/ROUTE_PLANNER.md` 的严格 JSON envelope 适配。
-- P0-09 不直接控制底盘、不从 `environment_ref` 读取地图、不做最终业务验收；P0-10 负责静态计划安全门禁，P0-11 仍负责执行期状态推进/观测一致性，P0-12 负责受控工具接入。
+- P0-09 不直接控制底盘、不从 `environment_ref` 读取地图、不做最终业务验收；P0-10 负责静态计划安全门禁，P0-11 负责执行期状态推进/观测一致性，P0-12 负责受控工具接入。
 - API 已有第 4.7 节的 8 个业务接口，但没有身份认证/授权中间件。P0-07 检索器会执行给定 `UserRole` 的 ACL，然而角色真实性仍由未来 P0-16 认证/授权层保证；外部调用方不能被允许自行声称 operator。
 - PostgreSQL 已接入业务仓储层，Qdrant 已由 P0-07 正式使用；BM25 按 P0 Scope 保持进程内，重启时从同一 frozen 语料重建。
 - `requirements.lock` 锁定的是直接依赖，不是完整传递依赖快照。
 - `docs/P001_P003_FILE_GUIDE.md` 是 P0-01/P0-03 历史基线；后续文件职责统一登记在 `docs/FILE_PURPOSES.md`。
 - P0-05 的 2-shot Prompt 已在 Fast Qwen 上完成一轮五节点真实冒烟，并覆盖结构与关键业务事实；每节点目前只有一个固定在线样例，不能把 5/5 外推为复杂场景成功率。Smart Profile 的版本 `1.1.0` 五节点测试也尚未执行。
 - P0-07 的 20 例阈值只覆盖当前 6 份冻结语料和 Qwen3-Embedding-0.6B；开放域泛化尚未验证。语料、模型、prompt、chunking、权重或归一化改变后必须重新观察可答/不可答完整分布。
-- P0-07 只提供检索库、CLI 和 RAG 评测，尚未注册成九工具白名单中的 `retrieve_knowledge` 真实工具；该适配、调用者身份绑定和 ToolResult 审计属于 P0-12/P0-16。
+- P0-07 已注册为真实 `retrieve_knowledge` 工具，候选阶段 ACL 外还具有工具返回侧 role/document/top_k 熔断和 ToolResult 审计；调用者身份绑定仍属于 P0-16。
 - P0 按正式 Scope 不实现 Reranker；当前 Citation Correctness 验证引用逐字段回指源 chunk，语义相关性由 Recall/MRR/section recall 分开衡量。
-- `tool_calls/effects` 已有表和 Repository，但没有真实工具执行或副作用逻辑；C++ 算法、仿真、真实工具和 LangGraph 主闭环仍尚未实现。
+- `tool_calls/effects` 已有表和 Repository，P0-12 也已有真实工具、副作用与进程内幂等逻辑，但二者尚未接成可恢复持久化执行账本；LangGraph 主闭环仍属于 P0-13。
 
 ## 9. 交接更新模板
 
@@ -543,10 +563,46 @@ DAG 使用 `agent.planning.dag.topological_sort()` 中的 Kahn 算法：计算�
 ### 2026-08-20 · P0-10 C++ 车队计划验证器
 
 - 完成：新增 `fleet_plan_validator` 静态库、`fleet_plan_validator_cli`、严格 JSON 编解码和 14 个正反例 CTest；独立检查任务依赖、时间窗、载荷、电量安全余量、禁行区/边、工位容量、Manhattan 安全距离、顶点冲突和交换边冲突。
-- 未完成：没有实现 P0-11 仿真、P0-12 工具注册或 Python 调用适配；没有修改 P0-04 Pydantic Schema、数据库字段、Alembic revision 或模型服务。工位容量当前只按同一离散事件时刻聚合，不表达未来服务持续时间。
+- 未完成：没有实现 P0-12 工具注册或 Python 工具调用适配；没有修改 P0-04 Pydantic Schema、数据库字段、Alembic revision 或模型服务。工位容量当前只按同一离散事件时刻聚合，不表达未来服务持续时间。
 - 新增/变化的公共契约：`ValidatorConfig`、`FleetPlanRoute`、`FleetPlanRequest`、`ValidationEvidence`、`ValidationErrorDefinition`、`ValidationResult`、`error_dictionary()`、`validate_fleet_plan()`；JSON schema_version=`1.0`，ruleset_version=`p0-10.v1`，路线必须携带执行期 `payload_kg`。完整字段见 `docs/FLEET_PLAN_VALIDATOR.md`。
 - 关键设计决策及原因：验证器不读取 `environment_ref`、不信任 P0-09 status 或 LLM/Prompt 声明，先通过严格 JSON 白名单拒绝旁路字段，再对完整路径和全车队状态独立重算；终点保持占用到 `max_time`；错误按稳定键排序并通过单一 C++ 错误字典输出，确保相同请求产生相同证据。
 - 验证命令与结果：导入 `VsDevCmd.bat -arch=x64 -host_arch=x64` 后 `cmake --build build\cpp` 成功；`ctest --test-dir build\cpp -R "^fleet_validator_" --output-on-failure` 为 14/14；`ctest --test-dir build\cpp --output-on-failure` 为 33/33。CLI `--version`、合法计划、LLM 旁路拒绝和 `--error-dictionary` 均已实测；业务非法计划返回退出码 0 且 `status=invalid`，契约错误返回退出码 2。
 - 外部服务当前状态：P0-10 本身不依赖 FastAPI、文本 Qwen、PostgreSQL 或 Qdrant，本次没有启动模型/API；构建依赖固定 MSVC/CMake/Ninja 路径。统一 smoke 的服务状态需在最终执行时重新核验，不能沿用历史快照。
 - 已知限制/风险：P0-04 `TransportOrder` 不含订单重量，当前由 `FleetPlanRoute.payload_kg` 明确补充；容量只覆盖 pickup/dropoff 同 tick 事件；CLI 仍未进入 P0-12 受控工具注册表。
-- 下一步直接需要的信息：P0-11 必须在执行前调用 P0-10 Validator，并复用路径时间、载荷和终点占用语义；若引入服务持续时间/动态装卸，先同步公共契约、错误字典、文件职责、交接和反例测试。
+- 下一步直接需要的信息：P0-12 应从 `services.amr_simulator` 稳定入口接入 `dispatch_simulation`，保留 P0-10 前置门禁、P0-09 原始路径、Observation/event evidence 和故障注入隔离；若引入服务持续时间/动态装卸，先同步公共契约、错误字典、文件职责、交接和反例测试。
+
+### 2026-08-20 · P0-11 Python AMR 离散事件仿真
+
+- 完成：实现 `services.amr_simulator` 的严格计划契约、固定 1 秒 tick 执行器、P0-10 固定 CLI 前置门禁、P0-04 Observation、结构化事件日志、订单/工位/充电站状态和 Eval 专用 `offline`/`battery_drain`/`stuck` 故障注入。
+- 未完成：没有注册 `dispatch_simulation` 工具（属于 P0-12），没有实现未验证的去充电站路线、故障恢复、服务持续时间、Checkpoint 或 ROS/真实底盘。
+- 新增/变化的公共契约：`SimulationPlan` 复用 P0-10 JSON 顶层字段；`RouteStep` 复用 P0-09 `time/action/heading/g_cost`；新增 `SimulationResult`、`SimulationEvent`、`SimulatorConfig`、充电/订单/工位状态和 `FaultInjection`；`Observation` 使用 `source=simulator`，固定 epoch 时间和 event evidence refs。没有新增数据库字段/revision或正常 ToolName。
+- 关键设计决策及原因：验证器通过后直接按路径时间戳执行，不重算路线、不瞬移充电、不释放终点占用；pickup/dropoff 采用零时长事件以保持 P0-10 时间契约；故障均安全停机并要求重规划；事件 ID/Observation 时间不依赖墙上时钟，确保同一输入/seed 可重放。
+- 验证命令与结果：`E:\Anaconda\envs\torch128\python.exe -m pytest tests\unit\test_p011_simulator.py -q` 实测 `8 passed in 0.14s`；`E:\Anaconda\envs\torch128\python.exe -m compileall -q services\amr_simulator tests\unit\test_p011_simulator.py` 实测通过。测试使用真实 P0-10 CLI，覆盖正常运输、状态迁移、充电、低电量、离线/电量故障、非法时间戳、可复现性和工具白名单隔离。
+- 外部服务当前状态：P0-11 不需要启动 Fast/Smart Qwen、FastAPI、PostgreSQL 或 Qdrant；Validator 使用已有本地 C++ 构建产物。最终完整 `run_smoke.ps1` 的环境/数据库/Qdrant/服务状态以最后一次实际输出为准。
+- 已知限制/风险：充电站不在 P0-10 运输 envelope 中，由 `SimulatorConfig` 单独提供；低电量不在站点时只进入 `TO_CHARGE` 原地等待。当前 fault 是终止式安全停机，不能恢复后跳过既有路径；P0-10 工位容量仍是同 tick 零时长事件容量。
+- 下一步直接需要的信息：P0-12 只能从 `services.amr_simulator` 稳定入口包装 `dispatch_simulation`，把 P0-10 失败映射为受控工具错误、把 Observation/event 作为证据返回，并继续隔离 FaultInjection。
+
+### 2026-08-20 · P0-12 九个白名单工具
+
+- 完成：新增 `agent.tools.build_tool_registry()` 和 `ToolRegistry/ToolExecutor`，注册恰好 `retrieve_knowledge`、`get_fleet_state`、`allocate_tasks`、`plan_multi_amr_routes`、`validate_fleet_plan`、`dispatch_simulation`、`query_execution_state`、`run_verification_suite`、`request_approval` 九个工具。每个工具均绑定实时 Pydantic 输入/输出 Schema、允许角色、超时、副作用/幂等声明、错误分类和审计字段。
+- 完成：`ToolExecutor` 在 handler 前执行顶层键、Pydantic、角色和跨字段校验；handler 后执行输出 Schema 校验；统一生成 `ToolResult` 的版本、角色、input/output SHA-256、时间、耗时、证据引用、effect ID、错误和幂等缓存。相同 call_id + 工具/角色/规范化输入返回首次结果，复用不同请求返回 conflict，超时返回 timeout。
+- 完成：新增固定 C++ JSON 客户端，只允许 `task_allocator_cli.exe --algorithm hungarian`、`route_planner_cli.exe --algorithm astar`、`fleet_plan_validator_cli.exe --validate`，使用 JSON stdin/stdout、4 MiB 限制、固定仓库 cwd、`shell=False` 和 subprocess timeout；无可行路线/Validator invalid 映射为 `unsafe_plan`，不把 Dijkstra 当隐式 fallback。
+- 完成：`retrieve_knowledge` 延迟复用 P0-07 `HybridRetriever`；`get_fleet_state`、分配、A* 共享固定 warehouse seed 快照；`dispatch_simulation` 复用 P0-11 `AMRSimulator`、不暴露 FaultInjection，并将确定性 simulation ID 结果登记到状态存储；`query_execution_state` 可读取该结果；审批使用稳定 digest 创建 pending 请求；验证套件只允许固定 Python/CTest/Smoke suite/case。
+- 未完成：默认状态/审批存储仍是进程内适配器，尚未接入 P0-06 PostgreSQL Checkpoint/HITL API；默认 RAG retriever 需要本地 Embedding、Qdrant 和 frozen 语料在线，工具层本身不启动这些服务；没有真实底盘/ROS 或本地 LLM 依赖。
+- 新增/变化的公共契约：`ToolSpec.audit_fields`；`ToolResult.tool_version/principal_role/input_digest/output_digest/idempotency_key/audit_metadata`（均兼容旧结果，P0-12 新结果全量填写）；`agent.tools.schemas` 中九个输入模型、`FleetStateOutput`、`AllocationResponse`、`RoutePlanResponse`、`ValidationResponse`、`ExecutionStateOutput`、`VerificationSuiteOutput`、`ApprovalRequestOutput`；`FixedCppJsonClient`、`EnvironmentSnapshot`、`InMemoryExecutionStateStore`、`InMemoryApprovalStore` 和 `build_tool_registry`。新增/更新工具 Schema 已由 `scripts/export_schemas.py` 导出到 `docs/schemas/`，包括独立的 `FleetStateOutput.schema.json`；数据库没有新增字段或 Alembic revision。
+- 关键设计决策：工具输入不接受 executable、command、path、DSN、Shell 或 faults；environment_ref 只匹配固定 seed 身份，不参与路径拼接。`dispatch_simulation` 标记 `requires_approval=true`，但 P0-12 只负责声明和请求 pending 审批，实际批准仍走 P0-06/P0-16；仿真 `SimulationResult.status=blocked/timeout` 是已完成的仿真证据，而 P0-10 invalid 是工具失败。默认快照/状态/审批依赖可在组装期替换，不进入 Agent 参数。
+- 验证命令与结果：`E:\Anaconda\envs\torch128\python.exe -m compileall -q agent\tools` 通过；`E:\Anaconda\envs\torch128\python.exe scripts\export_schemas.py` 成功导出 34 份 Schema；P0-12 专项 `E:\Anaconda\envs\torch128\python.exe -m pytest tests\unit\test_p012_tools.py -q -p no:cacheprovider` 为 12 passed、1 warning；P0-04/P0-11/P0-12 联合回归 `E:\Anaconda\envs\torch128\python.exe -m pytest tests\unit\test_p004_contracts.py tests\unit\test_p011_simulator.py tests\unit\test_p012_tools.py -q -p no:cacheprovider` 为 66 passed、1 warning。另以实际固定 C++ 构建产物执行分配→A*→Validator→dispatch→query 集成脚本：allocation success/complete、route success/complete、validate success/valid、dispatch success（SimulationResult.status=timeout，窗口截断是预期）、query success/simulation。最后实际执行 `scripts\run_smoke.ps1` 退出码为 0：环境/依赖、PostgreSQL 迁移、Qdrant 检查通过，pytest 为 130 passed、1 warning，完整 CTest 为 33/33。
+- 外部服务/构建状态：P0-12 工具层没有启动 Fast/Smart Qwen；RAG 只有实际调用 `retrieve_knowledge` 时才构造 Qdrant/Embedding。本次 smoke 实测 PostgreSQL 核心表缺失 0、Qdrant collection 健康；C++ 适配器依赖 `build\cpp\services\planner_cpp\` 三个固定 exe，CMake/Ninja 构建与 33 个 CTest 均已复核通过。
+- 已知限制/风险：通用 Python timeout 在线程边界返回结果但不能强杀任意 Python handler；生产高风险外部调用仍依赖下层 C++/subprocess timeout，未来若接入异步/进程隔离应保留相同 ToolResult 语义。默认内存状态/审批在进程重启后丢失，P0-14/P0-16 接入持久化前不能宣称可恢复。
+- 下一步直接需要的信息：P0-13 应直接消费 `build_tool_registry()` 和 `ToolResult`，在 guard/Planner 执行前检查 `ToolSpec.requires_approval`、`status`、`error.category` 和 Validator evidence；不得复制 C++/仿真器边界或把 FaultInjection 加回正常工具表。P0-06 PostgreSQL 审批/运行服务接入时，优先实现 `ExecutionStateStoreProtocol/ApprovalStoreProtocol` 的适配器并保留同一 digest/idempotency 语义。
+
+### 2026-08-20 · P0-12 完成后严格工程审查
+
+- 审查结论：`PASS WITH FIXES`。逐项对照正式路线后，九个 ToolName、注册表交付物、固定 C++ JSON 适配器、参数预检、超时/错误/审计/幂等契约和集成测试均达到 P0-12 门槛；没有引入本地 LLM 依赖，也没有把 `FaultInjection` 注册到正常工具表。
+- 审查发现并修复：高严重度——ledger-only 查重存在并发竞态，同一 call_id 可同时进入 handler；RAG 工具无返回侧 ACL 熔断，错误后端可把越权正文交给 viewer。中严重度——不可序列化参数可借已有 call_id 覆盖合法 ledger；ToolSpec 未完整声明执行器实际可能产生的 timeout/conflict/internal；受控 `security` case 使用模糊 `-k` 时选中 0 条并退出 5；验证 runner 硬编码本机盘符；仿真状态 task_ids 未按 order_id 筛选。低严重度——A*/Hungarian 输出仍接受 baseline 名称、部分整数/空白/汇总字段不够严格、静态 obstacles 未合并、无效角色审计成 operator、每次调用重复构造默认快照 Provider。上述问题均已最小修复并有反例。
+- 新增/变化的公共契约：同一请求的并发重复调用现在共享一个 in-flight 结果，handler/副作用只执行一次；不同请求复用 call_id 仍稳定 conflict；不可序列化请求不进入 ledger，因而不能污染已有结果。九个 ToolSpec 均声明公共 timeout/conflict/internal；`audit_metadata` 成为默认审计字段。RAG 返回侧复核 query/role/top_k/document ACL；`AllocationResponse.algorithm` 固定为 `hungarian`，`RoutePlanResponse.algorithm` 固定为 `astar`；A* `max_time<=2000`；Validator/验证套件汇总字段必须一致；默认地图合并静态和临时障碍。数据库字段、Alembic revision 和 ToolName 没有变化。
+- 关键设计决策及原因：C++ 子进程 timeout 固定比外层 ToolSpec 少 1 秒，确保先回收进程再形成 ToolResult；通用 Python handler 使用协作取消事件，并在仿真/审批写入前复核，避免外层超时后的迟到副作用。验证程序只从可信进程 PATH 解析固定绝对 executable，工具参数仍不能提供 command/path/cwd。安全套件使用显式 pytest node id，不能依赖会产生空选集的表达式。
+- 实际验证：`E:\Anaconda\envs\torch128\python.exe -m pytest tests\unit\test_p012_tools.py -q -p no:cacheprovider` 为 `20 passed, 1 warning`；P0-04/P0-07/P0-11/P0-12 联合单测为 `83 passed, 1 warning`；`tests\integration\test_p007_rag_backends.py` 为 `2 passed, 1 warning`；直接 CTest 为 `33/33 passed`。经真实 `ToolRegistry` 调用 `run_verification_suite(p0_12)` 为 `4/4 passed`，调用 `run_verification_suite(p0_cpp)` 为 `1/1 passed`。最终 `scripts\run_smoke.ps1` 退出码 0：环境/依赖、PostgreSQL 迁移和 Qdrant 均 `ok`，Python `138 passed, 1 warning`，C++ `33/33 passed`。`compileall` 与 `git diff --check` 退出码均为 0；唯一 warning 是 jieba 依赖使用已弃用 `pkg_resources`，不是本次失败。
+- 外部服务当前状态：最终 smoke 实测 PostgreSQL 核心表缺失 0、Qdrant collection `amr_warehouse_knowledge` 可用；没有启动或调用 Fast/Smart Qwen，也没有启动新的常驻服务。三个 C++ CLI 仍从仓库 `build\cpp\services\planner_cpp\` 固定位置调用。
+- 已知限制/风险：Python 线程不能被解释器强杀，协作取消只能保证本仓库副作用 handler 不在超时后落账；未来新增 handler 必须响应同一取消门禁。默认执行状态和审批存储仍不可跨进程恢复；身份真实性仍依赖 P0-16。仓库既有 smoke/toolchain 脚本包含当前 Windows 构建环境路径，这是 P0-01 已登记的环境契约，P0-12 运行时适配器与受控验证器均未新增本机硬编码。
+- P0-13 前阻塞项：无。P0-13 必须直接复用注册表和 ToolResult，在调度 `requires_approval` 工具前接入 guard，按 Validator evidence 判定业务合法性，并保持 FaultInjection、baseline 算法和任意命令参数不可达；不可把进程内幂等误称为重启恢复。

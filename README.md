@@ -13,7 +13,7 @@
   → 带引用的证据报告
 ```
 
-当前已经完成 **P0-00～P0-10**，下一工作包是 **P0-11：离散事件仿真**。
+当前已经完成 **P0-00～P0-12**，下一工作包是 **P0-13：PEVR 主闭环**。
 
 ## 1. 固定范围
 
@@ -42,8 +42,10 @@
 | P0-08 | 已完成 | 独立 C++17 `task_allocator` 库、Hungarian/最近空闲 baseline、严格 JSON stdin/stdout 和 7 个 CTest 场景。 |
 | P0-09 | 已完成 | 独立 C++17 `route_planner`、A*、时空 `(cell,t)/(edge,t)` 预约、Dijkstra baseline、严格 JSON CLI 和 12 个路由 CTest 场景。 |
 | P0-10 | 已完成 | 独立 C++17 `fleet_plan_validator`、稳定错误字典/证据、严格 JSON CLI 和 14 个正反例 CTest 场景。 |
+| P0-11 | 已完成 | Python 固定时间步仿真、P0-10 前置门禁、P0-09 时间戳路径执行、Observation/事件日志、充电和 Eval 故障注入。 |
+| P0-12 | 已完成 | 九个统一白名单工具、Pydantic 输入/输出 Schema、角色/超时/错误/审计/幂等门禁、固定 C++ JSON 适配器、状态/审批/验证封装。 |
 
-明确尚未实现：P0-11 仿真、P0-12 工具注册表、P0-13 LangGraph 主闭环及其后续能力。
+明确尚未实现：P0-13 LangGraph 主闭环及其后续能力；默认工具状态/审批存储仍是进程内适配器。
 
 ## 3. 已落地架构
 
@@ -103,13 +105,15 @@ BEGIN → INSERT runs → flush → INSERT events → flush → COMMIT
 | `agent/planning/` | TaskContract、PlanTask、风险/预算和 DAG 校验。 |
 | `agent/context/` | 5 个 Prompt、上下文契约、摘要器、预算门禁和独立节点。 |
 | `agent/runtime/` | Observation 与 RunState。 |
-| `agent/tools/` | 9 个白名单工具名、ToolSpec/ToolResult 和参数边界；当前没有工具实现。 |
+| `agent/tools/` | 9 个白名单工具名、ToolSpec/ToolResult、输入/输出 Schema、统一执行器、固定 C++/状态/审批/验证适配器。 |
 | `apps/api/` | FastAPI 应用工厂、请求 Schema、依赖和 Router。 |
 | `services/model_gateway/` | 本地模型统一访问边界。 |
 | `services/application/` | 运行、计划、审批和文档事务 Service。 |
 | `services/persistence/` | SQLAlchemy ORM、Session 工厂和 Repository。 |
 | `services/retrieval/` | P0-07 文档加载、分块、Embedding、Qdrant/BM25、混合融合、ACL、拒答与引用。 |
 | `services/planner_cpp/` | P0-08 C++17 Hungarian/最近空闲分配、P0-09 A*/Dijkstra 路径与时空预约、P0-10 计划验证器、严格 JSON 编解码和 CTest。 |
+| `services/amr_simulator/` | P0-11 Python 固定 tick 仿真、P0-10 Validator 适配、状态/订单/工位/充电快照、Observation/事件日志和 Eval 专用故障注入。 |
+| `docs/P012_TOOLS.md` | 九工具清单、Schema、角色/超时/副作用/幂等、固定 C++ 边界和错误/重复调用语义。 |
 | `evals/rag/` | 20 例固定 RAG 数据与 Recall/MRR/Citation/ACL 执行器。 |
 | `domains/amr_warehouse/` | 仓储领域契约和种子数据。 |
 | `migrations/` | Alembic 前向迁移。 |
@@ -246,7 +250,51 @@ Get-Content .\fleet_plan_request.json -Raw | .\build\cpp\services\planner_cpp\fl
 
 业务计划非法时 CLI 仍返回结构化结果并使用退出码 `0`；只有 JSON/参数/内部错误使用非零退出码，调用方必须检查响应中的 `status`/`valid`。
 
-## 12. 协作与交接入口
+## 12. P0-11 Python 离散事件仿真
+
+`AMRSimulator` 只执行已经通过 P0-10 的完整计划，并直接按 P0-09 `path[*].time`
+推进位置、朝向和电量。固定 1 秒 tick 记录 `Observation` 与结构化事件；到达
+工位时产生零时长 `LOADING/UNLOADING` 事件，路线终点保持占用到时间上限。仿真
+侧还维护订单、工位、充电站状态，并提供不进入正常 Agent 工具白名单的
+`FaultInjection`（`offline`、`battery_drain`、`stuck`）供后续 Eval 使用。
+
+详细字段和边界见 [docs/AMR_SIMULATOR.md](docs/AMR_SIMULATOR.md)。专项测试：
+
+```powershell
+& 'E:\Anaconda\envs\torch128\python.exe' -m pytest tests\unit\test_p011_simulator.py -q
+```
+
+## 13. P0-12 九个白名单工具
+
+从 `agent.tools` 取得封闭注册表：
+
+```python
+from agent.tools import ToolName, UserRole, build_tool_registry
+
+registry = build_tool_registry()
+result = registry.execute(
+    ToolName.GET_FLEET_STATE,
+    {"environment_ref": "warehouse_v1@state-001"},
+    role=UserRole.VIEWER,
+    call_id="state-read-001",
+)
+```
+
+九个工具为 `retrieve_knowledge`、`get_fleet_state`、`allocate_tasks`、
+`plan_multi_amr_routes`、`validate_fleet_plan`、`dispatch_simulation`、
+`query_execution_state`、`run_verification_suite` 和 `request_approval`。每次调用
+统一返回 `ToolResult`，执行前拒绝未知参数/角色/Schema 错误；结果带工具版本、
+角色、输入/输出 digest、证据引用、effect ID、超时/错误分类和幂等语义。
+
+分配、A* 和 Validator 只通过固定 exe 与 JSON stdin/stdout 调用；不会接受 Shell、
+任意路径、任意命令或 `faults` 字段。故障注入仍仅供 P0-11 Eval 接口使用。完整
+契约和固定 suite/case 列表见 [docs/P012_TOOLS.md](docs/P012_TOOLS.md)。专项测试：
+
+```powershell
+& 'E:\Anaconda\envs\torch128\python.exe' -m pytest tests\unit\test_p012_tools.py -q
+```
+
+## 14. 协作与交接入口
 
 开始任何新任务前，按顺序阅读：
 

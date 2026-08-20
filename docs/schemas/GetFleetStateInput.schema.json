@@ -1,0 +1,32 @@
+{
+  "additionalProperties": false,
+  "description": "读取固定环境快照中的 AMR 状态。",
+  "properties": {
+    "environment_ref": {
+      "maxLength": 256,
+      "minLength": 1,
+      "title": "Environment Ref",
+      "type": "string"
+    },
+    "amr_ids": {
+      "anyOf": [
+        {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Amr Ids"
+    }
+  },
+  "required": [
+    "environment_ref"
+  ],
+  "title": "GetFleetStateInput",
+  "type": "object"
+}

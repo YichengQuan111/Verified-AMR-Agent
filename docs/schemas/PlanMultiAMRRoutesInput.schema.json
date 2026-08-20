@@ -1,0 +1,106 @@
+{
+  "$defs": {
+    "GridPosition": {
+      "additionalProperties": false,
+      "description": "30 × 20 仓库栅格中的一个合法位置。\n\n坐标从 0 开始，所以宽度为 30 时 x 最大只能是 29，高度为 20 时 y 最大只能是 19。",
+      "properties": {
+        "x": {
+          "description": "横坐标，允许 0～29",
+          "exclusiveMaximum": 30,
+          "minimum": 0,
+          "title": "X",
+          "type": "integer"
+        },
+        "y": {
+          "description": "纵坐标，允许 0～19",
+          "exclusiveMaximum": 20,
+          "minimum": 0,
+          "title": "Y",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "x",
+        "y"
+      ],
+      "title": "GridPosition",
+      "type": "object"
+    },
+    "JsonValue": {},
+    "RouteAssignmentInput": {
+      "additionalProperties": false,
+      "description": "P0-08 分配结果转给 P0-09 时允许保留 components 审计快照。",
+      "properties": {
+        "amr_id": {
+          "minLength": 1,
+          "title": "Amr Id",
+          "type": "string"
+        },
+        "order_id": {
+          "minLength": 1,
+          "title": "Order Id",
+          "type": "string"
+        },
+        "components": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "$ref": "#/$defs/JsonValue"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Components"
+        }
+      },
+      "required": [
+        "amr_id",
+        "order_id"
+      ],
+      "title": "RouteAssignmentInput",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "多车 A* 输入；blocked_cells 是本次任务的临时封路叠加。",
+  "properties": {
+    "assignments": {
+      "items": {
+        "$ref": "#/$defs/RouteAssignmentInput"
+      },
+      "minItems": 1,
+      "title": "Assignments",
+      "type": "array"
+    },
+    "environment_ref": {
+      "maxLength": 256,
+      "minLength": 1,
+      "title": "Environment Ref",
+      "type": "string"
+    },
+    "blocked_cells": {
+      "items": {
+        "$ref": "#/$defs/GridPosition"
+      },
+      "title": "Blocked Cells",
+      "type": "array"
+    },
+    "max_time": {
+      "default": 120,
+      "maximum": 2000,
+      "minimum": 1,
+      "title": "Max Time",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "assignments",
+    "environment_ref"
+  ],
+  "title": "PlanMultiAMRRoutesInput",
+  "type": "object"
+}

@@ -1,0 +1,61 @@
+{
+  "$defs": {
+    "UserRole": {
+      "description": "P0 固定的两级工具访问角色。",
+      "enum": [
+        "viewer",
+        "operator"
+      ],
+      "title": "UserRole",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "检索查询；role_scope 只是请求范围，不能提升调用者权限。",
+  "properties": {
+    "query": {
+      "maxLength": 2000,
+      "minLength": 1,
+      "title": "Query",
+      "type": "string"
+    },
+    "top_k": {
+      "default": 5,
+      "maximum": 50,
+      "minimum": 1,
+      "title": "Top K",
+      "type": "integer"
+    },
+    "role_scope": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/UserRole"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "document_ids": {
+      "anyOf": [
+        {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Document Ids"
+    }
+  },
+  "required": [
+    "query"
+  ],
+  "title": "RetrieveKnowledgeInput",
+  "type": "object"
+}

@@ -301,6 +301,71 @@ P0-01/P0-03 涉及的全部文件、用途、学习顺序、修改前后差异�
 | 修改 | `docs/FILE_PURPOSES.md` | 登记本步所有验证器源码、测试、CLI、契约和文档职责。 | 保持文件职责入口完整，并区分自动生成物与源码交付物。 |
 | 修改 | `docs/HANDOFF_CONTEXT.md` | 记录 P0-10 公共 API/JSON、错误字典、设计决策、真实测试、环境状态、限制和 P0-11 输入。 | 下一 Agent 可直接复用验证器边界和 14/14、33/33 测试事实。 |
 
+## 2026-08-20：P0-11 Python AMR 离散事件仿真
+
+本步核心 Python 代码均补充中文模块说明、类/函数 docstring 和关键状态、数据流、失败行为注释；故障注入保持在仿真包内，不注册到 `agent.tools`。新增 Markdown 只记录公共契约和启动方式，因此无核心代码注释需求。`build/`、`__pycache__/`、`.pytest_cache/` 和 `tmp/` 仍属于自动生成物，不登记为源码交付物。
+
+| 变更 | 文件 | 作用 | 下游影响 |
+|---|---|---|---|
+| 新建 | `services/amr_simulator/contracts.py` | 定义 P0-10 计划 envelope、P0-09 路径步、仿真配置、订单/工位/充电站状态、Observation 关联事件和 Eval 故障注入的严格 Pydantic 契约。 | P0-12 `dispatch_simulation` 和 P0-13 状态图应直接复用；不能另造不兼容的 AMR 状态或路径时间字段。 |
+| 新建 | `services/amr_simulator/validator.py` | 通过固定 `fleet_plan_validator_cli.exe` 和 JSON stdin/stdout 执行 P0-10 前置门禁，区分业务非法、契约错误和进程超时。 | 后续工具注册表只能把 `status=valid` 作为执行前提，不能信任 planner/LLM 审计字段。 |
+| 新建 | `services/amr_simulator/simulator.py` | 实现 1 秒固定 tick 的路径执行、电量扣减、订单/工位/充电状态迁移、结构化 Observation/事件日志和安全停机故障注入。 | P0-13 `verify_observation`、P0-14 Checkpoint 和 P0-15 异常处置直接消费其输出；不接入 ROS/真实底盘。 |
+| 修改 | `services/amr_simulator/__init__.py` | 汇总仿真公共入口、契约、Validator 客户端和异常类型。 | Python 调用方从稳定包入口导入，不依赖模块内部实现路径。 |
+| 新建 | `tests/unit/test_p011_simulator.py` | 覆盖正常运输、完整状态迁移、充电/容量状态、低电量待充、离线/电量故障、非法时间戳拒绝、同 seed 重放和故障不入工具白名单。 | 后续修改仿真状态机或跨语言契约时作为 P0-11 回归门禁。 |
+| 新建 | `docs/AMR_SIMULATOR.md` | 记录 P0-09/P0-10 路径与验证边界、固定 tick、装卸零时长、充电、Observation/事件和故障注入契约；本步无核心代码注释需求。 | P0-12/P0-13/Eval 以此作为仿真接入唯一专题入口。 |
+| 修改 | `scripts/export_schemas.py` | 将 P0-11 `SimulationPlan`、`SimulationEvent`、`SimulationResult` 纳入统一 Pydantic Schema 导出清单。 | P0-12/P0-13 的 JSON 边界由运行时模型自动生成，避免手写漂移。 |
+| 新建 | `docs/schemas/SimulationPlan.schema.json` | P0-10 兼容仿真计划 envelope 的机器可读 Schema。 | P0-12 dispatch 输入和跨语言适配校验使用。 |
+| 新建 | `docs/schemas/SimulationEvent.schema.json` | 单个仿真事件的机器可读 Schema。 | P0-06 events、Trace 和 Eval 记录使用。 |
+| 新建 | `docs/schemas/SimulationResult.schema.json` | 仿真最终状态、Observation、事件和资源快照的机器可读 Schema。 | P0-12 ToolResult/P0-13 verify 与报告层使用。 |
+| 修改 | `README.md` | 将 P0-11 标记完成，增加仿真目录、能力和专项测试入口。 | 项目首页当前下一步变为 P0-12，避免把仿真误判为占位。 |
+| 修改 | `docs/PROJECT_SETUP.md` | 更新目录职责并登记 P0-11 Python 入口；本步无核心代码注释需求。 | 新会话可以按固定 Validator CLI 和专项 pytest 复现仿真。 |
+| 修改 | `docs/SERVICES_STARTUP.md` | 增加 P0-11 无常驻服务、Validator 前置和专项测试说明；本步无核心代码注释需求。 | 操作者不会在没有 C++ Validator 的情况下误运行仿真。 |
+| 修改 | `docs/FILE_PURPOSES.md` | 登记 P0-11 所有源文件、测试和文档职责。 | 保持长期文件职责入口唯一。 |
+| 修改 | `docs/HANDOFF_CONTEXT.md` | 记录仿真公共契约、状态机、Validator 调用、故障边界、实际测试和下一步 P0-12。 | 后续工具注册和主闭环可直接复用本步事实，不重复推翻时间语义。 |
+| 修改 | `docs/LESSONS_LEARNED.md` | 沉淀 P0-11 的路径复用、终点占用、充电不瞬移和固定 epoch 可复现性经验。 | 后续 Eval/Checkpoint 避免引入第二套时间轴或墙上时钟。 |
+
+## 2026-08-20：P0-12 九个白名单工具
+
+本步新建/修改的 Python 核心代码均补充中文模块说明、类/函数 docstring 和关键数据流、边界、失败行为、安全限制及扩展点；测试代码也说明反例意图。Schema/Markdown 只保存机器契约和职责，因此无核心代码注释需求。`build/`、`__pycache__/`、`.pytest_cache/` 和 `tmp/` 属于自动生成物，不登记为源码交付物。
+
+| 变更 | 文件 | 作用 | 下游影响 |
+|---|---|---|---|
+| 修改 | `agent/tools/contracts.py` | 扩展 `ToolSpec` 的审计字段声明和 `ToolResult` 的版本、角色、输入/输出 digest、幂等键及审计元数据，同时保持 P0-04 旧载荷兼容。 | P0-13/P0-17 可统一消费九工具结果，不再为每个工具解析私有日志。 |
+| 修改 | `agent/tools/__init__.py` | 保留 P0-04 纯契约的低副作用导入，并懒加载 P0-12 注册表入口。 | RAG/领域契约导入不要求外部服务在线；Agent 从稳定包入口获取注册表。 |
+| 新建 | `agent/tools/schemas.py` | 定义九工具输入/输出 Pydantic Schema、ID/角色/时间边界和 C++/仿真响应模型。 | `ToolSpec` 和 `docs/schemas/` 使用同一实时模型，后续公共接口依赖这些封闭字段。 |
+| 新建 | `agent/tools/cpp_client.py` | 通过固定 exe、固定 argv、JSON stdin/stdout、`shell=False` 和超时调用 P0-08～P0-10。 | 分配、A*、Validator 不被任意命令/路径旁路；Python 不复制 C++ 算法。 |
+| 新建 | `agent/tools/snapshots.py` | 提供固定 warehouse seed 环境快照、执行状态存储协议和进程内幂等状态适配器。 | 车队状态、分配、路径、仿真共享同一事实；后续可替换 PostgreSQL 而不改工具契约。 |
+| 新建 | `agent/tools/verification.py` | 将 Python/CTest/Smoke 验证入口映射为固定 suite/case argv，并拒绝未知套件。 | P0-17 可复用受控验证；调用方不能传入 Shell、脚本或 pytest 命令。 |
+| 新建 | `agent/tools/approval.py` | 以请求 digest 幂等创建 pending 审批及 effect ID，不自动批准。 | P0-06/P0-16 可接入持久化/HITL 决策；工具层保留审批审计边界。 |
+| 新建 | `agent/tools/registry.py` | 注册恰好九个 handler，执行参数/角色预检、超时、输出 Schema、错误映射、证据和重复调用缓存。 | P0-13 只能经白名单进入确定性能力；故障注入不进入正常 Agent 工具表。 |
+| 修改 | `scripts/export_schemas.py` | 新增 P0-12 各工具输入/输出 Schema 导出清单。 | 运行时模型和提交的 JSON 契约可由测试逐字核对。 |
+| 新建 | `docs/P012_TOOLS.md` | 记录九工具清单、角色/超时/幂等/副作用、固定 C++ 边界、错误和重复调用语义；本步无核心代码注释需求。 | 后续 Agent、API 和 Trace 以此作为工具层专题入口。 |
+| 新建 | `docs/schemas/RetrieveKnowledgeInput.schema.json`、`GetFleetStateInput.schema.json`、`AllocateTasksInput.schema.json`、`PlanMultiAMRRoutesInput.schema.json`、`ValidateFleetPlanInput.schema.json`、`DispatchSimulationInput.schema.json`、`QueryExecutionStateInput.schema.json`、`RunVerificationSuiteInput.schema.json`、`RequestApprovalInput.schema.json` | 保存九工具的机器可读输入边界；本步无核心代码注释需求。 | Agent/API/契约测试从同一模型校验参数。 |
+| 新建 | `docs/schemas/FleetStateOutput.schema.json`、`docs/schemas/AllocationResponse.schema.json`、`docs/schemas/RoutePlanResponse.schema.json`、`docs/schemas/ValidationResponse.schema.json`、`docs/schemas/ExecutionStateOutput.schema.json`、`docs/schemas/VerificationSuiteOutput.schema.json`、`docs/schemas/ApprovalRequestOutput.schema.json` | 保存车队状态、分配、路线、验证、状态、验证套件和审批的机器可读输出边界；检索与仿真输出分别复用既有 `RetrievalResponse`/`SimulationResult` Schema；本步无核心代码注释需求。 | ToolResult 的 output 能被下游逐工具审查。 |
+| 修改 | `docs/schemas/ToolSpec.schema.json`、`docs/schemas/ToolResult.schema.json` | 反映统一审计字段和结果扩展；本步无核心代码注释需求。 | P0-04/P0-12 Schema 导出保持一致。 |
+| 新建 | `tests/unit/test_p012_tools.py` | 覆盖九工具清单、预执行参数/角色门禁、RAG/状态、幂等、冲突、超时、故障隔离和固定 C++ argv。 | 后续改动必须继续通过 P0-12 正反例回归。 |
+
+## 2026-08-20：P0-12 完成后严格工程审查
+
+本次没有扩展 P0 Scope，也没有新增 LLM、数据库或常驻服务依赖。修改的核心 Python
+代码均同步补充/更新中文注释，重点解释输出侧安全门禁、并发幂等、协作取消和固定
+验证 argv；Markdown 与运行时导出的 JSON Schema 无核心代码注释需求。P0-07～P0-11
+实现仅作为被测依赖，没有为通过审查复制或重写算法。
+
+| 变更 | 文件 | 作用 | 下游影响 |
+|---|---|---|---|
+| 修改 | `agent/tools/contracts.py` | 将 `audit_metadata` 纳入默认审计字段，保证 ToolSpec 声明与 ToolResult 实际审计载荷一致。 | P0-13/P0-17 可依赖统一审计字段，不需按工具猜测。 |
+| 修改 | `agent/tools/schemas.py` | 收紧严格整数、非有限数、空白字符串、A* 最大时域、固定算法名、Validator/验证套件汇总一致性和审批时区。 | 错误参数和矛盾的 C++/runner 输出均在执行或返回前确定性拒绝。 |
+| 修改 | `agent/tools/registry.py` | 增加 in-flight call_id 协调、公共错误类别声明、输出侧 RAG ACL 熔断、子进程 timeout 余量、超时取消门禁、共享快照 Provider 及仿真订单筛选。 | P0-13 不会因并发重放重复副作用，也不能从后端回归路径绕过 ACL/状态筛选。 |
+| 修改 | `agent/tools/snapshots.py` | 合并并校验静态障碍与临时障碍，稳定排序后传给 A*/Validator。 | 地图 seed 的安全约束不会在工具适配层静默丢失。 |
+| 修改 | `agent/tools/verification.py` | 去除本机盘符硬编码，从可信 PATH 解析固定绝对程序，并把 P0-12 case 固定为明确 pytest node id。 | 受控验证既不能注入命令，也不会因模糊选择零测试而产生假证据。 |
+| 修改 | `tests/unit/test_p012_tools.py` | 扩至 20 个用例，新增并发幂等、输出 ACL、严格预检、审计身份、障碍合并、状态筛选、跨语言汇总一致性和固定验证 argv 反例。 | 后续工具层修改必须保留本次修复的失败路径。 |
+| 重导出 | `docs/schemas/*.schema.json`（34 份公共 Schema） | 使用 `scripts/export_schemas.py` 从当前 Pydantic 模型重建机器契约；本步无核心代码注释需求。 | 契约测试可继续逐字检查运行时模型与提交产物无漂移。 |
+| 修改 | `docs/P012_TOOLS.md` | 补充并发重复调用、输出侧 ACL、固定算法、子进程 timeout、固定验证程序和状态筛选语义；本步无核心代码注释需求。 | P0-13 组装主闭环时有明确安全与失败边界。 |
+| 修改 | `docs/FILE_PURPOSES.md` | 登记本次审查涉及的全部源文件、测试、契约和文档职责；本步无核心代码注释需求。 | 保持文件职责入口唯一。 |
+| 修改 | `docs/HANDOFF_CONTEXT.md` | 修正过期的 P0-12 状态，记录审查缺陷、修复、实测结果、服务状态和 P0-13 边界；本步无核心代码注释需求。 | 下一任务不再依据 P0-12 前的陈旧描述开展工作。 |
+| 修改 | `docs/LESSONS_LEARNED.md` | 沉淀并发幂等、输出侧 ACL、验证空选集和错误声明漂移的可复用经验；本步无核心代码注释需求。 | 后续工具与 Eval 不重复引入相同缺陷。 |
+
 ## 自动生成物
 
 以下内容不是源码，不需要逐文件登记：

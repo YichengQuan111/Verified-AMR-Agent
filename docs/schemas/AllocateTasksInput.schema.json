@@ -1,0 +1,41 @@
+{
+  "additionalProperties": false,
+  "description": "Hungarian 分配只接收环境快照引用和显式订单/车辆 ID。",
+  "properties": {
+    "order_ids": {
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Order Ids",
+      "type": "array"
+    },
+    "environment_ref": {
+      "maxLength": 256,
+      "minLength": 1,
+      "title": "Environment Ref",
+      "type": "string"
+    },
+    "amr_ids": {
+      "anyOf": [
+        {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Amr Ids"
+    }
+  },
+  "required": [
+    "order_ids",
+    "environment_ref"
+  ],
+  "title": "AllocateTasksInput",
+  "type": "object"
+}

@@ -81,6 +81,15 @@
       ],
       "title": "ToolResultStatus",
       "type": "string"
+    },
+    "UserRole": {
+      "description": "P0 固定的两级工具访问角色。",
+      "enum": [
+        "viewer",
+        "operator"
+      ],
+      "title": "UserRole",
+      "type": "string"
     }
   },
   "additionalProperties": false,
@@ -149,6 +158,76 @@
         }
       ],
       "title": "Effect Id"
+    },
+    "tool_version": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Tool Version"
+    },
+    "principal_role": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/UserRole"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "input_digest": {
+      "anyOf": [
+        {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Input Digest"
+    },
+    "output_digest": {
+      "anyOf": [
+        {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Output Digest"
+    },
+    "idempotency_key": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Idempotency Key"
+    },
+    "audit_metadata": {
+      "additionalProperties": {
+        "$ref": "#/$defs/JsonValue"
+      },
+      "title": "Audit Metadata",
+      "type": "object"
     }
   },
   "required": [

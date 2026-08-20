@@ -1,0 +1,103 @@
+{
+  "$defs": {
+    "JsonValue": {}
+  },
+  "additionalProperties": false,
+  "description": "单个确定性仿真事件。\n\n``time`` 是离散仿真秒，不使用墙上时钟；``payload`` 只保存 JSON 值，便于\n后续 P0-06 events、Trace 和 Eval 直接序列化而不执行任意对象。",
+  "properties": {
+    "event_id": {
+      "minLength": 1,
+      "title": "Event Id",
+      "type": "string"
+    },
+    "simulation_id": {
+      "minLength": 1,
+      "title": "Simulation Id",
+      "type": "string"
+    },
+    "time": {
+      "minimum": 0,
+      "title": "Time",
+      "type": "integer"
+    },
+    "event_type": {
+      "minLength": 1,
+      "title": "Event Type",
+      "type": "string"
+    },
+    "severity": {
+      "enum": [
+        "info",
+        "warning",
+        "error"
+      ],
+      "title": "Severity",
+      "type": "string"
+    },
+    "amr_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Amr Id"
+    },
+    "order_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Order Id"
+    },
+    "workstation_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Workstation Id"
+    },
+    "charging_station_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Charging Station Id"
+    },
+    "payload": {
+      "additionalProperties": {
+        "$ref": "#/$defs/JsonValue"
+      },
+      "title": "Payload",
+      "type": "object"
+    }
+  },
+  "required": [
+    "event_id",
+    "simulation_id",
+    "time",
+    "event_type",
+    "severity",
+    "payload"
+  ],
+  "title": "SimulationEvent",
+  "type": "object"
+}

@@ -161,6 +161,29 @@ class ToolSpec(ToolContract):
     has_side_effects: bool
     requires_approval: bool
     error_categories: list[ToolErrorCategory] = Field(min_length=1)
+    # 注册表把这些字段作为最小审计契约暴露给上游 Trace。字段名是声明性的，
+    # 实际值由 ToolExecutor 在调用前后填入 ToolResult，避免每个工具各造一套
+    # 审计格式；旧的 P0-04 调用方可以省略，注册表会使用完整默认集合。
+    audit_fields: list[str] = Field(
+        default_factory=lambda: [
+            "call_id",
+            "tool_name",
+            "tool_version",
+            "principal_role",
+            "input_digest",
+            "output_digest",
+            "started_at",
+            "finished_at",
+            "duration_ms",
+            "status",
+            "error",
+            "evidence_refs",
+            "effect_id",
+            "idempotency_key",
+            "audit_metadata",
+        ],
+        min_length=1,
+    )
 
     @model_validator(mode="after")
     def validate_spec(self) -> "ToolSpec":
@@ -170,6 +193,10 @@ class ToolSpec(ToolContract):
             raise ValueError("allowed_roles 不能包含重复角色")
         if len(self.error_categories) != len(set(self.error_categories)):
             raise ValueError("error_categories 不能包含重复分类")
+        if len(self.audit_fields) != len(set(self.audit_fields)) or any(
+            not field.strip() for field in self.audit_fields
+        ):
+            raise ValueError("audit_fields 必须是非空且不重复的字段名")
         if self.has_side_effects and UserRole.VIEWER in self.allowed_roles:
             raise ValueError("viewer 不能执行带副作用的工具")
 
@@ -224,6 +251,15 @@ class ToolResult(ToolContract):
     duration_ms: int = Field(ge=0)
     evidence_refs: list[str]
     effect_id: str | None
+    # 下面字段保持可选是为了兼容 P0-04 已持久化的旧结果；P0-12 注册表生成的
+    # 新结果始终填写它们。digest 使用 canonical JSON 的 SHA-256，能在不保存
+    # 原始参数/正文的情况下证明重试是否针对同一输入和输出。
+    tool_version: str | None = Field(default=None, min_length=1)
+    principal_role: UserRole | None = None
+    input_digest: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    output_digest: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    idempotency_key: str | None = Field(default=None, min_length=1)
+    audit_metadata: dict[str, JsonValue] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def validate_result_consistency(self) -> "ToolResult":
@@ -237,6 +273,10 @@ class ToolResult(ToolContract):
             raise ValueError("finished_at 不能早于 started_at")
         if len(self.evidence_refs) != len(set(self.evidence_refs)):
             raise ValueError("evidence_refs 不能重复")
+        if self.status is ToolResultStatus.TIMEOUT and self.error.category is not ToolErrorCategory.TIMEOUT:
+            raise ValueError("timeout 结果必须使用 timeout 错误分类")
+        if self.status is ToolResultStatus.DENIED and self.error.category is not ToolErrorCategory.PERMISSION_DENIED:
+            raise ValueError("denied 结果必须使用 permission_denied 错误分类")
         return self
 
 

@@ -1,0 +1,51 @@
+{
+  "additionalProperties": false,
+  "description": "验证套件选择器只允许注册表内的固定套件 ID。",
+  "properties": {
+    "suite_id": {
+      "enum": [
+        "p0_12",
+        "p0-12",
+        "p0_python",
+        "p0_cpp",
+        "p0_smoke"
+      ],
+      "title": "Suite Id",
+      "type": "string"
+    },
+    "run_id": {
+      "anyOf": [
+        {
+          "maxLength": 256,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Run Id"
+    },
+    "case_ids": {
+      "anyOf": [
+        {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Case Ids"
+    }
+  },
+  "required": [
+    "suite_id"
+  ],
+  "title": "RunVerificationSuiteInput",
+  "type": "object"
+}

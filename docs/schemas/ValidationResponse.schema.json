@@ -1,0 +1,212 @@
+{
+  "$defs": {
+    "GridPosition": {
+      "additionalProperties": false,
+      "description": "30 × 20 仓库栅格中的一个合法位置。\n\n坐标从 0 开始，所以宽度为 30 时 x 最大只能是 29，高度为 20 时 y 最大只能是 19。",
+      "properties": {
+        "x": {
+          "description": "横坐标，允许 0～29",
+          "exclusiveMaximum": 30,
+          "minimum": 0,
+          "title": "X",
+          "type": "integer"
+        },
+        "y": {
+          "description": "纵坐标，允许 0～19",
+          "exclusiveMaximum": 20,
+          "minimum": 0,
+          "title": "Y",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "x",
+        "y"
+      ],
+      "title": "GridPosition",
+      "type": "object"
+    },
+    "ValidationEvidenceOutput": {
+      "additionalProperties": false,
+      "description": "P0-10 错误证据的完整定位字段；不因字段不适用而省略。",
+      "properties": {
+        "code": {
+          "title": "Code",
+          "type": "string"
+        },
+        "constraint": {
+          "title": "Constraint",
+          "type": "string"
+        },
+        "message": {
+          "title": "Message",
+          "type": "string"
+        },
+        "task_id": {
+          "title": "Task Id",
+          "type": "string"
+        },
+        "related_task_id": {
+          "title": "Related Task Id",
+          "type": "string"
+        },
+        "order_id": {
+          "title": "Order Id",
+          "type": "string"
+        },
+        "related_order_id": {
+          "title": "Related Order Id",
+          "type": "string"
+        },
+        "amr_id": {
+          "title": "Amr Id",
+          "type": "string"
+        },
+        "related_amr_id": {
+          "title": "Related Amr Id",
+          "type": "string"
+        },
+        "coordinate": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/GridPosition"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "related_coordinate": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/GridPosition"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "time": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Time"
+        },
+        "related_time": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Related Time"
+        },
+        "observed": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Observed"
+        },
+        "limit": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Limit"
+        },
+        "path_index": {
+          "title": "Path Index",
+          "type": "integer"
+        },
+        "related_path_index": {
+          "title": "Related Path Index",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "code",
+        "constraint",
+        "message",
+        "task_id",
+        "related_task_id",
+        "order_id",
+        "related_order_id",
+        "amr_id",
+        "related_amr_id",
+        "coordinate",
+        "related_coordinate",
+        "time",
+        "related_time",
+        "observed",
+        "limit",
+        "path_index",
+        "related_path_index"
+      ],
+      "title": "ValidationEvidenceOutput",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "P0-10 验证响应；valid=false 是安全结论而非进程崩溃。",
+  "properties": {
+    "schema_version": {
+      "const": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "ruleset_version": {
+      "const": "p0-10.v1",
+      "title": "Ruleset Version",
+      "type": "string"
+    },
+    "status": {
+      "enum": [
+        "valid",
+        "invalid"
+      ],
+      "title": "Status",
+      "type": "string"
+    },
+    "valid": {
+      "title": "Valid",
+      "type": "boolean"
+    },
+    "error_count": {
+      "title": "Error Count",
+      "type": "integer"
+    },
+    "errors": {
+      "items": {
+        "$ref": "#/$defs/ValidationEvidenceOutput"
+      },
+      "title": "Errors",
+      "type": "array"
+    }
+  },
+  "required": [
+    "schema_version",
+    "ruleset_version",
+    "status",
+    "valid",
+    "error_count",
+    "errors"
+  ],
+  "title": "ValidationResponse",
+  "type": "object"
+}

@@ -1,0 +1,60 @@
+{
+  "additionalProperties": false,
+  "description": "人工审批请求的幂等结果；不会携带自动批准字段。",
+  "properties": {
+    "approval_id": {
+      "title": "Approval Id",
+      "type": "string"
+    },
+    "effect_id": {
+      "title": "Effect Id",
+      "type": "string"
+    },
+    "run_id": {
+      "title": "Run Id",
+      "type": "string"
+    },
+    "task_id": {
+      "title": "Task Id",
+      "type": "string"
+    },
+    "reason": {
+      "title": "Reason",
+      "type": "string"
+    },
+    "status": {
+      "const": "pending",
+      "title": "Status",
+      "type": "string"
+    },
+    "requested_at": {
+      "format": "date-time",
+      "title": "Requested At",
+      "type": "string"
+    },
+    "expires_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Expires At"
+    }
+  },
+  "required": [
+    "approval_id",
+    "effect_id",
+    "run_id",
+    "task_id",
+    "reason",
+    "status",
+    "requested_at",
+    "expires_at"
+  ],
+  "title": "ApprovalRequestOutput",
+  "type": "object"
+}

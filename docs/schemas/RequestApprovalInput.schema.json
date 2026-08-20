@@ -1,0 +1,44 @@
+{
+  "additionalProperties": false,
+  "description": "高风险步骤的人工审批请求，不接受自动批准或任意决策字段。",
+  "properties": {
+    "run_id": {
+      "maxLength": 256,
+      "minLength": 1,
+      "title": "Run Id",
+      "type": "string"
+    },
+    "task_id": {
+      "maxLength": 256,
+      "minLength": 1,
+      "title": "Task Id",
+      "type": "string"
+    },
+    "reason": {
+      "maxLength": 2000,
+      "minLength": 1,
+      "title": "Reason",
+      "type": "string"
+    },
+    "expires_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Expires At"
+    }
+  },
+  "required": [
+    "run_id",
+    "task_id",
+    "reason"
+  ],
+  "title": "RequestApprovalInput",
+  "type": "object"
+}

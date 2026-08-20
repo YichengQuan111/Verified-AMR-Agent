@@ -1,2 +1,61 @@
-"""Discrete-event AMR simulator placeholder for P0-11."""
+"""P0-11 Python AMR 离散事件仿真公共入口。"""
 
+from services.amr_simulator.contracts import (
+    ChargingStationSpec,
+    ChargingStationState,
+    ChargingStationStatus,
+    FaultInjection,
+    FaultType,
+    FleetPlanRoute,
+    RouteStep,
+    SimulationEdge,
+    SimulationEvent,
+    SimulationOrderState,
+    SimulationOrderStatus,
+    SimulationPlan,
+    SimulationResult,
+    SimulationStatus,
+    SimulatorConfig,
+    ValidatorConfig,
+    WorkstationState,
+)
+from services.amr_simulator.simulator import (
+    AMRSimulator,
+    DiscreteEventSimulator,
+    SimulationConfigurationError,
+    SimulationInvariantError,
+    simulate_plan,
+)
+from services.amr_simulator.validator import (
+    FleetPlanValidatorClient,
+    PlanValidationError,
+    ValidatorExecutionError,
+)
+
+__all__ = [
+    "AMRSimulator",
+    "ChargingStationSpec",
+    "ChargingStationState",
+    "ChargingStationStatus",
+    "DiscreteEventSimulator",
+    "FaultInjection",
+    "FaultType",
+    "FleetPlanRoute",
+    "FleetPlanValidatorClient",
+    "PlanValidationError",
+    "RouteStep",
+    "SimulationConfigurationError",
+    "SimulationEdge",
+    "SimulationEvent",
+    "SimulationInvariantError",
+    "SimulationOrderState",
+    "SimulationOrderStatus",
+    "SimulationPlan",
+    "SimulationResult",
+    "SimulationStatus",
+    "SimulatorConfig",
+    "ValidatorConfig",
+    "ValidatorExecutionError",
+    "WorkstationState",
+    "simulate_plan",
+]

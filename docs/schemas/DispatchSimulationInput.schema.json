@@ -1,0 +1,571 @@
+{
+  "$defs": {
+    "AMRState": {
+      "additionalProperties": false,
+      "description": "一台 AMR 在某个确定时刻的完整状态快照。",
+      "properties": {
+        "amr_id": {
+          "description": "AMR 的稳定唯一标识",
+          "minLength": 1,
+          "title": "Amr Id",
+          "type": "string"
+        },
+        "position": {
+          "$ref": "#/$defs/GridPosition"
+        },
+        "heading": {
+          "$ref": "#/$defs/Heading"
+        },
+        "battery": {
+          "description": "剩余电量百分比",
+          "maximum": 100,
+          "minimum": 0,
+          "title": "Battery",
+          "type": "number"
+        },
+        "load": {
+          "description": "当前载荷，单位为千克",
+          "minimum": 0,
+          "title": "Load",
+          "type": "number"
+        },
+        "task_status": {
+          "$ref": "#/$defs/AMRTaskStatus"
+        },
+        "health_status": {
+          "$ref": "#/$defs/HealthStatus"
+        },
+        "connection_status": {
+          "$ref": "#/$defs/ConnectionStatus"
+        }
+      },
+      "required": [
+        "amr_id",
+        "position",
+        "heading",
+        "battery",
+        "load",
+        "task_status",
+        "health_status",
+        "connection_status"
+      ],
+      "title": "AMRState",
+      "type": "object"
+    },
+    "AMRTaskStatus": {
+      "description": "P0 场景中 AMR 可观测到的任务阶段。",
+      "enum": [
+        "IDLE",
+        "TO_PICKUP",
+        "LOADING",
+        "TO_DROPOFF",
+        "UNLOADING",
+        "TO_CHARGE",
+        "CHARGING",
+        "OFFLINE"
+      ],
+      "title": "AMRTaskStatus",
+      "type": "string"
+    },
+    "ConnectionStatus": {
+      "description": "AMR 与控制系统的连接状态。",
+      "enum": [
+        "ONLINE",
+        "DEGRADED",
+        "OFFLINE"
+      ],
+      "title": "ConnectionStatus",
+      "type": "string"
+    },
+    "FleetPlanRoute": {
+      "additionalProperties": false,
+      "description": "P0-10 计划中的一条完整 pickup → dropoff 路线。",
+      "properties": {
+        "amr_id": {
+          "minLength": 1,
+          "title": "Amr Id",
+          "type": "string"
+        },
+        "order_id": {
+          "minLength": 1,
+          "title": "Order Id",
+          "type": "string"
+        },
+        "payload_kg": {
+          "title": "Payload Kg",
+          "type": "number"
+        },
+        "pickup_time": {
+          "title": "Pickup Time",
+          "type": "integer"
+        },
+        "dropoff_time": {
+          "title": "Dropoff Time",
+          "type": "integer"
+        },
+        "path": {
+          "items": {
+            "$ref": "#/$defs/RouteStep"
+          },
+          "title": "Path",
+          "type": "array"
+        },
+        "status": {
+          "default": "planned",
+          "enum": [
+            "planned",
+            "infeasible"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "reason_code": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reason Code"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reason"
+        },
+        "priority": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Priority"
+        },
+        "total_cost": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Total Cost"
+        },
+        "expanded_states": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Expanded States"
+        }
+      },
+      "required": [
+        "amr_id",
+        "order_id",
+        "payload_kg",
+        "pickup_time",
+        "dropoff_time",
+        "path"
+      ],
+      "title": "FleetPlanRoute",
+      "type": "object"
+    },
+    "GridPosition": {
+      "additionalProperties": false,
+      "description": "30 × 20 仓库栅格中的一个合法位置。\n\n坐标从 0 开始，所以宽度为 30 时 x 最大只能是 29，高度为 20 时 y 最大只能是 19。",
+      "properties": {
+        "x": {
+          "description": "横坐标，允许 0～29",
+          "exclusiveMaximum": 30,
+          "minimum": 0,
+          "title": "X",
+          "type": "integer"
+        },
+        "y": {
+          "description": "纵坐标，允许 0～19",
+          "exclusiveMaximum": 20,
+          "minimum": 0,
+          "title": "Y",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "x",
+        "y"
+      ],
+      "title": "GridPosition",
+      "type": "object"
+    },
+    "Heading": {
+      "description": "AMR 的四个栅格朝向，单位为度。",
+      "enum": [
+        0,
+        90,
+        180,
+        270
+      ],
+      "title": "Heading",
+      "type": "integer"
+    },
+    "HealthStatus": {
+      "description": "AMR 自检健康状态。",
+      "enum": [
+        "HEALTHY",
+        "DEGRADED",
+        "FAULT"
+      ],
+      "title": "HealthStatus",
+      "type": "string"
+    },
+    "RouteStep": {
+      "additionalProperties": false,
+      "description": "P0-09 的逐时刻路径状态；仿真器只消费，不重新规划。",
+      "properties": {
+        "position": {
+          "$ref": "#/$defs/GridPosition"
+        },
+        "heading": {
+          "$ref": "#/$defs/Heading"
+        },
+        "time": {
+          "title": "Time",
+          "type": "integer"
+        },
+        "action": {
+          "enum": [
+            "start",
+            "move",
+            "turn_left",
+            "turn_right",
+            "wait"
+          ],
+          "title": "Action",
+          "type": "string"
+        },
+        "g_cost": {
+          "title": "G Cost",
+          "type": "number"
+        }
+      },
+      "required": [
+        "position",
+        "heading",
+        "time",
+        "action",
+        "g_cost"
+      ],
+      "title": "RouteStep",
+      "type": "object"
+    },
+    "SimulationEdge": {
+      "additionalProperties": false,
+      "description": "地图中一条带方向的相邻边，字段名与 P0-09/P0-10 JSON 保持一致。",
+      "properties": {
+        "from": {
+          "$ref": "#/$defs/GridPosition"
+        },
+        "to": {
+          "$ref": "#/$defs/GridPosition"
+        }
+      },
+      "required": [
+        "from",
+        "to"
+      ],
+      "title": "SimulationEdge",
+      "type": "object"
+    },
+    "SimulationPlan": {
+      "additionalProperties": false,
+      "description": "P0-10 Validator 请求 envelope，也是 P0-11 唯一可执行计划输入。\n\n这里仅做 JSON 形状校验。地图、订单依赖、时间戳、载荷、电量和车队冲突等\n业务规则必须继续交给 P0-10；否则 Python 侧的“看起来合法”会形成安全旁路。",
+      "properties": {
+        "schema_version": {
+          "const": "1.0",
+          "default": "1.0",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "environment_ref": {
+          "minLength": 1,
+          "title": "Environment Ref",
+          "type": "string"
+        },
+        "map_width": {
+          "maximum": 100,
+          "minimum": 1,
+          "title": "Map Width",
+          "type": "integer"
+        },
+        "map_height": {
+          "maximum": 100,
+          "minimum": 1,
+          "title": "Map Height",
+          "type": "integer"
+        },
+        "blocked_cells": {
+          "items": {
+            "$ref": "#/$defs/GridPosition"
+          },
+          "title": "Blocked Cells",
+          "type": "array"
+        },
+        "blocked_edges": {
+          "items": {
+            "$ref": "#/$defs/SimulationEdge"
+          },
+          "title": "Blocked Edges",
+          "type": "array"
+        },
+        "one_way_edges": {
+          "items": {
+            "$ref": "#/$defs/SimulationEdge"
+          },
+          "title": "One Way Edges",
+          "type": "array"
+        },
+        "amrs": {
+          "items": {
+            "$ref": "#/$defs/AMRState"
+          },
+          "title": "Amrs",
+          "type": "array"
+        },
+        "orders": {
+          "items": {
+            "$ref": "#/$defs/TransportOrder"
+          },
+          "title": "Orders",
+          "type": "array"
+        },
+        "location_positions": {
+          "additionalProperties": {
+            "$ref": "#/$defs/GridPosition"
+          },
+          "title": "Location Positions",
+          "type": "object"
+        },
+        "completed_order_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Completed Order Ids",
+          "type": "array"
+        },
+        "routes": {
+          "items": {
+            "$ref": "#/$defs/FleetPlanRoute"
+          },
+          "title": "Routes",
+          "type": "array"
+        },
+        "start_time": {
+          "title": "Start Time",
+          "type": "integer"
+        },
+        "max_time": {
+          "title": "Max Time",
+          "type": "integer"
+        },
+        "config": {
+          "$ref": "#/$defs/ValidatorConfig"
+        },
+        "workstation_capacities": {
+          "additionalProperties": {
+            "type": "integer"
+          },
+          "title": "Workstation Capacities",
+          "type": "object"
+        },
+        "ruleset_version": {
+          "const": "p0-10.v1",
+          "default": "p0-10.v1",
+          "title": "Ruleset Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "environment_ref",
+        "map_width",
+        "map_height",
+        "blocked_cells",
+        "blocked_edges",
+        "one_way_edges",
+        "amrs",
+        "orders",
+        "location_positions",
+        "completed_order_ids",
+        "routes",
+        "start_time",
+        "max_time",
+        "config",
+        "workstation_capacities"
+      ],
+      "title": "SimulationPlan",
+      "type": "object"
+    },
+    "TransportOrder": {
+      "additionalProperties": false,
+      "description": "仓库内一次 pickup-transport-dropoff 运输订单。",
+      "properties": {
+        "order_id": {
+          "description": "订单唯一标识",
+          "minLength": 1,
+          "title": "Order Id",
+          "type": "string"
+        },
+        "material_id": {
+          "description": "待运输物料标识",
+          "minLength": 1,
+          "title": "Material Id",
+          "type": "string"
+        },
+        "pickup": {
+          "description": "取货点标识",
+          "minLength": 1,
+          "title": "Pickup",
+          "type": "string"
+        },
+        "dropoff": {
+          "description": "交付点标识",
+          "minLength": 1,
+          "title": "Dropoff",
+          "type": "string"
+        },
+        "priority": {
+          "description": "优先级；5 最高，1 最低",
+          "maximum": 5,
+          "minimum": 1,
+          "title": "Priority",
+          "type": "integer"
+        },
+        "release_time": {
+          "description": "订单可开始时间，单位为仿真秒",
+          "minimum": 0,
+          "title": "Release Time",
+          "type": "integer"
+        },
+        "deadline": {
+          "description": "订单截止时间，单位为仿真秒",
+          "exclusiveMinimum": 0,
+          "title": "Deadline",
+          "type": "integer"
+        },
+        "dependencies": {
+          "description": "必须先完成的订单 ID",
+          "items": {
+            "type": "string"
+          },
+          "title": "Dependencies",
+          "type": "array"
+        }
+      },
+      "required": [
+        "order_id",
+        "material_id",
+        "pickup",
+        "dropoff",
+        "priority",
+        "release_time",
+        "deadline",
+        "dependencies"
+      ],
+      "title": "TransportOrder",
+      "type": "object"
+    },
+    "ValidatorConfig": {
+      "additionalProperties": false,
+      "description": "与 P0-10 同名的安全配置，避免仿真使用第二套电量/载荷规则。",
+      "properties": {
+        "maximum_load_kg": {
+          "title": "Maximum Load Kg",
+          "type": "number"
+        },
+        "energy_per_cell_percent": {
+          "title": "Energy Per Cell Percent",
+          "type": "number"
+        },
+        "battery_safety_reserve_percent": {
+          "title": "Battery Safety Reserve Percent",
+          "type": "number"
+        },
+        "new_task_battery_threshold_percent": {
+          "title": "New Task Battery Threshold Percent",
+          "type": "number"
+        },
+        "critical_battery_threshold_percent": {
+          "title": "Critical Battery Threshold Percent",
+          "type": "number"
+        },
+        "minimum_safety_distance_cells": {
+          "title": "Minimum Safety Distance Cells",
+          "type": "integer"
+        },
+        "default_workstation_capacity": {
+          "title": "Default Workstation Capacity",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "maximum_load_kg",
+        "energy_per_cell_percent",
+        "battery_safety_reserve_percent",
+        "new_task_battery_threshold_percent",
+        "critical_battery_threshold_percent",
+        "minimum_safety_distance_cells",
+        "default_workstation_capacity"
+      ],
+      "title": "ValidatorConfig",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "仿真派发输入；故障注入故意不在此 Schema 中出现。",
+  "properties": {
+    "plan": {
+      "$ref": "#/$defs/SimulationPlan"
+    },
+    "seed": {
+      "title": "Seed",
+      "type": "integer"
+    },
+    "until_time": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Until Time"
+    }
+  },
+  "required": [
+    "plan",
+    "seed"
+  ],
+  "title": "DispatchSimulationInput",
+  "type": "object"
+}

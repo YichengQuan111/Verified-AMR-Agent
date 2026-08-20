@@ -1,0 +1,47 @@
+{
+  "additionalProperties": false,
+  "description": "查询运行/仿真状态的稳定筛选参数。",
+  "properties": {
+    "run_id": {
+      "maxLength": 256,
+      "minLength": 1,
+      "title": "Run Id",
+      "type": "string"
+    },
+    "task_ids": {
+      "anyOf": [
+        {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Task Ids"
+    },
+    "amr_ids": {
+      "anyOf": [
+        {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Amr Ids"
+    }
+  },
+  "required": [
+    "run_id"
+  ],
+  "title": "QueryExecutionStateInput",
+  "type": "object"
+}

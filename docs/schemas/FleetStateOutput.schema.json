@@ -1,0 +1,163 @@
+{
+  "$defs": {
+    "AMRState": {
+      "additionalProperties": false,
+      "description": "一台 AMR 在某个确定时刻的完整状态快照。",
+      "properties": {
+        "amr_id": {
+          "description": "AMR 的稳定唯一标识",
+          "minLength": 1,
+          "title": "Amr Id",
+          "type": "string"
+        },
+        "position": {
+          "$ref": "#/$defs/GridPosition"
+        },
+        "heading": {
+          "$ref": "#/$defs/Heading"
+        },
+        "battery": {
+          "description": "剩余电量百分比",
+          "maximum": 100,
+          "minimum": 0,
+          "title": "Battery",
+          "type": "number"
+        },
+        "load": {
+          "description": "当前载荷，单位为千克",
+          "minimum": 0,
+          "title": "Load",
+          "type": "number"
+        },
+        "task_status": {
+          "$ref": "#/$defs/AMRTaskStatus"
+        },
+        "health_status": {
+          "$ref": "#/$defs/HealthStatus"
+        },
+        "connection_status": {
+          "$ref": "#/$defs/ConnectionStatus"
+        }
+      },
+      "required": [
+        "amr_id",
+        "position",
+        "heading",
+        "battery",
+        "load",
+        "task_status",
+        "health_status",
+        "connection_status"
+      ],
+      "title": "AMRState",
+      "type": "object"
+    },
+    "AMRTaskStatus": {
+      "description": "P0 场景中 AMR 可观测到的任务阶段。",
+      "enum": [
+        "IDLE",
+        "TO_PICKUP",
+        "LOADING",
+        "TO_DROPOFF",
+        "UNLOADING",
+        "TO_CHARGE",
+        "CHARGING",
+        "OFFLINE"
+      ],
+      "title": "AMRTaskStatus",
+      "type": "string"
+    },
+    "ConnectionStatus": {
+      "description": "AMR 与控制系统的连接状态。",
+      "enum": [
+        "ONLINE",
+        "DEGRADED",
+        "OFFLINE"
+      ],
+      "title": "ConnectionStatus",
+      "type": "string"
+    },
+    "GridPosition": {
+      "additionalProperties": false,
+      "description": "30 × 20 仓库栅格中的一个合法位置。\n\n坐标从 0 开始，所以宽度为 30 时 x 最大只能是 29，高度为 20 时 y 最大只能是 19。",
+      "properties": {
+        "x": {
+          "description": "横坐标，允许 0～29",
+          "exclusiveMaximum": 30,
+          "minimum": 0,
+          "title": "X",
+          "type": "integer"
+        },
+        "y": {
+          "description": "纵坐标，允许 0～19",
+          "exclusiveMaximum": 20,
+          "minimum": 0,
+          "title": "Y",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "x",
+        "y"
+      ],
+      "title": "GridPosition",
+      "type": "object"
+    },
+    "Heading": {
+      "description": "AMR 的四个栅格朝向，单位为度。",
+      "enum": [
+        0,
+        90,
+        180,
+        270
+      ],
+      "title": "Heading",
+      "type": "integer"
+    },
+    "HealthStatus": {
+      "description": "AMR 自检健康状态。",
+      "enum": [
+        "HEALTHY",
+        "DEGRADED",
+        "FAULT"
+      ],
+      "title": "HealthStatus",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "车队状态工具的可追溯响应。",
+  "properties": {
+    "environment_ref": {
+      "title": "Environment Ref",
+      "type": "string"
+    },
+    "state_version": {
+      "title": "State Version",
+      "type": "string"
+    },
+    "source": {
+      "enum": [
+        "warehouse_seed",
+        "execution_store"
+      ],
+      "title": "Source",
+      "type": "string"
+    },
+    "amrs": {
+      "items": {
+        "$ref": "#/$defs/AMRState"
+      },
+      "title": "Amrs",
+      "type": "array"
+    }
+  },
+  "required": [
+    "environment_ref",
+    "state_version",
+    "source",
+    "amrs"
+  ],
+  "title": "FleetStateOutput",
+  "type": "object"
+}

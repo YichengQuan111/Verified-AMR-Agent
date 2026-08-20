@@ -18,6 +18,24 @@ if str(PROJECT_ROOT) not in sys.path:
 from agent.planning.contracts import PlanTask, TaskContract  # noqa: E402
 from agent.runtime.state import Observation, RunState  # noqa: E402
 from agent.tools.contracts import ToolResult, ToolSpec  # noqa: E402
+from agent.tools.schemas import (  # noqa: E402
+    AllocateTasksInput,
+    AllocationResponse,
+    ApprovalRequestOutput,
+    DispatchSimulationInput,
+    ExecutionStateOutput,
+    FleetStateOutput,
+    GetFleetStateInput,
+    PlanMultiAMRRoutesInput,
+    QueryExecutionStateInput,
+    RequestApprovalInput,
+    RetrieveKnowledgeInput,
+    RoutePlanResponse,
+    RunVerificationSuiteInput,
+    ValidateFleetPlanInput,
+    ValidationResponse,
+    VerificationSuiteOutput,
+)
 from domains.amr_warehouse.contracts import AMRState, TransportOrder  # noqa: E402
 from agent.context.contracts import (  # noqa: E402
     FinalReport,
@@ -29,6 +47,11 @@ from services.retrieval.contracts import (  # noqa: E402
     KnowledgeChunk,
     RetrievalResponse,
     RetrievalResult,
+)
+from services.amr_simulator.contracts import (  # noqa: E402
+    SimulationEvent,
+    SimulationPlan,
+    SimulationResult,
 )
 
 
@@ -53,6 +76,29 @@ SCHEMA_MODELS: dict[str, type[BaseModel]] = {
     "KnowledgeChunk.schema.json": KnowledgeChunk,
     "RetrievalResult.schema.json": RetrievalResult,
     "RetrievalResponse.schema.json": RetrievalResponse,
+    # P0-11 的计划、事件和最终快照是 P0-12/P0-13 的跨层 JSON 边界，继续由
+    # model_json_schema() 生成，避免手写事件字段与运行态漂移。
+    "SimulationPlan.schema.json": SimulationPlan,
+    "SimulationEvent.schema.json": SimulationEvent,
+    "SimulationResult.schema.json": SimulationResult,
+    # P0-12 每个正常工具的输入/输出均从实时模型导出；ToolSpec 中仍嵌入同一
+    # Schema，以下独立文件方便契约测试和跨语言消费者逐工具审查。
+    "RetrieveKnowledgeInput.schema.json": RetrieveKnowledgeInput,
+    "GetFleetStateInput.schema.json": GetFleetStateInput,
+    "FleetStateOutput.schema.json": FleetStateOutput,
+    "AllocateTasksInput.schema.json": AllocateTasksInput,
+    "AllocationResponse.schema.json": AllocationResponse,
+    "PlanMultiAMRRoutesInput.schema.json": PlanMultiAMRRoutesInput,
+    "RoutePlanResponse.schema.json": RoutePlanResponse,
+    "ValidateFleetPlanInput.schema.json": ValidateFleetPlanInput,
+    "ValidationResponse.schema.json": ValidationResponse,
+    "DispatchSimulationInput.schema.json": DispatchSimulationInput,
+    "QueryExecutionStateInput.schema.json": QueryExecutionStateInput,
+    "ExecutionStateOutput.schema.json": ExecutionStateOutput,
+    "RunVerificationSuiteInput.schema.json": RunVerificationSuiteInput,
+    "VerificationSuiteOutput.schema.json": VerificationSuiteOutput,
+    "RequestApprovalInput.schema.json": RequestApprovalInput,
+    "ApprovalRequestOutput.schema.json": ApprovalRequestOutput,
 }
 
 

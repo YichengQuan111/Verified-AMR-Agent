@@ -1,0 +1,229 @@
+{
+  "$defs": {
+    "GridPosition": {
+      "additionalProperties": false,
+      "description": "30 × 20 仓库栅格中的一个合法位置。\n\n坐标从 0 开始，所以宽度为 30 时 x 最大只能是 29，高度为 20 时 y 最大只能是 19。",
+      "properties": {
+        "x": {
+          "description": "横坐标，允许 0～29",
+          "exclusiveMaximum": 30,
+          "minimum": 0,
+          "title": "X",
+          "type": "integer"
+        },
+        "y": {
+          "description": "纵坐标，允许 0～19",
+          "exclusiveMaximum": 20,
+          "minimum": 0,
+          "title": "Y",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "x",
+        "y"
+      ],
+      "title": "GridPosition",
+      "type": "object"
+    },
+    "Heading": {
+      "description": "AMR 的四个栅格朝向，单位为度。",
+      "enum": [
+        0,
+        90,
+        180,
+        270
+      ],
+      "title": "Heading",
+      "type": "integer"
+    },
+    "RouteOutput": {
+      "additionalProperties": false,
+      "description": "P0-09 单车路线输出，保留不可行原因但不伪造 path。",
+      "properties": {
+        "amr_id": {
+          "title": "Amr Id",
+          "type": "string"
+        },
+        "dropoff_time": {
+          "title": "Dropoff Time",
+          "type": "integer"
+        },
+        "expanded_states": {
+          "title": "Expanded States",
+          "type": "integer"
+        },
+        "order_id": {
+          "title": "Order Id",
+          "type": "string"
+        },
+        "path": {
+          "items": {
+            "$ref": "#/$defs/RouteStep"
+          },
+          "title": "Path",
+          "type": "array"
+        },
+        "pickup_time": {
+          "title": "Pickup Time",
+          "type": "integer"
+        },
+        "priority": {
+          "title": "Priority",
+          "type": "integer"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Reason"
+        },
+        "reason_code": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Reason Code"
+        },
+        "status": {
+          "enum": [
+            "planned",
+            "infeasible"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "total_cost": {
+          "title": "Total Cost",
+          "type": "number"
+        }
+      },
+      "required": [
+        "amr_id",
+        "dropoff_time",
+        "expanded_states",
+        "order_id",
+        "path",
+        "pickup_time",
+        "priority",
+        "reason",
+        "reason_code",
+        "status",
+        "total_cost"
+      ],
+      "title": "RouteOutput",
+      "type": "object"
+    },
+    "RouteStep": {
+      "additionalProperties": false,
+      "description": "P0-09 的逐时刻路径状态；仿真器只消费，不重新规划。",
+      "properties": {
+        "position": {
+          "$ref": "#/$defs/GridPosition"
+        },
+        "heading": {
+          "$ref": "#/$defs/Heading"
+        },
+        "time": {
+          "title": "Time",
+          "type": "integer"
+        },
+        "action": {
+          "enum": [
+            "start",
+            "move",
+            "turn_left",
+            "turn_right",
+            "wait"
+          ],
+          "title": "Action",
+          "type": "string"
+        },
+        "g_cost": {
+          "title": "G Cost",
+          "type": "number"
+        }
+      },
+      "required": [
+        "position",
+        "heading",
+        "time",
+        "action",
+        "g_cost"
+      ],
+      "title": "RouteStep",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "P0-09 多车路线响应。",
+  "properties": {
+    "algorithm": {
+      "const": "astar",
+      "title": "Algorithm",
+      "type": "string"
+    },
+    "cell_reservation_count": {
+      "title": "Cell Reservation Count",
+      "type": "integer"
+    },
+    "edge_reservation_count": {
+      "title": "Edge Reservation Count",
+      "type": "integer"
+    },
+    "planned_count": {
+      "title": "Planned Count",
+      "type": "integer"
+    },
+    "routes": {
+      "items": {
+        "$ref": "#/$defs/RouteOutput"
+      },
+      "title": "Routes",
+      "type": "array"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "status": {
+      "enum": [
+        "complete",
+        "infeasible"
+      ],
+      "title": "Status",
+      "type": "string"
+    },
+    "total_cost": {
+      "title": "Total Cost",
+      "type": "number"
+    },
+    "total_expanded_states": {
+      "title": "Total Expanded States",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "algorithm",
+    "cell_reservation_count",
+    "edge_reservation_count",
+    "planned_count",
+    "routes",
+    "schema_version",
+    "status",
+    "total_cost",
+    "total_expanded_states"
+  ],
+  "title": "RoutePlanResponse",
+  "type": "object"
+}

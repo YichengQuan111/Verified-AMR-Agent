@@ -105,6 +105,14 @@
       "minItems": 1,
       "title": "Error Categories",
       "type": "array"
+    },
+    "audit_fields": {
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Audit Fields",
+      "type": "array"
     }
   },
   "required": [

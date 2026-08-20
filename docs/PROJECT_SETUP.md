@@ -7,7 +7,7 @@
 | `apps/api` | FastAPI 入口、生命周期、健康检查与 P0-06 业务 Router |
 | `agent/runtime` | 后续 LangGraph 状态图、Checkpoint |
 | `agent/planning` | 后续领域契约、Planner、Validator、Replanner |
-| `agent/tools` | 后续白名单工具契约和路由 |
+| `agent/tools` | P0-12 九个白名单工具的 ToolSpec/ToolResult、输入/输出 Schema、统一执行器、固定 C++/状态/审批/验证适配器 |
 | `domains/amr_warehouse` | 地图、订单、AMR 状态和领域约束 |
 | `services/model_gateway` | P0-03 本地模型统一访问边界 |
 | `services/application` | P0-06 运行、计划、审批和文档事务 Service |
@@ -15,7 +15,7 @@
 | `services/retrieval` | P0-07 Loader、section chunk、Embedding、Qdrant/BM25、ACL、融合、引用与拒答 |
 | `evals/rag` | P0-07 固定 20 例数据及 Recall/MRR/Citation/ACL 执行器 |
 | `services/planner_cpp` | P0-08 `task_allocator`、P0-09 `route_planner` 与 P0-10 `fleet_plan_validator` C++17 库、独立 baseline、JSON CLI 和 CTest |
-| `services/amr_simulator` | 后续离散事件仿真 |
+| `services/amr_simulator` | P0-11 Python 固定 tick 离散事件仿真、P0-10 Validator 适配、结构化 Observation/事件日志和 Eval 故障注入 |
 | `services/validation` | 后续受控测试和证据报告 |
 | `evals` | 版本化评测集与 Harness |
 | `infra` | Compose、模型启动元数据和部署辅助文件 |
@@ -76,3 +76,13 @@ P0-08 的 CLI 目标为 `task_allocator_cli`，生产算法使用 `--algorithm h
 P0-09 的 CLI 目标为 `route_planner_cli`，生产算法使用 `--algorithm astar`，独立基线使用 `--algorithm dijkstra`；请求/响应契约见 [ROUTE_PLANNER.md](ROUTE_PLANNER.md)。
 
 P0-10 的 CLI 目标为 `fleet_plan_validator_cli`，使用 `--validate`（默认动作）校验完整车队计划，使用 `--error-dictionary` 输出稳定错误字典；请求/响应契约见 [FLEET_PLAN_VALIDATOR.md](FLEET_PLAN_VALIDATOR.md)。业务非法计划通过 JSON `status=invalid` 报告，不能只看进程退出码。
+
+P0-11 的 Python 入口为 `services.amr_simulator.AMRSimulator`；它在执行前固定调用
+`build/cpp/services/planner_cpp/fleet_plan_validator_cli.exe --validate`，然后直接
+按 P0-09 的路径时间戳推进。仿真契约、充电站配置、Observation/事件字段和 Eval
+故障注入边界见 [AMR_SIMULATOR.md](AMR_SIMULATOR.md)。
+
+P0-12 的统一入口为 `agent.tools.build_tool_registry()`；九个工具的角色、超时、
+输入/输出 Schema、错误分类、审计和重复调用语义见 [P012_TOOLS.md](P012_TOOLS.md)。
+Python 调用 C++ 时只使用固定 exe + JSON stdin/stdout，生产工具不接受 Shell、路径、
+命令或 P0-11 `FaultInjection`。
