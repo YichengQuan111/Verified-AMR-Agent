@@ -280,6 +280,27 @@ P0-01/P0-03 涉及的全部文件、用途、学习顺序、修改前后差异�
 | 修改 | `docs/FILE_PURPOSES.md` | 登记本步全部路由源码、测试、CLI、契约和文档职责。 | 文件职责入口保持完整，自动生成物与源码交付物分离。 |
 | 修改 | `docs/HANDOFF_CONTEXT.md` | 记录 P0-09 公共 API/JSON、设计决策、实际测试、环境状态、限制和 P0-10 交接信息。 | 下一 Agent 可直接复用预约表、路径时间语义和 CTest 基线。 |
 
+## 2026-08-20：P0-10 C++ 车队计划验证器
+
+本步核心 C++ 代码均补充中文注释，说明验证边界、数据流、证据定位、安全限制、失败行为和后续扩展点；MSVC 目标继续使用 `/utf-8`。新增 Markdown 仅记录公共契约、启动方式和交接事实，因此无核心代码注释需求。`build/`、测试可执行文件和 CMake 中间文件属于自动生成物，不登记为源码交付物。
+
+| 变更 | 文件 | 作用 | 下游影响 |
+|---|---|---|---|
+| 修改 | `services/planner_cpp/CMakeLists.txt` | 在现有 P0-08/P0-09 C++17 工程中加入 `fleet_plan_validator` 静态库、严格 JSON 编解码、CLI 和 14 个 CTest 场景；保留 `/utf-8` 与统一 CTest 门禁。 | P0-12 工具注册表和 P0-13 主闭环可复用固定 CLI/库，不得绕过验证器。 |
+| 新建 | `services/planner_cpp/include/fleet_plan_validator/fleet_plan_validator.hpp` | 定义完整车队计划输入、路线、配置、稳定错误证据、错误字典和验证结果公共 API。 | P0-11 仿真、P0-12 工具适配和 P0-13 验证节点以此为 C++ 边界。 |
+| 新建 | `services/planner_cpp/src/fleet_plan_validator.cpp` | 确定性校验任务依赖/时间窗、载荷、电量余量、地图硬约束、工位容量、距离及顶点/交换边路径冲突，并生成可定位错误证据。 | 任何 LLM/Prompt/规划器声明都不能替代此复核；后续仿真必须复用同一时间和终点占用语义。 |
+| 新建 | `services/planner_cpp/include/fleet_plan_validator/json_codec.hpp` | 声明 P0-10 严格 JSON 请求/响应/错误字典编解码入口。 | Python 工具适配可以依赖固定字段白名单，未知旁路字段会在边界拒绝。 |
+| 新建 | `services/planner_cpp/src/fleet_plan_validator_json_codec.cpp` | 实现有限 JSON 值模型的类型、范围、非有限数、重复/未知字段门禁，以及计划和证据的稳定序列化。 | 跨语言调用方获得确定性错误 envelope，不依赖偶然的 JSON 库或字段顺序。 |
+| 新建 | `services/planner_cpp/src/fleet_plan_validator_main.cpp` | 提供 `fleet_plan_validator_cli`，限制 stdin 大小，区分参数/契约、业务非法和内部错误退出码。 | P0-12 通过固定可执行文件调用；业务非法不能被误判为 CLI 崩溃或成功。 |
+| 新建 | `services/planner_cpp/tests/fleet_plan_validator_tests.cpp` | 用正反例覆盖合法稳定通过、每类非法约束定位、证据可复现、JSON 旁路拒绝和错误字典完整性。 | P0-10 的 14 个 CTest 是后续修改验证器和接入仿真时的回归门禁。 |
+| 新建 | `docs/FLEET_PLAN_VALIDATOR.md` | 记录请求/响应 JSON、规则、稳定错误码、证据字段、CLI 退出码和 P0-09/P0-10 边界；本步无核心代码注释需求。 | P0-12/P0-13 以此实现调用和错误展示，不从实现细节猜契约。 |
+| 修改 | `README.md` | 将 P0-10 标记完成，加入验证器职责、CLI、无绕过边界和 33/33 CTest 基线。 | 项目首页的当前下一步变为 P0-11。 |
+| 修改 | `docs/PROJECT_SETUP.md` | 更新 `services/planner_cpp` 目录职责并登记验证器 CLI/契约入口；本步无核心代码注释需求。 | 新会话可按统一构建和 CTest 入口复现 P0-10。 |
+| 修改 | `docs/SERVICES_STARTUP.md` | 增加验证器构建后调用、错误字典和业务非法退出码说明；本步无核心代码注释需求。 | 运维/验收不会只检查进程退出码而漏掉 `status=invalid`。 |
+| 新建 | `docs/LESSONS_LEARNED.md` | 持续记录可复用的环境、接口和测试陷阱；本步新增 P0-10 的独立复核、载荷补充和终点占用经验。 | P0-11/P0-12 避免把规划器审计字段或 Prompt 当作安全验证。 |
+| 修改 | `docs/FILE_PURPOSES.md` | 登记本步所有验证器源码、测试、CLI、契约和文档职责。 | 保持文件职责入口完整，并区分自动生成物与源码交付物。 |
+| 修改 | `docs/HANDOFF_CONTEXT.md` | 记录 P0-10 公共 API/JSON、错误字典、设计决策、真实测试、环境状态、限制和 P0-11 输入。 | 下一 Agent 可直接复用验证器边界和 14/14、33/33 测试事实。 |
+
 ## 自动生成物
 
 以下内容不是源码，不需要逐文件登记：

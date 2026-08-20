@@ -1,8 +1,8 @@
 # AMR Agent 项目交接上下文
 
 最后更新：2026-08-20
-当前已完成：P0-00、P0-01、P0-02、P0-03、P0-04、P0-05、P0-06、P0-07、P0-08、P0-09
-当前下一步：P0-10 实现 C++ 车队计划验证器
+当前已完成：P0-00、P0-01、P0-02、P0-03、P0-04、P0-05、P0-06、P0-07、P0-08、P0-09、P0-10
+当前下一步：P0-11 离散事件仿真
 
 ## 1. 文档用途与维护要求
 
@@ -209,6 +209,15 @@ CLI 为 `task_allocator_cli`，默认或 `--algorithm hungarian` 执行生产算
 - 地图硬约束包含边界、`blocked_cells`、`blocked_edges`、`one_way_edges` 和有限 `max_time`。CLI 顶层请求字段固定为 `schema_version/environment_ref/map_width/map_height/blocked_cells/blocked_edges/one_way_edges/amrs/orders/location_positions/assignments/completed_order_ids/start_time/max_time/costs`；`assignments` 可直接使用 P0-08 输出中的 `components` 快照，但路线会重新计算；详细 JSON 和退出码见 `docs/ROUTE_PLANNER.md`。
 - 路由返回 `path` 的每个时刻、朝向、动作和累计 `g_cost`，并给出 `pickup_time/dropoff_time`；deadline 由 P0-10 Validator 做最终硬校验，本步不伪装为路线安全结论。
 
+### 4.11 P0-10：C++ 车队计划验证器
+
+- 完成：新增 `fleet_plan_validator` C++17 静态库、`fleet_plan_validator_cli` 和严格 JSON 编解码；验证器接收内存地图快照、P0-04 `AMRState`/`TransportOrder`、工位位置、执行期 `payload_kg` 和 P0-09 离散路径，独立重算完整计划，不读取 `environment_ref` 文件。
+- 新增/变化的公共接口：`ValidatorConfig`、`FleetPlanRoute`、`FleetPlanRequest`、`ValidationEvidence`、`ValidationErrorDefinition`、`ValidationResult`、`error_dictionary()`、`validate_fleet_plan()`；规则版本固定为 `p0-10.v1`，结果 schema 版本为 `1.0`。JSON 顶层必填 `schema_version/environment_ref/map_width/map_height/blocked_cells/blocked_edges/one_way_edges/amrs/orders/location_positions/completed_order_ids/routes/start_time/max_time/config/workstation_capacities`，路线必填 `amr_id/order_id/payload_kg/pickup_time/dropoff_time/path`。
+- 规则边界：确定性检查任务依赖 DAG、release/deadline 和声明时间、初始/取货后载荷、临界/普通新任务电量门槛和路径结束安全余量、边界/禁行区/禁行边/单向边、动作—位置—朝向一致性、工位容量、Manhattan 最小安全距离、逐时刻顶点冲突及反向交换边冲突；非正工位容量也会独立报错。路径终点从到达时刻保持占用至 `max_time`，与 P0-09 `ReservationTable` 一致。
+- 证据契约：每个错误固定包含 `code/constraint/message` 以及任务/订单、相关任务/订单、AMR、相关 AMR、坐标、相关坐标、时间、相关时间、观测值、上限和路径索引字段；不适用字段序列化为 `null` 或空字符串。错误按稳定键排序，错误字典由 C++ 单一实现导出，不能由 Prompt 自行声明新规则。
+- 安全边界：`status`、`reason_code`、`reason` 只作为 P0-09 审计字段；`llm_valid`、`skip_validation`、`approved` 等未知字段在 JSON 边界拒绝。业务非法计划以退出码 `0` 返回 `status=invalid`，参数/契约错误为 `2`，内部异常为 `3`；调用方必须检查 `valid/status/errors`，不能只看进程成功。
+- 详细契约入口：`docs/FLEET_PLAN_VALIDATOR.md`；错误字典可通过 `fleet_plan_validator_cli.exe --error-dictionary` 导出。没有修改 P0-04 Pydantic Schema、数据库字段、Alembic revision 或模型服务。
+
 ## 5. 最近验证证据
 
 ### 5.1 离线统一回归
@@ -253,6 +262,17 @@ E:\Anaconda\envs\torch128\python.exe scripts\export_schemas.py
 - 五节点本次实际总 Token：14,837；分别为 `understand_goal=3,734`、`plan_tasks=3,577`、`verify_observation=1,811`、`replan=3,336`、`compose_report=2,379`。这些是本次固定样例的 llama.cpp usage，不是未来生产预算常量。
 - Smart `qwen3.8-smart`：alias/版本门禁通过，512 Token 思考预算下结构化请求 1/1 通过。
 - API 曾在隔离端口实际由 Uvicorn 启动，`/health` 返回 HTTP 200；进程已关闭。
+
+### 5.4 P0-10 C++ 验证器验收
+
+- 构建：在同一 PowerShell 进程导入 `E:\BuildingTools\Common7\Tools\VsDevCmd.bat -arch=x64 -host_arch=x64` 后，`cmake --build build\cpp` 成功，生成 `fleet_plan_validator.lib`、`fleet_plan_validator_cli.exe` 和测试可执行文件。
+- 专项 CTest：`ctest --test-dir build\cpp -R "^fleet_validator_" --output-on-failure` 实测 14/14 通过，覆盖合法计划、依赖、时间窗、载荷、电量、禁行区、工位容量、安全距离、顶点冲突、交换边冲突、路线几何、证据稳定性、JSON 旁路拒绝和错误字典。
+- 完整 CTest：`ctest --test-dir build\cpp --output-on-failure` 实测 33/33 通过，P0-08/P0-09 回归保持通过。
+- CLI 实测：`fleet_plan_validator_cli --version` 输出服务版本 `0.1.0`/C++17；合法样例输出 `error_count=0`、`status=valid`；`payload_kg=101` 的业务非法样例以退出码 `0` 返回 `load_capacity_exceeded`，证据含 `ORDER-01`、`AMR-01`、`{x:1,y:0}`、`time=1`、`observed=101`、`limit=100`；包含 `llm_valid` 的请求以退出码 `2` 返回 `invalid_json_or_contract`；`--error-dictionary` 成功输出 56 条机器可读定义。
+- 最终统一回归：实际执行 `.\scripts\run_smoke.ps1` 退出码为 0，环境/依赖门禁通过，Alembic 为 `0001_p006_core (head)` 且核心表缺失 0，Qdrant collection 健康，pytest `110 passed, 1 warning`，完整 CTest `33/33`。唯一警告为既有 jieba `pkg_resources` 弃用警告，不影响结果。
+- 环境与服务：P0-10 本身不依赖 FastAPI、文本 Qwen、PostgreSQL 或 Qdrant，本次没有启动模型/API；最终复核 `docker compose ps` 显示 `amr-postgres`/`amr-qdrant` 运行，5432/6333 监听，8000/8080 未监听。C++ 构建依赖固定 MSVC/CMake/Ninja 路径和 UTF-8 编译选项。
+- 已知限制/风险：容量当前按同一工位 ID、同一离散 pickup/dropoff 事件时刻聚合，尚未表达 P0-11 的服务持续时间；载荷通过执行期 `payload_kg` 补充，尚未修改 P0-04 `TransportOrder`。验证器是库和固定 CLI，尚未注册为 P0-12 Python 工具。
+- 下一步直接需要的信息：P0-11 仿真必须复用 `FleetPlanRequest`、`ValidationResult` 的时间/载荷/终点占用语义，并在执行前再次调用 Validator；如引入服务持续时间或动态装卸，先扩展公共契约、错误字典和反例测试，再改变容量规则。
 
 ## 6. P0-04 已固定的公共约定
 
@@ -379,9 +399,9 @@ DAG 使用 `agent.planning.dag.topological_sort()` 中的 Kahn 算法：计算�
 - P0-06 API/Service 已实际消费 `TaskContract`、`PlanTasksOutput` 和 `PlanTask` 并把快照写入 PostgreSQL；C++、仿真器和工具注册表的跨语言/跨服务兼容性仍需后续工作包验证。
 - 完整 `warehouse_v1.json` 通过 `environment_ref` 标识，不属于本次要求的八个核心 Schema；P0-09 的 C++ CLI 使用 `docs/ROUTE_PLANNER.md` 定义的独立严格地图 envelope，并要求调用方把已获取的地图快照显式传入，不能让 C++ 按 ref 自行读文件。
 - 九个工具目前只有名称和顶层参数契约，没有任何工具实现、JSON Schema 执行器或角色认证；这些分别属于 P0-12 和 P0-16。
-- P0-08 已实现 Hungarian 分配与 baseline；P0-09 已实现路径与时空预约，但尚未实现 P0-10 车队计划 Validator、P0-11 仿真、P0-12 工具注册表或 Python 调用适配。
+- P0-08 已实现 Hungarian 分配与 baseline；P0-09 已实现路径与时空预约；P0-10 已实现独立计划 Validator，但尚未实现 P0-11 仿真、P0-12 工具注册表或 Python 调用适配。
 - P0-09 采用按优先级的 prioritized planning，不实现 Scope 明确排除的 CBS/ECBS；在固定顺序下若后续车辆无安全解会返回 infeasible，不会回溯重排或忽略冲突。route_planner 当前没有独立 Pydantic 地图 Schema，跨语言调用应先按 `docs/ROUTE_PLANNER.md` 的严格 JSON envelope 适配。
-- P0-09 不直接控制底盘、不从 `environment_ref` 读取地图、不做安全距离/工位容量/最终 deadline 校验；这些边界继续由 P0-10/P0-11/P0-12 负责。
+- P0-09 不直接控制底盘、不从 `environment_ref` 读取地图、不做最终业务验收；P0-10 负责静态计划安全门禁，P0-11 仍负责执行期状态推进/观测一致性，P0-12 负责受控工具接入。
 - API 已有第 4.7 节的 8 个业务接口，但没有身份认证/授权中间件。P0-07 检索器会执行给定 `UserRole` 的 ACL，然而角色真实性仍由未来 P0-16 认证/授权层保证；外部调用方不能被允许自行声称 operator。
 - PostgreSQL 已接入业务仓储层，Qdrant 已由 P0-07 正式使用；BM25 按 P0 Scope 保持进程内，重启时从同一 frozen 语料重建。
 - `requirements.lock` 锁定的是直接依赖，不是完整传递依赖快照。
@@ -519,3 +539,14 @@ DAG 使用 `agent.planning.dag.topological_sort()` 中的 Kahn 算法：计算�
 - 外部服务当前状态：本步没有启动模型、FastAPI、PostgreSQL 或 Qdrant；smoke 复核显示 PostgreSQL/Qdrant 容器与 5432/6333 正常，8000/8080 未监听。C++ 构建仍依赖固定 MSVC/CMake/Ninja 路径，必须先导入 `E:\BuildingTools\Common7\Tools\VsDevCmd.bat`。
 - 已知限制/风险：当前是固定优先级顺序的 prioritized planning，后续车无安全路径直接整体不可行，不回溯换序；未实现 P0-10 的安全距离、工位容量、deadline/载荷/电量最终校验，未接入 P0-12 Python 工具注册表；当前没有独立地图 Pydantic Schema，任何跨语言消费者必须严格遵守 route JSON 文档。
 - 下一步直接需要的信息：P0-10 应直接消费 `RoutePlanResult.routes[*].path` 和 `ReservationTable` 的冲突语义，再验证时间窗、工位容量、安全距离、电量等业务/运动规则；P0-12 适配时调用固定 `route_planner_cli.exe`，不要把 Dijkstra 当 fallback，也不要让 LLM 绕过 `status=infeasible`。
+
+### 2026-08-20 · P0-10 C++ 车队计划验证器
+
+- 完成：新增 `fleet_plan_validator` 静态库、`fleet_plan_validator_cli`、严格 JSON 编解码和 14 个正反例 CTest；独立检查任务依赖、时间窗、载荷、电量安全余量、禁行区/边、工位容量、Manhattan 安全距离、顶点冲突和交换边冲突。
+- 未完成：没有实现 P0-11 仿真、P0-12 工具注册或 Python 调用适配；没有修改 P0-04 Pydantic Schema、数据库字段、Alembic revision 或模型服务。工位容量当前只按同一离散事件时刻聚合，不表达未来服务持续时间。
+- 新增/变化的公共契约：`ValidatorConfig`、`FleetPlanRoute`、`FleetPlanRequest`、`ValidationEvidence`、`ValidationErrorDefinition`、`ValidationResult`、`error_dictionary()`、`validate_fleet_plan()`；JSON schema_version=`1.0`，ruleset_version=`p0-10.v1`，路线必须携带执行期 `payload_kg`。完整字段见 `docs/FLEET_PLAN_VALIDATOR.md`。
+- 关键设计决策及原因：验证器不读取 `environment_ref`、不信任 P0-09 status 或 LLM/Prompt 声明，先通过严格 JSON 白名单拒绝旁路字段，再对完整路径和全车队状态独立重算；终点保持占用到 `max_time`；错误按稳定键排序并通过单一 C++ 错误字典输出，确保相同请求产生相同证据。
+- 验证命令与结果：导入 `VsDevCmd.bat -arch=x64 -host_arch=x64` 后 `cmake --build build\cpp` 成功；`ctest --test-dir build\cpp -R "^fleet_validator_" --output-on-failure` 为 14/14；`ctest --test-dir build\cpp --output-on-failure` 为 33/33。CLI `--version`、合法计划、LLM 旁路拒绝和 `--error-dictionary` 均已实测；业务非法计划返回退出码 0 且 `status=invalid`，契约错误返回退出码 2。
+- 外部服务当前状态：P0-10 本身不依赖 FastAPI、文本 Qwen、PostgreSQL 或 Qdrant，本次没有启动模型/API；构建依赖固定 MSVC/CMake/Ninja 路径。统一 smoke 的服务状态需在最终执行时重新核验，不能沿用历史快照。
+- 已知限制/风险：P0-04 `TransportOrder` 不含订单重量，当前由 `FleetPlanRoute.payload_kg` 明确补充；容量只覆盖 pickup/dropoff 同 tick 事件；CLI 仍未进入 P0-12 受控工具注册表。
+- 下一步直接需要的信息：P0-11 必须在执行前调用 P0-10 Validator，并复用路径时间、载荷和终点占用语义；若引入服务持续时间/动态装卸，先同步公共契约、错误字典、文件职责、交接和反例测试。

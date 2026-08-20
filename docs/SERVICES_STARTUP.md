@@ -315,6 +315,15 @@ Get-Content .\route_request.json -Raw | .\build\cpp\services\planner_cpp\route_p
 
 路线字段、预约冲突规则、失败退出码和 `infeasible` 业务结果见 [`ROUTE_PLANNER.md`](ROUTE_PLANNER.md)。
 
+P0-10 构建后会生成 `build\cpp\services\planner_cpp\fleet_plan_validator_cli.exe`。验证器不读取 Prompt，也不信任路线规划器或调用方声明的“已验证”字段；它对完整计划重新执行硬约束检查：
+
+```powershell
+Get-Content .\fleet_plan_request.json -Raw | .\build\cpp\services\planner_cpp\fleet_plan_validator_cli.exe --validate
+Get-Content .\fleet_plan_request.json -Raw | .\build\cpp\services\planner_cpp\fleet_plan_validator_cli.exe --error-dictionary
+```
+
+业务非法计划使用退出码 `0` 并在 JSON 中返回 `status=invalid`、稳定错误码和定位证据；输入契约/参数错误使用退出码 `2`，内部错误使用退出码 `3`。请求字段、错误字典、证据结构和离散时间边界见 [`FLEET_PLAN_VALIDATOR.md`](FLEET_PLAN_VALIDATOR.md)。
+
 ## 8. 一次开发会话的最小检查清单
 
 按顺序执行并确认全部通过：

@@ -13,7 +13,7 @@
   → 带引用的证据报告
 ```
 
-当前已经完成 **P0-00～P0-09**，下一工作包是 **P0-10：车队计划验证**。
+当前已经完成 **P0-00～P0-10**，下一工作包是 **P0-11：离散事件仿真**。
 
 ## 1. 固定范围
 
@@ -41,8 +41,9 @@
 | P0-07 | 已完成 | 6 份冻结文档、章节切块、本地 Embedding、Qdrant + BM25 混合检索、检索期 ACL、引用、拒答和 20 例评测。 |
 | P0-08 | 已完成 | 独立 C++17 `task_allocator` 库、Hungarian/最近空闲 baseline、严格 JSON stdin/stdout 和 7 个 CTest 场景。 |
 | P0-09 | 已完成 | 独立 C++17 `route_planner`、A*、时空 `(cell,t)/(edge,t)` 预约、Dijkstra baseline、严格 JSON CLI 和 12 个路由 CTest 场景。 |
+| P0-10 | 已完成 | 独立 C++17 `fleet_plan_validator`、稳定错误字典/证据、严格 JSON CLI 和 14 个正反例 CTest 场景。 |
 
-明确尚未实现：P0-10 车队计划验证、P0-11 仿真、P0-12 工具注册表、P0-13 LangGraph 主闭环及其后续能力。
+明确尚未实现：P0-11 仿真、P0-12 工具注册表、P0-13 LangGraph 主闭环及其后续能力。
 
 ## 3. 已落地架构
 
@@ -108,7 +109,7 @@ BEGIN → INSERT runs → flush → INSERT events → flush → COMMIT
 | `services/application/` | 运行、计划、审批和文档事务 Service。 |
 | `services/persistence/` | SQLAlchemy ORM、Session 工厂和 Repository。 |
 | `services/retrieval/` | P0-07 文档加载、分块、Embedding、Qdrant/BM25、混合融合、ACL、拒答与引用。 |
-| `services/planner_cpp/` | P0-08 C++17 Hungarian/最近空闲分配与 P0-09 A*/Dijkstra 路径、时空预约、严格 JSON 编解码和 CTest。 |
+| `services/planner_cpp/` | P0-08 C++17 Hungarian/最近空闲分配、P0-09 A*/Dijkstra 路径与时空预约、P0-10 计划验证器、严格 JSON 编解码和 CTest。 |
 | `evals/rag/` | 20 例固定 RAG 数据与 Recall/MRR/Citation/ACL 执行器。 |
 | `domains/amr_warehouse/` | 仓储领域契约和种子数据。 |
 | `migrations/` | Alembic 前向迁移。 |
@@ -169,7 +170,7 @@ docker compose ps
 最近一次完整验证基线（2026-08-20）：
 
 - pytest：110/110 通过。
-- CTest：19/19 通过（含原有 C++ 工程冒烟、P0-08 7 个回归和 P0-09 12 个路由/冲突/性能/JSON 场景）。
+- CTest：33/33 通过（含原有 C++ 工程冒烟、P0-08 7 个回归、P0-09 12 个路由/冲突/性能/JSON 场景和 P0-10 14 个验证正反例）。
 - Alembic：`0001_p006_core (head)`，8 张核心表缺失数 0。
 - Qdrant：健康检查通过，`amr_warehouse_knowledge` 保留 70 个正式 points。
 - Fast Qwen：基础结构化输出 20/20；5 个 P0-05 2-shot 节点 5/5。
@@ -230,7 +231,22 @@ P0-08 只用 Manhattan 距离做分配代价，不处理障碍、单向边、时
 Get-Content .\route_request.json -Raw | .\build\cpp\services\planner_cpp\route_planner_cli.exe --algorithm astar
 ```
 
-## 11. 协作与交接入口
+## 11. P0-10 C++ 车队计划验证
+
+`fleet_plan_validator` 对地图、P0-04 AMR/订单字段、工位位置、载荷和 P0-09 路径做独立确定性复核，检查任务依赖、时间窗、载荷、电量安全余量、禁行区、工位容量、最小安全距离、顶点冲突和交换边冲突。路线规划器返回的 `status`、LLM 提供的“已验证”字段或 Prompt 文本都只是外部输入，不能替代这一步；未知的 `llm_valid`、`skip_validation` 等旁路字段会在 JSON 边界被拒绝。
+
+每个非法计划返回 `status=invalid` 和按约束分组的稳定错误码；证据包含相关任务/订单、AMR、坐标、时间、观测值/上限和路径索引，便于定位与审计。错误码全集由 [docs/FLEET_PLAN_VALIDATOR.md](docs/FLEET_PLAN_VALIDATOR.md) 和 `--error-dictionary` 输出共同定义。
+
+请求/响应字段、离散时间语义、退出码和边界见 [docs/FLEET_PLAN_VALIDATOR.md](docs/FLEET_PLAN_VALIDATOR.md)。编译后可直接执行：
+
+```powershell
+Get-Content .\fleet_plan_request.json -Raw | .\build\cpp\services\planner_cpp\fleet_plan_validator_cli.exe --validate
+Get-Content .\fleet_plan_request.json -Raw | .\build\cpp\services\planner_cpp\fleet_plan_validator_cli.exe --error-dictionary
+```
+
+业务计划非法时 CLI 仍返回结构化结果并使用退出码 `0`；只有 JSON/参数/内部错误使用非零退出码，调用方必须检查响应中的 `status`/`valid`。
+
+## 12. 协作与交接入口
 
 开始任何新任务前，按顺序阅读：
 

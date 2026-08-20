@@ -11,6 +11,17 @@ target_include_directories(route_planner PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/incl
 target_link_libraries(route_planner PUBLIC task_allocator)
 target_compile_features(route_planner PUBLIC cxx_std_17)
 
+# P0-10 只接收内存中的完整车队计划快照，并复用 P0-09 的 RouteStep/地图语义。
+# Validator 独立成库，CLI 和 CTest 均调用同一入口，确保后续 Python 工具不能
+# 复制或绕过确定性约束；错误证据由库统一排序后再序列化。
+add_library(fleet_plan_validator STATIC
+  src/fleet_plan_validator.cpp
+  src/fleet_plan_validator_json_codec.cpp
+)
+target_include_directories(fleet_plan_validator PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(fleet_plan_validator PUBLIC route_planner)
+target_compile_features(fleet_plan_validator PUBLIC cxx_std_17)
+
 # route_planner_cli 是 Python 后续通过固定可执行文件调用的 JSON 边界；算法
 # 参数显式二选一，避免把 Dijkstra 误当成生产 A* 的隐式失败回退。
 add_executable(route_planner_cli src/route_planner_main.cpp)
@@ -36,6 +47,18 @@ target_compile_definitions(
 add_executable(task_allocator_tests tests/task_allocator_tests.cpp)
 target_link_libraries(task_allocator_tests PRIVATE task_allocator)
 
+# Validator CLI 只接受显式 --validate 或默认标准输入；业务 invalid 仍返回
+# 结构化 evidence，进程退出码只区分契约错误和已处理的业务结果。
+add_executable(fleet_plan_validator_cli src/fleet_plan_validator_main.cpp)
+target_link_libraries(fleet_plan_validator_cli PRIVATE fleet_plan_validator)
+target_compile_definitions(
+  fleet_plan_validator_cli
+  PRIVATE AMR_AGENT_VERSION="${PROJECT_VERSION}"
+)
+
+add_executable(fleet_plan_validator_tests tests/fleet_plan_validator_tests.cpp)
+target_link_libraries(fleet_plan_validator_tests PRIVATE fleet_plan_validator)
+
 # 路由测试按场景拆成独立 CTest，失败时可以直接定位到障碍、预约、无解或
 # 性能门禁；测试只使用公共 route_planner 头，不复制生产搜索实现。
 add_executable(route_planner_tests tests/route_planner_tests.cpp)
@@ -49,7 +72,11 @@ target_compile_definitions(
   PRIVATE AMR_AGENT_VERSION="${PROJECT_VERSION}"
 )
 
-set(PLANNER_CPP_TARGETS task_allocator route_planner route_planner_cli amr_planner_smoke task_allocator_cli task_allocator_tests route_planner_tests)
+set(PLANNER_CPP_TARGETS
+  task_allocator route_planner fleet_plan_validator route_planner_cli
+  fleet_plan_validator_cli amr_planner_smoke task_allocator_cli task_allocator_tests
+  fleet_plan_validator_tests route_planner_tests
+)
 foreach(target_name IN LISTS PLANNER_CPP_TARGETS)
   if(MSVC)
     # /utf-8 让 MSVC 按 UTF-8 读取中文注释；/Zc:__cplusplus 让
@@ -91,4 +118,19 @@ if(BUILD_TESTING)
   add_test(NAME route_planner_performance COMMAND route_planner_tests --case performance)
   add_test(NAME route_planner_json_contract COMMAND route_planner_tests --case json_contract)
   set_tests_properties(route_planner_performance PROPERTIES TIMEOUT 5)
+
+  add_test(NAME fleet_validator_valid COMMAND fleet_plan_validator_tests --case valid)
+  add_test(NAME fleet_validator_dependency COMMAND fleet_plan_validator_tests --case dependency)
+  add_test(NAME fleet_validator_time_window COMMAND fleet_plan_validator_tests --case time_window)
+  add_test(NAME fleet_validator_load COMMAND fleet_plan_validator_tests --case load)
+  add_test(NAME fleet_validator_battery COMMAND fleet_plan_validator_tests --case battery)
+  add_test(NAME fleet_validator_forbidden_zone COMMAND fleet_plan_validator_tests --case forbidden_zone)
+  add_test(NAME fleet_validator_workstation_capacity COMMAND fleet_plan_validator_tests --case workstation_capacity)
+  add_test(NAME fleet_validator_safety_distance COMMAND fleet_plan_validator_tests --case safety_distance)
+  add_test(NAME fleet_validator_vertex_conflict COMMAND fleet_plan_validator_tests --case vertex_conflict)
+  add_test(NAME fleet_validator_swap_edge_conflict COMMAND fleet_plan_validator_tests --case swap_edge_conflict)
+  add_test(NAME fleet_validator_route_geometry COMMAND fleet_plan_validator_tests --case route_geometry)
+  add_test(NAME fleet_validator_stable_evidence COMMAND fleet_plan_validator_tests --case stable_evidence)
+  add_test(NAME fleet_validator_json_contract COMMAND fleet_plan_validator_tests --case json_contract)
+  add_test(NAME fleet_validator_error_dictionary COMMAND fleet_plan_validator_tests --case error_dictionary)
 endif()
