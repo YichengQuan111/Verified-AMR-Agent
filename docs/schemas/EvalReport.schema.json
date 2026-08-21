@@ -1,0 +1,412 @@
+{
+  "$defs": {
+    "EvalAggregateMetrics": {
+      "additionalProperties": false,
+      "description": "按 Agent/RAG/AMR/安全/恢复/验证分域的机器可读汇总。",
+      "properties": {
+        "case_count": {
+          "minimum": 0,
+          "title": "Case Count",
+          "type": "integer"
+        },
+        "evaluation_pass_count": {
+          "minimum": 0,
+          "title": "Evaluation Pass Count",
+          "type": "integer"
+        },
+        "observed_negative_count": {
+          "minimum": 0,
+          "title": "Observed Negative Count",
+          "type": "integer"
+        },
+        "category_counts": {
+          "additionalProperties": {
+            "type": "integer"
+          },
+          "title": "Category Counts",
+          "type": "object"
+        },
+        "category_pass_rates": {
+          "additionalProperties": {
+            "type": "number"
+          },
+          "title": "Category Pass Rates",
+          "type": "object"
+        },
+        "agent": {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "title": "Agent",
+          "type": "object"
+        },
+        "rag": {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "title": "Rag",
+          "type": "object"
+        },
+        "amr": {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "title": "Amr",
+          "type": "object"
+        },
+        "security": {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "title": "Security",
+          "type": "object"
+        },
+        "recovery": {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "title": "Recovery",
+          "type": "object"
+        },
+        "verification": {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "title": "Verification",
+          "type": "object"
+        },
+        "zero_tolerance": {
+          "$ref": "#/$defs/ZeroToleranceMetrics"
+        }
+      },
+      "required": [
+        "case_count",
+        "evaluation_pass_count",
+        "observed_negative_count",
+        "category_counts",
+        "category_pass_rates",
+        "agent",
+        "rag",
+        "amr",
+        "security",
+        "recovery",
+        "verification",
+        "zero_tolerance"
+      ],
+      "title": "EvalAggregateMetrics",
+      "type": "object"
+    },
+    "EvalCaseStatus": {
+      "description": "单例评测是否符合该例的预期行为。",
+      "enum": [
+        "passed",
+        "failed"
+      ],
+      "title": "EvalCaseStatus",
+      "type": "string"
+    },
+    "EvalCategory": {
+      "description": "P0-18 五个固定评测分区及其验收配额。",
+      "enum": [
+        "normal_order_charging",
+        "rag_permission_approval",
+        "exception_local_replan",
+        "verification",
+        "prompt_injection_security"
+      ],
+      "title": "EvalCategory",
+      "type": "string"
+    },
+    "EvalOutcome": {
+      "description": "可观察的场景终态；拒绝/阻塞也是合法且可验收的终态。",
+      "enum": [
+        "completed",
+        "charged",
+        "answered",
+        "denied",
+        "blocked",
+        "verified",
+        "failed"
+      ],
+      "title": "EvalOutcome",
+      "type": "string"
+    },
+    "EvalReportCase": {
+      "additionalProperties": false,
+      "description": "一例运行后的完整结果，包含负向轨迹而不是只保留通过标记。",
+      "properties": {
+        "case_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Case Id",
+          "type": "string"
+        },
+        "category": {
+          "$ref": "#/$defs/EvalCategory"
+        },
+        "scenario": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Scenario",
+          "type": "string"
+        },
+        "expected_outcome": {
+          "$ref": "#/$defs/EvalOutcome"
+        },
+        "observed_outcome": {
+          "$ref": "#/$defs/EvalOutcome"
+        },
+        "status": {
+          "$ref": "#/$defs/EvalCaseStatus"
+        },
+        "evaluation_passed": {
+          "title": "Evaluation Passed",
+          "type": "boolean"
+        },
+        "failure_code": {
+          "anyOf": [
+            {
+              "maxLength": 128,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Failure Code"
+        },
+        "failure_reason": {
+          "anyOf": [
+            {
+              "maxLength": 2000,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Failure Reason"
+        },
+        "trace_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Trace Id",
+          "type": "string"
+        },
+        "trace_events": {
+          "items": {
+            "additionalProperties": {
+              "$ref": "#/$defs/JsonValue"
+            },
+            "type": "object"
+          },
+          "minItems": 1,
+          "title": "Trace Events",
+          "type": "array"
+        },
+        "evidence_refs": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Evidence Refs",
+          "type": "array"
+        },
+        "metrics": {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "title": "Metrics",
+          "type": "object"
+        },
+        "zero_tolerance": {
+          "$ref": "#/$defs/ZeroToleranceMetrics"
+        },
+        "side_effect_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Side Effect Ids",
+          "type": "array"
+        },
+        "replan_count": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Replan Count",
+          "type": "integer"
+        },
+        "retry_count": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Retry Count",
+          "type": "integer"
+        },
+        "approval_resume_count": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Approval Resume Count",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "case_id",
+        "category",
+        "scenario",
+        "expected_outcome",
+        "observed_outcome",
+        "status",
+        "evaluation_passed",
+        "trace_id",
+        "trace_events"
+      ],
+      "title": "EvalReportCase",
+      "type": "object"
+    },
+    "JsonValue": {},
+    "ZeroToleranceMetrics": {
+      "additionalProperties": false,
+      "description": "P0-18 零容忍安全指标；所有字段都必须由逐例事实重新汇总。",
+      "properties": {
+        "vertex_collision_count": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Vertex Collision Count",
+          "type": "integer"
+        },
+        "edge_collision_count": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Edge Collision Count",
+          "type": "integer"
+        },
+        "forbidden_zone_entry_count": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Forbidden Zone Entry Count",
+          "type": "integer"
+        },
+        "low_battery_violation_count": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Low Battery Violation Count",
+          "type": "integer"
+        },
+        "role_leak_count": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Role Leak Count",
+          "type": "integer"
+        },
+        "duplicate_side_effect_count": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Duplicate Side Effect Count",
+          "type": "integer"
+        },
+        "approval_bypass_count": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Approval Bypass Count",
+          "type": "integer"
+        }
+      },
+      "title": "ZeroToleranceMetrics",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "P0-18 最终 JSON 报告；Markdown 由同一对象渲染而来。",
+  "properties": {
+    "report_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Report Id",
+      "type": "string"
+    },
+    "report_version": {
+      "const": "p0-18.v1",
+      "default": "p0-18.v1",
+      "title": "Report Version",
+      "type": "string"
+    },
+    "dataset_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Dataset Id",
+      "type": "string"
+    },
+    "dataset_version": {
+      "maxLength": 32,
+      "minLength": 1,
+      "title": "Dataset Version",
+      "type": "string"
+    },
+    "status": {
+      "enum": [
+        "passed",
+        "failed"
+      ],
+      "title": "Status",
+      "type": "string"
+    },
+    "generated_at": {
+      "minLength": 1,
+      "title": "Generated At",
+      "type": "string"
+    },
+    "reproducibility": {
+      "additionalProperties": {
+        "$ref": "#/$defs/JsonValue"
+      },
+      "title": "Reproducibility",
+      "type": "object"
+    },
+    "metrics": {
+      "$ref": "#/$defs/EvalAggregateMetrics"
+    },
+    "failures": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Failures",
+      "type": "array"
+    },
+    "observed_negative_cases": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Observed Negative Cases",
+      "type": "array"
+    },
+    "cases": {
+      "items": {
+        "$ref": "#/$defs/EvalReportCase"
+      },
+      "maxItems": 60,
+      "minItems": 60,
+      "title": "Cases",
+      "type": "array"
+    },
+    "report_digest": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Report Digest",
+      "type": "string"
+    }
+  },
+  "required": [
+    "report_id",
+    "dataset_id",
+    "dataset_version",
+    "status",
+    "generated_at",
+    "reproducibility",
+    "metrics",
+    "failures",
+    "observed_negative_cases",
+    "cases",
+    "report_digest"
+  ],
+  "title": "EvalReport",
+  "type": "object"
+}

@@ -1,0 +1,434 @@
+{
+  "$defs": {
+    "LatencySummary": {
+      "additionalProperties": false,
+      "description": "按逐例总延迟计算的 P50/P95，并保留延迟来源和墙钟语义。",
+      "properties": {
+        "observed": {
+          "default": true,
+          "title": "Observed",
+          "type": "boolean"
+        },
+        "sample_count": {
+          "minimum": 0,
+          "title": "Sample Count",
+          "type": "integer"
+        },
+        "total_ms": {
+          "minimum": 0,
+          "title": "Total Ms",
+          "type": "number"
+        },
+        "mean_case_ms": {
+          "minimum": 0,
+          "title": "Mean Case Ms",
+          "type": "number"
+        },
+        "p50_case_ms": {
+          "minimum": 0,
+          "title": "P50 Case Ms",
+          "type": "number"
+        },
+        "p95_case_ms": {
+          "minimum": 0,
+          "title": "P95 Case Ms",
+          "type": "number"
+        },
+        "max_case_ms": {
+          "minimum": 0,
+          "title": "Max Case Ms",
+          "type": "number"
+        },
+        "source": {
+          "const": "p018_trace",
+          "default": "p018_trace",
+          "title": "Source",
+          "type": "string"
+        },
+        "wall_clock": {
+          "default": false,
+          "title": "Wall Clock",
+          "type": "boolean"
+        },
+        "note": {
+          "maxLength": 1000,
+          "minLength": 1,
+          "title": "Note",
+          "type": "string"
+        }
+      },
+      "required": [
+        "sample_count",
+        "total_ms",
+        "mean_case_ms",
+        "p50_case_ms",
+        "p95_case_ms",
+        "max_case_ms",
+        "note"
+      ],
+      "title": "LatencySummary",
+      "type": "object"
+    },
+    "P019Strategy": {
+      "description": "三种固定对照策略；ReAct 只允许出现在评测层。",
+      "enum": [
+        "fixed_workflow",
+        "react",
+        "pevr"
+      ],
+      "title": "P019Strategy",
+      "type": "string"
+    },
+    "ResourceObservation": {
+      "additionalProperties": false,
+      "description": "记录资源是否真的被采样；没有样本时所有数值保持 ``None``。\n\nP0-18 离线 Trace 没有 CPU、RSS 或 GPU 采样。用显式 ``observed=false`` 而不是\n填 0，避免把“没有测量”误读为“消耗为零”；未来在线 adapter 可复用同一字段。",
+      "properties": {
+        "observed": {
+          "default": false,
+          "title": "Observed",
+          "type": "boolean"
+        },
+        "sample_count": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Sample Count",
+          "type": "integer"
+        },
+        "cpu_time_ms": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cpu Time Ms"
+        },
+        "peak_rss_mb": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Peak Rss Mb"
+        },
+        "peak_gpu_memory_mb": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Peak Gpu Memory Mb"
+        },
+        "source": {
+          "default": "not_observed",
+          "enum": [
+            "p018_trace",
+            "online_sampler",
+            "not_observed"
+          ],
+          "title": "Source",
+          "type": "string"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "maxLength": 1000,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reason"
+        }
+      },
+      "title": "ResourceObservation",
+      "type": "object"
+    },
+    "TokenSummary": {
+      "additionalProperties": false,
+      "description": "Token 汇总和可观测性标记；离线源没有模型调用时不声称测得 Token。",
+      "properties": {
+        "observed": {
+          "default": false,
+          "title": "Observed",
+          "type": "boolean"
+        },
+        "model_call_count": {
+          "minimum": 0,
+          "title": "Model Call Count",
+          "type": "integer"
+        },
+        "input_tokens": {
+          "minimum": 0,
+          "title": "Input Tokens",
+          "type": "integer"
+        },
+        "output_tokens": {
+          "minimum": 0,
+          "title": "Output Tokens",
+          "type": "integer"
+        },
+        "total_tokens": {
+          "minimum": 0,
+          "title": "Total Tokens",
+          "type": "integer"
+        },
+        "source": {
+          "default": "not_observed",
+          "enum": [
+            "p018_trace",
+            "not_observed"
+          ],
+          "title": "Source",
+          "type": "string"
+        },
+        "note": {
+          "maxLength": 1000,
+          "minLength": 1,
+          "title": "Note",
+          "type": "string"
+        }
+      },
+      "required": [
+        "model_call_count",
+        "input_tokens",
+        "output_tokens",
+        "total_tokens",
+        "note"
+      ],
+      "title": "TokenSummary",
+      "type": "object"
+    },
+    "ZeroToleranceMetrics": {
+      "additionalProperties": false,
+      "description": "P0-18 零容忍安全指标；所有字段都必须由逐例事实重新汇总。",
+      "properties": {
+        "vertex_collision_count": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Vertex Collision Count",
+          "type": "integer"
+        },
+        "edge_collision_count": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Edge Collision Count",
+          "type": "integer"
+        },
+        "forbidden_zone_entry_count": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Forbidden Zone Entry Count",
+          "type": "integer"
+        },
+        "low_battery_violation_count": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Low Battery Violation Count",
+          "type": "integer"
+        },
+        "role_leak_count": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Role Leak Count",
+          "type": "integer"
+        },
+        "duplicate_side_effect_count": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Duplicate Side Effect Count",
+          "type": "integer"
+        },
+        "approval_bypass_count": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Approval Bypass Count",
+          "type": "integer"
+        }
+      },
+      "title": "ZeroToleranceMetrics",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "按策略从 60 条逐例结果重新汇总的对照表行。",
+  "properties": {
+    "strategy": {
+      "$ref": "#/$defs/P019Strategy"
+    },
+    "case_count": {
+      "minimum": 0,
+      "title": "Case Count",
+      "type": "integer"
+    },
+    "evaluation_pass_count": {
+      "minimum": 0,
+      "title": "Evaluation Pass Count",
+      "type": "integer"
+    },
+    "evaluation_accuracy_rate": {
+      "maximum": 1,
+      "minimum": 0,
+      "title": "Evaluation Accuracy Rate",
+      "type": "number"
+    },
+    "positive_case_count": {
+      "minimum": 0,
+      "title": "Positive Case Count",
+      "type": "integer"
+    },
+    "task_completion_count": {
+      "minimum": 0,
+      "title": "Task Completion Count",
+      "type": "integer"
+    },
+    "task_completion_rate": {
+      "maximum": 1,
+      "minimum": 0,
+      "title": "Task Completion Rate",
+      "type": "number"
+    },
+    "plan_evaluated_count": {
+      "minimum": 0,
+      "title": "Plan Evaluated Count",
+      "type": "integer"
+    },
+    "plan_legal_count": {
+      "minimum": 0,
+      "title": "Plan Legal Count",
+      "type": "integer"
+    },
+    "plan_legal_rate": {
+      "maximum": 1,
+      "minimum": 0,
+      "title": "Plan Legal Rate",
+      "type": "number"
+    },
+    "recovery_case_count": {
+      "minimum": 0,
+      "title": "Recovery Case Count",
+      "type": "integer"
+    },
+    "recovery_terminal_correct_count": {
+      "minimum": 0,
+      "title": "Recovery Terminal Correct Count",
+      "type": "integer"
+    },
+    "recovery_rate": {
+      "maximum": 1,
+      "minimum": 0,
+      "title": "Recovery Rate",
+      "type": "number"
+    },
+    "successful_recovery_case_count": {
+      "minimum": 0,
+      "title": "Successful Recovery Case Count",
+      "type": "integer"
+    },
+    "successful_recovery_count": {
+      "minimum": 0,
+      "title": "Successful Recovery Count",
+      "type": "integer"
+    },
+    "successful_recovery_rate": {
+      "maximum": 1,
+      "minimum": 0,
+      "title": "Successful Recovery Rate",
+      "type": "number"
+    },
+    "tool_error_count": {
+      "minimum": 0,
+      "title": "Tool Error Count",
+      "type": "integer"
+    },
+    "unexpected_tool_error_count": {
+      "minimum": 0,
+      "title": "Unexpected Tool Error Count",
+      "type": "integer"
+    },
+    "step_count_total": {
+      "minimum": 0,
+      "title": "Step Count Total",
+      "type": "integer"
+    },
+    "step_count_mean": {
+      "minimum": 0,
+      "title": "Step Count Mean",
+      "type": "number"
+    },
+    "step_count_p50": {
+      "minimum": 0,
+      "title": "Step Count P50",
+      "type": "number"
+    },
+    "step_count_p95": {
+      "minimum": 0,
+      "title": "Step Count P95",
+      "type": "number"
+    },
+    "tool_step_count_total": {
+      "minimum": 0,
+      "title": "Tool Step Count Total",
+      "type": "integer"
+    },
+    "token_usage": {
+      "$ref": "#/$defs/TokenSummary"
+    },
+    "latency": {
+      "$ref": "#/$defs/LatencySummary"
+    },
+    "resource": {
+      "$ref": "#/$defs/ResourceObservation"
+    },
+    "zero_tolerance": {
+      "$ref": "#/$defs/ZeroToleranceMetrics"
+    }
+  },
+  "required": [
+    "strategy",
+    "case_count",
+    "evaluation_pass_count",
+    "evaluation_accuracy_rate",
+    "positive_case_count",
+    "task_completion_count",
+    "task_completion_rate",
+    "plan_evaluated_count",
+    "plan_legal_count",
+    "plan_legal_rate",
+    "recovery_case_count",
+    "recovery_terminal_correct_count",
+    "recovery_rate",
+    "successful_recovery_case_count",
+    "successful_recovery_count",
+    "successful_recovery_rate",
+    "tool_error_count",
+    "unexpected_tool_error_count",
+    "step_count_total",
+    "step_count_mean",
+    "step_count_p50",
+    "step_count_p95",
+    "tool_step_count_total",
+    "token_usage",
+    "latency",
+    "resource",
+    "zero_tolerance"
+  ],
+  "title": "StrategySummary",
+  "type": "object"
+}

@@ -13,7 +13,7 @@
   → 带引用的证据报告
 ```
 
-当前代码范围已完成 **P0-00～P0-17**。P0-16 已把签名身份、两级 RBAC、文档 ACL、
+当前代码范围已完成 **P0-00～P0-19**。P0-16 已把签名身份、两级 RBAC、文档 ACL、
 工具白名单和 HITL/Checkpoint 审批接入安全边界；Smart Profile 因真实 P0-05 在线验收仅通过 2/5，现为硬禁用，
 只有收到用户日后的明确指示并重新完成在线验收后才能启用。
 
@@ -51,6 +51,8 @@
 | P0-15 | 已完成 | 覆盖低电量、AMR 离线、通道封闭、工位占用、工具超时、计划不可行和状态冲突的稳定故障分类；有限 retry/replan/fallback/human/fatal 策略；默认最多两次局部重规划、全局步骤/时长/Token/重试门禁，以及与 Checkpoint/Effect Ledger 一致的恢复测试。 |
 | P0-16 | 已完成 | JWT 验签、viewer/operator 两级 RBAC、工具级权限、检索期文档 ACL、Prompt Injection 不可信输入边界、禁止任意代码/SQL/Shell/外部 HTTP、PostgreSQL/内存 HITL 审批和 waiting Checkpoint 恢复；越权、注入、审批绕过和 ACL 泄漏反例全部阻断。 |
 | P0-17 | 已完成 | 严格 TraceEvent（run/trace/node/task、模型/Prompt/工具版本、Token、延迟、错误、摘要和证据引用）、只允许预注册 CTest/pytest/smoke/仿真入口的受控验证、日志失败结构化解析，以及由真实退出码重算的 JSON/Markdown 验证报告。 |
+| P0-18 | 已完成 | 统一 Eval Harness、固定 25/10/10/5/10 共 60 例、地图/订单/seed/模型/Prompt/工具指纹、Agent/RAG/AMR/安全/恢复/验证指标、负向轨迹和 JSON/Markdown 报告；七项零容忍指标必须为 0。 |
+| P0-19 | 已完成（离线 Trace Replay） | 在同一 P0-18 60 例、工具、Prompt/配置和 `qwen3.6-fast` 身份下对照固定 Workflow、ReAct、PEVR；输出 180 条原始策略轨迹、完成/合法/恢复/工具错误/步数/Trace P95 汇总和公平性指纹。ReAct 不进入生产主链；Smart 对照延期而非完成。 |
 
 明确尚未实现：真实 ROS/底盘接入；P0-15 不注册任意自动补偿工具，副作用未知
 状态仍必须人工核对。单独构造 `ToolRegistry` 时状态/审批仍默认使用进程内适配器；
@@ -127,6 +129,9 @@ BEGIN → INSERT runs → flush → INSERT events → flush → COMMIT
 | `docs/P012_TOOLS.md` | 九工具清单、Schema、角色/超时/副作用/幂等、固定 C++ 边界和错误/重复调用语义。 |
 | `docs/P017_TRACE_VERIFICATION.md` | Trace 字段、受控验证白名单、日志解析、证据定位和 JSON/Markdown 报告契约。 |
 | `evals/rag/` | 20 例固定 RAG 数据与 Recall/MRR/Citation/ACL 执行器。 |
+| `evals/p018/` | P0-18 固定 60 例数据、严格契约、离线确定性 Harness、复现指纹、JSON/Markdown 报告和 CLI。 |
+| `evals/p019/` | P0-19 固定策略配置、P0-18 源报告 digest 门禁、三策略 Trace Replay、Token/延迟/资源可观测性标记、原始 JSONL 和汇总报告 CLI。 |
+| `docs/P019_STRATEGY_COMPARISON.md` | P0-19 公平性口径、指标定义、实测汇总、限制、Smart 延期和复核入口。 |
 | `domains/amr_warehouse/` | 仓储领域契约和种子数据。 |
 | `migrations/` | Alembic 前向迁移。 |
 | `tests/` | 单元、契约、真实 PostgreSQL 集成和 C++ 冒烟测试。 |
@@ -410,9 +415,52 @@ evidence_refs；Checkpoint 恢复和 PostgreSQL events 表都保留该链路。�
 
     & 'E:\Anaconda\envs\torch128\python.exe' -m pytest tests\unit\test_p017_trace.py tests\unit\test_p017_validation.py -q -p no:cacheprovider
 
-## 19. 协作与交接入口
+## 19. P0-18 60 例自动评测
 
-## 18. 协作与交接入口
+P0-18 使用固定 `warehouse_v1@seed-v1` 地图/AMR/订单和每例唯一 seed，严格检查
+25 例正常订单/充电、10 例 RAG/权限/审批、10 例异常/局部重规划、5 例
+CTest/pytest/仿真验证和 10 例 Prompt Injection/越权/审批绕过。默认
+`offline_deterministic_oracle` 不启动模型服务，但报告会记录 Fast `qwen3.6-fast`、
+GGUF、Prompt、九个 ToolSpec 和输入文件 SHA-256；正确拒绝和意外失败都保留逐例 Trace。
+
+```powershell
+.\scripts\run_p018_eval.ps1
+```
+
+输出为 `tmp/p018_eval/p018_eval.json` 和 `tmp/p018_eval/p018_eval.md`。详细字段、指标、
+限制和验收命令见 [docs/P018_EVAL.md](docs/P018_EVAL.md)。
+
+专项测试：
+
+```powershell
+& 'E:\Anaconda\envs\torch128\python.exe' -m pytest tests\unit\test_p018_eval.py -q -p no:cacheprovider
+```
+
+## 20. P0-19 策略对照实验
+
+P0-19 复用 P0-18 的 60 例和逐例 Trace，在同一 Prompt/ToolSpec/配置及
+`qwen3.6-fast` 身份下对照固定 Workflow、ReAct 和 PEVR。当前是
+`offline_trace_replay`：ReAct 只作为测评投影，不进入生产主链；Token/资源没有源样本时
+显示为未观测，不能把离线结果写成在线模型质量验收。
+
+```powershell
+.\scripts\run_p019_compare.ps1
+```
+
+产物写入 `tmp/p019_strategy_compare/`，包括完整 JSON、180 条原始 JSONL 轨迹和 Markdown
+汇总表。当前实测三策略均 60/60 符合 P0-18 预期，ReAct 派生控制步均值/P95 为
+12.15/28，PEVR 为 5.82/14；详细口径和限制见
+[docs/P019_STRATEGY_COMPARISON.md](docs/P019_STRATEGY_COMPARISON.md)。Qwen3.8 Smart
+对照已延期而非完成：本步未启动、未测试，不阻塞 P0-19，延期项为
+`P0-19-SMART-COMPARISON`。
+
+专项测试：
+
+```powershell
+& 'E:\Anaconda\envs\torch128\python.exe' -m pytest tests\unit\test_p019_compare.py -q -p no:cacheprovider
+```
+
+## 21. 协作与交接入口
 
 开始任何新任务前，按顺序阅读：
 

@@ -1,0 +1,452 @@
+{
+  "$defs": {
+    "EvalCategory": {
+      "description": "P0-18 五个固定评测分区及其验收配额。",
+      "enum": [
+        "normal_order_charging",
+        "rag_permission_approval",
+        "exception_local_replan",
+        "verification",
+        "prompt_injection_security"
+      ],
+      "title": "EvalCategory",
+      "type": "string"
+    },
+    "EvalOutcome": {
+      "description": "可观察的场景终态；拒绝/阻塞也是合法且可验收的终态。",
+      "enum": [
+        "completed",
+        "charged",
+        "answered",
+        "denied",
+        "blocked",
+        "verified",
+        "failed"
+      ],
+      "title": "EvalOutcome",
+      "type": "string"
+    },
+    "JsonValue": {},
+    "P019Strategy": {
+      "description": "三种固定对照策略；ReAct 只允许出现在评测层。",
+      "enum": [
+        "fixed_workflow",
+        "react",
+        "pevr"
+      ],
+      "title": "P019Strategy",
+      "type": "string"
+    },
+    "ResourceObservation": {
+      "additionalProperties": false,
+      "description": "记录资源是否真的被采样；没有样本时所有数值保持 ``None``。\n\nP0-18 离线 Trace 没有 CPU、RSS 或 GPU 采样。用显式 ``observed=false`` 而不是\n填 0，避免把“没有测量”误读为“消耗为零”；未来在线 adapter 可复用同一字段。",
+      "properties": {
+        "observed": {
+          "default": false,
+          "title": "Observed",
+          "type": "boolean"
+        },
+        "sample_count": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Sample Count",
+          "type": "integer"
+        },
+        "cpu_time_ms": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cpu Time Ms"
+        },
+        "peak_rss_mb": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Peak Rss Mb"
+        },
+        "peak_gpu_memory_mb": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Peak Gpu Memory Mb"
+        },
+        "source": {
+          "default": "not_observed",
+          "enum": [
+            "p018_trace",
+            "online_sampler",
+            "not_observed"
+          ],
+          "title": "Source",
+          "type": "string"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "maxLength": 1000,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reason"
+        }
+      },
+      "title": "ResourceObservation",
+      "type": "object"
+    },
+    "TokenSummary": {
+      "additionalProperties": false,
+      "description": "Token 汇总和可观测性标记；离线源没有模型调用时不声称测得 Token。",
+      "properties": {
+        "observed": {
+          "default": false,
+          "title": "Observed",
+          "type": "boolean"
+        },
+        "model_call_count": {
+          "minimum": 0,
+          "title": "Model Call Count",
+          "type": "integer"
+        },
+        "input_tokens": {
+          "minimum": 0,
+          "title": "Input Tokens",
+          "type": "integer"
+        },
+        "output_tokens": {
+          "minimum": 0,
+          "title": "Output Tokens",
+          "type": "integer"
+        },
+        "total_tokens": {
+          "minimum": 0,
+          "title": "Total Tokens",
+          "type": "integer"
+        },
+        "source": {
+          "default": "not_observed",
+          "enum": [
+            "p018_trace",
+            "not_observed"
+          ],
+          "title": "Source",
+          "type": "string"
+        },
+        "note": {
+          "maxLength": 1000,
+          "minLength": 1,
+          "title": "Note",
+          "type": "string"
+        }
+      },
+      "required": [
+        "model_call_count",
+        "input_tokens",
+        "output_tokens",
+        "total_tokens",
+        "note"
+      ],
+      "title": "TokenSummary",
+      "type": "object"
+    },
+    "ZeroToleranceMetrics": {
+      "additionalProperties": false,
+      "description": "P0-18 零容忍安全指标；所有字段都必须由逐例事实重新汇总。",
+      "properties": {
+        "vertex_collision_count": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Vertex Collision Count",
+          "type": "integer"
+        },
+        "edge_collision_count": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Edge Collision Count",
+          "type": "integer"
+        },
+        "forbidden_zone_entry_count": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Forbidden Zone Entry Count",
+          "type": "integer"
+        },
+        "low_battery_violation_count": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Low Battery Violation Count",
+          "type": "integer"
+        },
+        "role_leak_count": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Role Leak Count",
+          "type": "integer"
+        },
+        "duplicate_side_effect_count": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Duplicate Side Effect Count",
+          "type": "integer"
+        },
+        "approval_bypass_count": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Approval Bypass Count",
+          "type": "integer"
+        }
+      },
+      "title": "ZeroToleranceMetrics",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "一个策略在一个 P0-18 case 上的可复核结果。\n\n``source_case`` 和 ``source_trace_events`` 是原始证据的内嵌副本；\n``projection_events`` 只描述策略如何消费这些事件，不改变观察终态、工具\n能力或安全事实。这样脱离临时目录仍可从 P0-19 JSON 逐例复核结论。",
+  "properties": {
+    "strategy": {
+      "$ref": "#/$defs/P019Strategy"
+    },
+    "case_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Case Id",
+      "type": "string"
+    },
+    "category": {
+      "$ref": "#/$defs/EvalCategory"
+    },
+    "source_trace_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Source Trace Id",
+      "type": "string"
+    },
+    "strategy_trace_id": {
+      "maxLength": 160,
+      "minLength": 1,
+      "title": "Strategy Trace Id",
+      "type": "string"
+    },
+    "expected_outcome": {
+      "$ref": "#/$defs/EvalOutcome"
+    },
+    "observed_outcome": {
+      "$ref": "#/$defs/EvalOutcome"
+    },
+    "evaluation_passed": {
+      "title": "Evaluation Passed",
+      "type": "boolean"
+    },
+    "task_completed": {
+      "title": "Task Completed",
+      "type": "boolean"
+    },
+    "plan_evaluated": {
+      "title": "Plan Evaluated",
+      "type": "boolean"
+    },
+    "plan_legal": {
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Plan Legal"
+    },
+    "recovery_applicable": {
+      "title": "Recovery Applicable",
+      "type": "boolean"
+    },
+    "recovery_success": {
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Recovery Success"
+    },
+    "successful_recovery": {
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Successful Recovery"
+    },
+    "tool_error_count": {
+      "minimum": 0,
+      "title": "Tool Error Count",
+      "type": "integer"
+    },
+    "unexpected_tool_error_count": {
+      "minimum": 0,
+      "title": "Unexpected Tool Error Count",
+      "type": "integer"
+    },
+    "step_count": {
+      "minimum": 0,
+      "title": "Step Count",
+      "type": "integer"
+    },
+    "tool_step_count": {
+      "minimum": 0,
+      "title": "Tool Step Count",
+      "type": "integer"
+    },
+    "derived_control_overhead_steps": {
+      "minimum": 0,
+      "title": "Derived Control Overhead Steps",
+      "type": "integer"
+    },
+    "token_usage": {
+      "$ref": "#/$defs/TokenSummary"
+    },
+    "latency_ms": {
+      "minimum": 0,
+      "title": "Latency Ms",
+      "type": "number"
+    },
+    "resource": {
+      "$ref": "#/$defs/ResourceObservation"
+    },
+    "replan_count": {
+      "minimum": 0,
+      "title": "Replan Count",
+      "type": "integer"
+    },
+    "retry_count": {
+      "minimum": 0,
+      "title": "Retry Count",
+      "type": "integer"
+    },
+    "approval_resume_count": {
+      "minimum": 0,
+      "title": "Approval Resume Count",
+      "type": "integer"
+    },
+    "zero_tolerance": {
+      "$ref": "#/$defs/ZeroToleranceMetrics"
+    },
+    "failure_code": {
+      "anyOf": [
+        {
+          "maxLength": 128,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Failure Code"
+    },
+    "failure_reason": {
+      "anyOf": [
+        {
+          "maxLength": 2000,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Failure Reason"
+    },
+    "source_case": {
+      "additionalProperties": {
+        "$ref": "#/$defs/JsonValue"
+      },
+      "title": "Source Case",
+      "type": "object"
+    },
+    "source_trace_events": {
+      "items": {
+        "additionalProperties": {
+          "$ref": "#/$defs/JsonValue"
+        },
+        "type": "object"
+      },
+      "minItems": 1,
+      "title": "Source Trace Events",
+      "type": "array"
+    },
+    "projection_events": {
+      "items": {
+        "additionalProperties": {
+          "$ref": "#/$defs/JsonValue"
+        },
+        "type": "object"
+      },
+      "minItems": 1,
+      "title": "Projection Events",
+      "type": "array"
+    }
+  },
+  "required": [
+    "strategy",
+    "case_id",
+    "category",
+    "source_trace_id",
+    "strategy_trace_id",
+    "expected_outcome",
+    "observed_outcome",
+    "evaluation_passed",
+    "task_completed",
+    "plan_evaluated",
+    "plan_legal",
+    "recovery_applicable",
+    "recovery_success",
+    "successful_recovery",
+    "tool_error_count",
+    "unexpected_tool_error_count",
+    "step_count",
+    "tool_step_count",
+    "derived_control_overhead_steps",
+    "token_usage",
+    "latency_ms",
+    "resource",
+    "replan_count",
+    "retry_count",
+    "approval_resume_count",
+    "zero_tolerance",
+    "source_case",
+    "source_trace_events",
+    "projection_events"
+  ],
+  "title": "StrategyCaseResult",
+  "type": "object"
+}

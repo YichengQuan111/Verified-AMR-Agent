@@ -299,3 +299,91 @@
   构造固定 plan/seed/simulation_id，stdout 输出真实 SimulationResult，失败使用非零退出码。
 - 后续避免：新增仿真/测试 adapter 只注册无参数或有限枚举 case，并对 unknown case 断言
   子进程调用次数为 0。
+
+## 2026-08-21 · P0-18 数据集类别不能只靠 case 数量证明
+
+- 现象：固定 JSON 具备 60 条记录且总数正确时，部分正常订单的 `scenario` 标签曾漂移
+  到充电分支，运行器按场景路由后把应完成订单错误观察为 `charged`。
+- 原因：数据描述、场景分发和预期终态是三个独立字段；只检查总数或 `category` 配额，
+  不能发现场景标签改变了执行路径。
+- 最终解决：在严格数据契约中同时固定类别/场景/预期终态，并让专项测试执行两次完整
+  Harness；修正固定记录后，25/10/10/5/10 配额、60/60 预期和报告 digest 均稳定。
+- 后续避免：新增评测例必须同时审查 `category`、`scenario`、`expected_outcome`、
+  `expected_code` 和 oracle，不能只追加一条“看起来数量正确”的 JSON。
+
+## 2026-08-21 · P0-18 正确拒绝不是应该被删除的失败
+
+- 现象：安全评测若只统计 completed/answered，`denied`/`blocked` 会被误报为失败或从
+  报告过滤，无法证明注入、越权和审批绕过确实被阻断。
+- 原因：负向场景的观察终态本来就是拒绝/阻塞；“评测符合预期”和“观察到负向终态”是
+  两个不同维度，零容忍计数也必须来自实际违规事实而不是期望值。
+- 最终解决：`EvalReportCase` 同时保存 expected/observed/status/evaluation_passed、
+  failure_code/reason、Trace 和证据；报告另列 `observed_negative_cases`，正确阻断仍算
+  评测通过，意外失败才进入顶层 failures。
+- 后续避免：任何汇总器都必须保留全部逐例结果和负向轨迹，并为“正确阻断”和“意外失败”
+  分别写断言。
+
+## 2026-08-21 · P0-18 离线 oracle 不能冒充在线模型验收
+
+- 现象：统一 Harness 使用固定 fixture 后可以稳定通过，但如果只在报告中写
+  `qwen3.6-fast`，读者容易误以为 60 例已经由在线 LLM 生成并完成模型质量验收。
+- 原因：复现所需的模型 alias/量化记录与实际是否发生模型调用是两件事；P0-18 需要可
+  离线运行，同时又不能掩盖模型服务未启动的事实。
+- 最终解决：固定 `execution_mode=offline_deterministic_oracle`，记录模型/Prompt/工具
+  版本和 `online_service_required=false`，报告明确 `model_call_count=0`；Smart 继续硬禁用，
+  在线模型验收仍沿用独立 P0-05/P0-13 入口。
+- 后续避免：引入在线模式时新增独立 execution mode、独立报告字段和独立验收命令，不能
+  覆盖或改写离线报告的运行事实。
+
+## 2026-08-21 · Fast 在线闭环必须把输入上下文也纳入验收
+
+- 现象：Fast `qwen3.6-fast` 的 `/v1/models` 门禁、20 例结构化输出和 P0-05 五个 Prompt
+  节点均通过，但真实 P0-13 在 `plan_tasks` 的修复请求返回 HTTP 400。
+- 原因：模型实际收到的请求为 9086 tokens，而服务固定 `--ctx-size 8192`；单个节点能
+  通过不代表 PEVR 拼接后的 system Prompt、Schema、合同、地图/RAG 摘要仍能放入窗口。
+- 最终解决/当前处置：用户将外部 Fast 服务上下文改为 `--ctx-size 16384` 后重新运行，
+  P0-13 退出码 0，8/8 阶段、5/5 工具和仿真均通过；仓库 P0-18 离线 oracle 仍保留
+  `context_window=8192` 的独立固定配置，在线 16K 结果单独记录，不能覆盖离线指纹。
+- 后续避免：任何在线 E2E 验收都必须同时记录 prompt tokens、模型上下文上限和失败节点；
+  如果调整窗口，必须在在线报告中显式记录实际服务命令行，并重新运行完整 P0-13，不能只
+  重跑单个 Prompt 节点。
+
+## 2026-08-21 · 在线重测必须区分恢复运行和全新运行
+
+- 现象：P0-13 CLI 默认根据请求摘要生成稳定 `run_id`；上下文从 8K 调到 16K 后复用同一
+  `run_id`，运行可能从旧的失败 Checkpoint 继续，表面上阶段全通过但不一定重新执行全部节点。
+- 原因：P0-14/P0-17 的恢复设计会优先读取已有 Checkpoint，并跳过已完成节点；这是正确的
+  生产恢复语义，却不等同于从头验收。
+- 最终解决：先保留恢复复测结果，再显式使用新的
+  `p013-e2e-fast-16k-fresh-20260821` 运行 ID；fresh run 确认 8/8 节点、4 次模型调用、
+  5/5 工具和仿真完整通过。
+- 后续避免：在线配置或模型变化后的验收必须同时区分“恢复兼容性测试”和“全新 E2E 测试”；
+  后者必须使用新的 run_id，并把 run_id、Checkpoint 是否存在和完整 Trace 数量写入报告。
+
+## 2026-08-21 · P0-19 同源策略回放不能冒充在线模型对照
+
+- 现象：P0-18 报告虽然记录了 `qwen3.6-fast`、Prompt 和 ToolSpec 指纹，但执行模式是
+  `offline_deterministic_oracle`；如果 P0-19 只按模型别名写结果，读者会误以为 60 例
+  已由在线 Fast 分别跑过 Workflow、ReAct 和 PEVR，并且 Token/资源为零。
+- 原因：模型身份、源 Trace 和真实在线采样是三个不同事实。P0-18 源 Trace 的延迟是
+  固定可复现字段，既没有 model usage，也没有 CPU/RSS/GPU 采样。
+- 最终解决：P0-19 先验证 P0-18 report digest/60 例/失败列表/零容忍项，再保存源 case 和
+  Trace；固定 Workflow/PEVR 保留源事件，ReAct 只生成带 source_sequence 的 think-act-observe
+  投影。Token/资源用 `observed=false` 表示，延迟标注 `wall_clock=false`，报告明确
+  `offline_trace_replay` 和后续在线 adapter 的边界。
+- 后续避免：任何在线策略对照都必须新增独立 execution mode、真实模型调用、统一采样器、
+  新报告 digest 和新验收门槛，不能覆盖本次离线报告；负向 denied/blocked 轨迹也不能删除。
+
+## 2026-08-21 · P0-19 源报告要同时保留报告 digest 和原始文件 hash
+
+- 现象：P0-18 报告的 digest 会排除 `generated_at`，但真实固定验证 runner 产生的嵌套
+  `VerificationReport` digest 仍可能随实际验证输出变化；源 JSON 文件的原始 SHA-256
+  也会随重新落盘变化。把其中任一个当成唯一身份都会丢失复核信息。
+- 原因：原始文件 hash 用于证明“读的是哪一个 artifact”，P0-18 report digest 用于绑定
+  “这次源报告正文”，两者生命周期和稳定性不同；确定性 Trace 不等于所有外部验证日志
+  的摘要都稳定。
+- 最终解决：P0-19 报告同时记录源文件 SHA-256、源 P0-18 report_id/report_digest，并在
+  单测中对同一路径验证稳定身份；重新生成源报告后必须把新 hash/digest 当作新的源
+  artifact 记录，不静默覆盖旧对照结论。
+- 后续避免：在线/离线评测的报告身份至少拆分原始 artifact hash、报告 digest 和去除
+  wall-clock 的业务 Trace digest；不要把一次外部验证运行的可变日志摘要误当成永久基线。

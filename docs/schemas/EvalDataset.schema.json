@@ -1,0 +1,241 @@
+{
+  "$defs": {
+    "EvalCase": {
+      "additionalProperties": false,
+      "description": "一条冻结评测用例及其复现元数据。\n\n``input_data`` 是受控 fixture，不是给 Agent 解释执行的脚本；运行器只读取\n已登记的 scenario 分支。``oracle`` 保存期望证据/安全动作，防止把运行时\n实际结果反过来写成金标准。``is_training_data`` 明确固定为 false，避免\n后续把评测集误送入训练或 Prompt 示例流水线。",
+      "properties": {
+        "case_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Case Id",
+          "type": "string"
+        },
+        "category": {
+          "$ref": "#/$defs/EvalCategory"
+        },
+        "scenario": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Scenario",
+          "type": "string"
+        },
+        "description": {
+          "maxLength": 500,
+          "minLength": 1,
+          "title": "Description",
+          "type": "string"
+        },
+        "seed": {
+          "maximum": 2147483647,
+          "minimum": 0,
+          "title": "Seed",
+          "type": "integer"
+        },
+        "map_ref": {
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "Map Ref",
+          "type": "string"
+        },
+        "order_refs": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Order Refs",
+          "type": "array"
+        },
+        "amr_refs": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Amr Refs",
+          "type": "array"
+        },
+        "model_profile": {
+          "default": "fast",
+          "enum": [
+            "fast",
+            "smart"
+          ],
+          "title": "Model Profile",
+          "type": "string"
+        },
+        "model_alias": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Model Alias",
+          "type": "string"
+        },
+        "model_quantization": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Model Quantization",
+          "type": "string"
+        },
+        "prompt_versions": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "minProperties": 1,
+          "title": "Prompt Versions",
+          "type": "object"
+        },
+        "toolset_version": {
+          "maxLength": 64,
+          "minLength": 1,
+          "title": "Toolset Version",
+          "type": "string"
+        },
+        "expected_outcome": {
+          "$ref": "#/$defs/EvalOutcome"
+        },
+        "expected_code": {
+          "anyOf": [
+            {
+              "maxLength": 128,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Expected Code"
+        },
+        "principal_role": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UserRole"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "input_data": {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "title": "Input Data",
+          "type": "object"
+        },
+        "oracle": {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "title": "Oracle",
+          "type": "object"
+        },
+        "is_training_data": {
+          "const": false,
+          "default": false,
+          "title": "Is Training Data",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "case_id",
+        "category",
+        "scenario",
+        "description",
+        "seed",
+        "map_ref",
+        "model_alias",
+        "model_quantization",
+        "prompt_versions",
+        "toolset_version",
+        "expected_outcome"
+      ],
+      "title": "EvalCase",
+      "type": "object"
+    },
+    "EvalCategory": {
+      "description": "P0-18 五个固定评测分区及其验收配额。",
+      "enum": [
+        "normal_order_charging",
+        "rag_permission_approval",
+        "exception_local_replan",
+        "verification",
+        "prompt_injection_security"
+      ],
+      "title": "EvalCategory",
+      "type": "string"
+    },
+    "EvalOutcome": {
+      "description": "可观察的场景终态；拒绝/阻塞也是合法且可验收的终态。",
+      "enum": [
+        "completed",
+        "charged",
+        "answered",
+        "denied",
+        "blocked",
+        "verified",
+        "failed"
+      ],
+      "title": "EvalOutcome",
+      "type": "string"
+    },
+    "JsonValue": {},
+    "UserRole": {
+      "description": "P0 固定的两级工具访问角色。",
+      "enum": [
+        "viewer",
+        "operator"
+      ],
+      "title": "UserRole",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "带固定配额和用途声明的 60 例数据集封装。",
+  "properties": {
+    "dataset_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Dataset Id",
+      "type": "string"
+    },
+    "version": {
+      "maxLength": 32,
+      "minLength": 1,
+      "title": "Version",
+      "type": "string"
+    },
+    "purpose": {
+      "const": "evaluation_only",
+      "title": "Purpose",
+      "type": "string"
+    },
+    "is_training_data": {
+      "const": false,
+      "default": false,
+      "title": "Is Training Data",
+      "type": "boolean"
+    },
+    "source": {
+      "maxLength": 500,
+      "minLength": 1,
+      "title": "Source",
+      "type": "string"
+    },
+    "cases": {
+      "items": {
+        "$ref": "#/$defs/EvalCase"
+      },
+      "maxItems": 60,
+      "minItems": 60,
+      "title": "Cases",
+      "type": "array"
+    }
+  },
+  "required": [
+    "dataset_id",
+    "version",
+    "purpose",
+    "source",
+    "cases"
+  ],
+  "title": "EvalDataset",
+  "type": "object"
+}

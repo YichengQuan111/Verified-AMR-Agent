@@ -62,6 +62,12 @@ from services.validation.contracts import (  # noqa: E402
     VerificationEvidenceLocation,
     VerificationReport,
 )
+from evals.p018.contracts import (  # noqa: E402
+    EvalCase,
+    EvalDataset,
+    EvalReport,
+)
+from evals.p019.contracts import P019Report, StrategyCaseResult, StrategySummary  # noqa: E402
 
 
 SCHEMA_DIRECTORY = PROJECT_ROOT / "docs" / "schemas"
@@ -124,6 +130,16 @@ SCHEMA_MODELS: dict[str, type[BaseModel]] = {
     "VerificationReport.schema.json": VerificationReport,
     "RequestApprovalInput.schema.json": RequestApprovalInput,
     "ApprovalRequestOutput.schema.json": ApprovalRequestOutput,
+    # P0-18 的固定用例、数据集和最终报告是评测流水线的公共机器契约；仍从
+    # 运行时 Pydantic 模型同源导出，防止 JSON 报告字段与 Harness 校验漂移。
+    "EvalCase.schema.json": EvalCase,
+    "EvalDataset.schema.json": EvalDataset,
+    "EvalReport.schema.json": EvalReport,
+    # P0-19 把公平性门禁、Smart 延期和完整 180 条策略回放结果作为同一份机器
+    # 契约导出；嵌套模型由 Pydantic 自动展开，禁止手工分叉报告字段。
+    "P019Report.schema.json": P019Report,
+    "P019StrategyCase.schema.json": StrategyCaseResult,
+    "P019StrategySummary.schema.json": StrategySummary,
 }
 
 

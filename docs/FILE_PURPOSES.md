@@ -568,3 +568,100 @@ Markdown、README、TOML、JSON Schema 和测试登记文件没有核心代码�
 | 新建 | docs/schemas/TraceError.schema.json、docs/schemas/TraceEvent.schema.json、docs/schemas/ParsedVerificationCase.schema.json、docs/schemas/VerificationEvidenceLocation.schema.json、docs/schemas/VerificationReport.schema.json | 由 export_schemas.py 生成 P0-17 机器契约；本步无核心代码注释需求。 | API、工具和跨语言消费者。 |
 | 修改 | docs/schemas/PEVRRunReport.schema.json、docs/schemas/RunVerificationSuiteInput.schema.json、docs/schemas/VerificationSuiteOutput.schema.json | 反映 trace_id、逐 case 失败/证据和报告字段变化；本步无核心代码注释需求。 | P0-13/P0-12 Schema 消费者。 |
 | 修改 | docs/FILE_PURPOSES.md、docs/HANDOFF_CONTEXT.md、docs/LESSONS_LEARNED.md | 登记本步文件职责、公共接口、实际验证、状态和可复用坑；本步为文档，无核心代码注释需求。 | 唯一文件职责/交接/经验入口。 |
+
+## 2026-08-21：P0-18 60 例自动评测
+
+本步 Python 核心代码和测试同步补充中文模块说明、类/函数 docstring 及关键分支注释，
+解释固定数据流、复现边界、负向结果保留、零容忍检查、授权/审批失败关闭和验证入口。
+JSON、JSON Schema、PowerShell、Markdown 与 README 属于契约/入口/文档，本步无核心代码
+注释需求；其职责、版本和限制在本节及 `docs/P018_EVAL.md` 记录。`tmp/`、
+`__pycache__/`、`.pytest_cache/`、build/ 及实际评测报告是自动生成物，不登记为源码交付。
+
+| 变更 | 文件 | 作用 | 调用方/下游 |
+|---|---|---|---|
+| 新建 | `evals/p018/__init__.py` | 导出 P0-18 严格契约、数据集加载器和 `EvalHarness` 稳定入口。 | CLI、专项测试和后续报告消费者。 |
+| 新建 | `evals/p018/contracts.py` | 定义五类评测枚举、固定 60 例数据集、逐例结果、聚合指标、Trace/失败证据和七项零容忍 Pydantic 契约；拒绝训练数据和畸形负向结果。 | 数据集加载、Harness、JSON Schema、机器验收。 |
+| 新建 | `evals/p018/dataset.py` | 从 UTF-8 固定 JSON 加载并校验版本、仓库内执行配置、类别配额、唯一 ID/seed 和 evaluation-only 边界。 | `run_eval.py`、Harness 和复现指纹。 |
+| 新建 | `evals/p018/config.json` | 冻结 P0-18 版本、离线执行模式、地图/AMR/订单、Fast/Smart 模型记录、Prompt/ToolSpec 版本、配额和验证 suite 映射；本步无核心代码注释需求。 | 运行器与报告复现信息。 |
+| 新建 | `evals/p018/dataset.json` | 保存 25/10/10/5/10 共 60 个不进入训练的固定场景、输入 fixture、预期终态和 oracle 证据；本步无核心代码注释需求。 | `EvalDataset`、Harness 和人工复核。 |
+| 新建 | `evals/p018/reproducibility.py` | 对固定输入、Prompt、配置、九个 ToolSpec、seed、模型记录和 Git/runtime 生成 SHA-256/版本指纹；拒绝配置路径逃逸。 | `EvalHarness`、JSON/Markdown 报告。 |
+| 新建 | `evals/p018/runner.py` | 统一执行五类场景；复用 P0-15 Fault/Recovery、P0-16 RBAC/HITL 和 P0-17 Trace/FixedVerificationRunner，检查路线/电量/禁行区、ACL、审批、幂等和失败轨迹，最终按逐例事实聚合指标。 | CLI、专项测试、报告层；默认不调用在线模型。 |
+| 新建 | `evals/p018/reporting.py` | 将同一 `EvalReport` 写为完整 JSON 和包含配额、六域指标、零容忍表、复现信息及负向 Trace 的 Markdown；不删除拒绝/失败案例。 | CLI、人工验收和机器消费者。 |
+| 新建 | `evals/p018/run_eval.py` | 提供 `python -m evals.p018.run_eval` 固定参数入口和可自动化退出码；不暴露任意命令、脚本或测试表达式。 | PowerShell 一键脚本、CI/验收。 |
+| 新建 | `scripts/run_p018_eval.ps1` | 在仓库根目录调用固定 Python CLI，允许显式 Python/输出目录/验证超时覆盖；本步无核心代码注释需求。 | Windows 操作者和 CI。 |
+| 新建 | `tests/unit/test_p018_eval.py` | 覆盖固定配额、复现确定性、负向轨迹、安全/恢复反例、低电量零容忍、JSON/Markdown 一致性。 | P0-18 专项回归门禁。 |
+| 修改 | `scripts/export_schemas.py` | 将 `EvalCase`、`EvalDataset`、`EvalReport` 纳入同源 Schema 导出清单。 | Schema 回归和跨语言机器消费者。 |
+| 新建 | `docs/schemas/EvalCase.schema.json`、`docs/schemas/EvalDataset.schema.json`、`docs/schemas/EvalReport.schema.json` | 保存 P0-18 运行时 Pydantic 契约的 UTF-8 JSON Schema；本步无核心代码注释需求，不得手工分叉。 | 契约测试、API/CI/报告消费者。 |
+| 新建 | `docs/P018_EVAL.md` | 记录数据集组成、一键命令、复现字段、指标/零容忍门槛、失败轨迹语义和在线/离线限制；本步无核心代码注释需求。 | 用户、后续 Agent 和验收人员。 |
+| 修改 | `evals/README.md` | 增加 P0-18 统一评测入口、配额、报告路径和限制说明；本步无核心代码注释需求。 | 评测目录入口。 |
+| 修改 | `README.md` | 将项目状态推进到 P0-18，增加目录、能力、命令和报告说明；本步无核心代码注释需求。 | 项目首页、操作者和新 Agent。 |
+| 修改 | `docs/HANDOFF_CONTEXT.md`、`docs/LESSONS_LEARNED.md` | 登记 P0-18 公共接口、实际验证、服务状态、限制、后续复用信息和固定数据集/负向报告坑；本步无核心代码注释需求。 | 跨任务唯一交接与经验入口。 |
+
+本步没有新增数据库表、字段、Alembic revision、C++ 源文件或模型服务；`tmp/p018_eval/`
+只属于运行时报告输出，不是源码交付物。
+
+## 2026-08-21：P0-18 Fast 在线模型补充验证
+
+本步只执行外部 Fast 模型验证，没有修改核心代码或公共契约；因此无核心代码注释需求。
+模型进程、启动日志和失败时未生成的 `tmp/p013_e2e_model_test.json` 都是运行时事实，不
+登记为源码交付。
+
+| 变更 | 文件 | 作用 | 下游影响 |
+|---|---|---|---|
+| 修改 | `docs/P018_EVAL.md` | 补充 Fast 真实模型门禁、结构化/五 Prompt 结果和 P0-13 9086>8192 上下文失败；本步无核心代码注释需求。 | 用户可区分 P0-18 离线结果与在线 PEVR 真实验收状态。 |
+| 修改 | `docs/HANDOFF_CONTEXT.md` | 记录 Fast alias 门禁、20 例结构化输出、P0-05 五节点 5/5、P0-13 上下文超限失败、服务停止状态和未生成报告事实。 | 后续在线修复必须区分已通过的单节点/结构化测试与未通过的 P0-13 全链路。 |
+| 修改 | `docs/LESSONS_LEARNED.md` | 沉淀“单 Prompt 通过不代表 PEVR 组合上下文适配模型窗口”的现象、原因和后续验收要求。 | 后续 Prompt/摘要压缩和模型窗口变更需要先做 token/上下文预算验证。 |
+
+## 2026-08-21：Fast 模型 16K 上下文复测记录
+
+本步仍只更新真实测试事实，没有修改核心代码或公共契约；本步无核心代码注释需求。
+`tmp/p013_e2e_model_test_16k.json` 是模型在线运行输出，不登记为源码交付。
+
+| 变更 | 文件 | 作用 | 下游影响 |
+|---|---|---|---|
+| 修改 | `docs/P018_EVAL.md` | 追加外部 Fast 服务 16K 上下文下的网关、结构化、P0-05 和 P0-13 实测结果；明确离线配置仍为 8192。 | 报告读者能区分历史 8K 失败、16K 在线通过和 P0-18 离线 oracle。 |
+| 修改 | `docs/HANDOFF_CONTEXT.md` | 更新当前下一步并记录 16K 实际命令行、8/8 阶段、5/5 工具、Validator、仿真、Trace 和服务停止状态。 | 后续 Agent 直接复用成功在线 run_id 与报告路径。 |
+
+## 2026-08-21：Fast 16K 全新 run_id 复测记录
+
+本步为排除旧 Checkpoint 恢复影响而补跑全新在线 E2E；没有修改核心代码或公共契约，本步
+无核心代码注释需求。`tmp/p013_e2e_model_test_16k_fresh.json` 是运行时报告，不登记为源码。
+
+| 变更 | 文件 | 作用 | 下游影响 |
+|---|---|---|---|
+| 修改 | `docs/P018_EVAL.md` | 记录全新 run_id 下从头执行 P0-13 的 16K 通过结果。 | 在线全链路结论不再依赖旧 8K 失败 Checkpoint 的恢复。 |
+| 修改 | `docs/HANDOFF_CONTEXT.md` | 记录 fresh run_id、8/8 节点、4 次模型调用、5/5 工具、Trace 17 条和报告路径。 | 后续 Agent 可复用独立的在线验收证据。 |
+| 修改 | `docs/LESSONS_LEARNED.md` | 记录稳定 run_id 会触发 Checkpoint 恢复，在线模型变更验收需显式新 run_id。 | 后续测试区分恢复测试与从头 E2E。 |
+
+## 2026-08-21：P0-19 策略对照实验
+
+本步新增的 Python 核心代码、测试和报告渲染器同步补充中文模块说明、类/函数 docstring
+及关键分支注释，重点解释源 Trace digest、同源公平性、ReAct 仅评测投影、负向轨迹和
+Token/资源未观测的失败关闭语义。JSON 配置、PowerShell 入口、Markdown 文档和由
+`export_schemas.py` 生成的 Schema 是纯契约/文档/入口，本步无核心代码注释需求；
+`tmp/p019_strategy_compare/`、`__pycache__/`、`.pytest_cache/`、`build/` 是自动生成物，
+不登记为源码交付。
+
+| 变更 | 文件 | 作用 | 调用方/下游 |
+|---|---|---|---|
+| 新建 | `evals/p019/__init__.py` | 导出 P0-19 策略枚举、报告契约、源报告加载和对照执行稳定入口。 | CLI、专项测试、后续在线 adapter；ReAct 仍不得接入生产 PEVR。 |
+| 新建 | `evals/p019/contracts.py` | 定义执行模式、三策略、逐例结果、Token/延迟/资源可观测性、汇总、公平性门禁和 Smart deferred 契约；未知字段和不完整失败证据拒绝。 | 回放器、JSON/Markdown/JSONL 报告、Schema 消费者。 |
+| 新建 | `evals/p019/dataset.py` | 加载固定 P0-19 配置并限制 P0-18 dataset/config 只能解析仓库内路径；强制 Fast、三策略顺序和 Smart 未启动/未完成。 | `run_compare.py`、公平性校验。 |
+| 新建 | `evals/p019/config.json` | 冻结 P0-19 版本、`offline_trace_replay`、三策略语义、Fast 参数和 Smart 延期/Backlog 记录；本步无核心代码注释需求。 | CLI、报告复现指纹和人工复核。 |
+| 新建 | `evals/p019/replay.py` | 验证 P0-18 源报告 digest、60 例、Prompt/ToolSpec/配置/Fast 指纹，保留源 Trace 并生成固定 Workflow/PEVR/ReAct 控制流投影；Token/资源缺失时 fail closed 为未观测。 | P0-19 CLI、报告层和专项测试；不调用模型、不执行工具。 |
+| 新建 | `evals/p019/reporting.py` | 从同一 `P019Report` 渲染完整 JSON、Markdown 汇总和逐行 JSONL 原始轨迹，不过滤 denied/blocked。 | 用户验收、人工逐例复核和后续分析。 |
+| 新建 | `evals/p019/run_compare.py` | 提供固定源报告/配置/输出目录参数和退出码，禁止任意命令/脚本/数据集选择器。 | `scripts/run_p019_compare.ps1`、CI/验收。 |
+| 新建 | `scripts/run_p019_compare.ps1` | 使用 torch128 Python 调用 P0-19 CLI；只消费 P0-18 源报告，不启动 Fast/Smart；本步无核心代码注释需求。 | Windows 操作者和项目验收。 |
+| 新建 | `tests/unit/test_p019_compare.py` | 覆盖三策略同一 60 例、ReAct 非生产投影、负向/零容忍事实、Token/资源未观测、Smart 延期和源 digest 篡改反例。 | 后续策略/报告/在线 adapter 变更回归门禁。 |
+| 新建 | `docs/P019_STRATEGY_COMPARISON.md` | 记录公平性口径、指标定义、原始产物、实测汇总、离线限制、ReAct 主链边界和 Smart 延期；本步无核心代码注释需求。 | 用户、后续 Agent、P0-20 文档和复核人员。 |
+| 修改 | `scripts/export_schemas.py` | 将 `P019Report`、`StrategyCaseResult`、`StrategySummary` 加入运行时同源 Schema 导出清单，并保留中文契约边界注释。 | Schema 一致性测试和机器消费者。 |
+| 新建 | `docs/schemas/P019Report.schema.json` | 保存 P0-19 完整报告机器契约；本步无核心代码注释需求。 | API/CI/报告消费者。 |
+| 新建 | `docs/schemas/P019StrategyCase.schema.json` | 保存逐例策略结果、源 Trace 和控制流投影契约；本步无核心代码注释需求。 | JSONL/人工复核/后续在线 adapter。 |
+| 新建 | `docs/schemas/P019StrategySummary.schema.json` | 保存策略汇总表、P95、Token/资源可观测性和零容忍契约；本步无核心代码注释需求。 | Markdown/机器指标消费者。 |
+| 修改 | `evals/README.md` | 增加 P0-19 一键入口、执行模式、产物路径和 Smart 延期说明；本步无核心代码注释需求。 | 评测目录入口。 |
+| 修改 | `README.md` | 将状态推进到 P0-19，增加策略对照命令、目录、实测摘要和限制；本步无核心代码注释需求。 | 项目首页、操作者和新 Agent。 |
+| 修改 | `docs/backlog.md` | 将“更完整 ReAct 对照”改为在线三策略 Fast 后续项，并新增 `P0-19-SMART-COMPARISON` 延期项；本步无核心代码注释需求。 | 后续范围管理和 Smart 恢复决策。 |
+| 修改 | `docs/P018_EVAL.md` | 将 P0-18 当前源报告 digest 更新为本次复跑实际 artifact，并继续明确离线 oracle 与在线 Fast 的边界；本步无核心代码注释需求。 | P0-19 源报告复核和后续评测不能引用过期 digest。 |
+| 修改 | `docs/FILE_PURPOSES.md` | 登记本步全部源码/配置/文档/Schema/测试职责；本步为文档，无核心代码注释需求。 | 唯一文件职责入口。 |
+| 修改 | `docs/HANDOFF_CONTEXT.md` | 记录 P0-19 公共契约、实际命令/结果、服务状态、离线限制、Smart 延期和下一步；本步为文档，无核心代码注释需求。 | 跨任务唯一交接入口。 |
+| 修改 | `docs/LESSONS_LEARNED.md` | 沉淀离线 oracle、源报告原始 hash 与稳定 digest、策略投影不可冒充在线质量等复用经验；本步为文档，无核心代码注释需求。 | 后续在线评测和报告设计。 |

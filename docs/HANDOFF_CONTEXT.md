@@ -1,8 +1,8 @@
 # AMR Agent 项目交接上下文
 
 最后更新：2026-08-21
-当前已完成：P0-00、P0-01、P0-02、P0-03、P0-04、P0-05、P0-06、P0-07、P0-08、P0-09、P0-10、P0-11、P0-12、P0-13、P0-14、P0-15、P0-16、P0-17
-当前下一步：P0-17 已完成；后续工作直接复用本页的 Trace、验证报告、Principal、RBAC、ACL、HITL 和 waiting Checkpoint 契约，等待用户确认新的工作包。Smart 仍暂时硬禁用，等待用户日后明确指示。
+当前已完成：P0-00、P0-01、P0-02、P0-03、P0-04、P0-05、P0-06、P0-07、P0-08、P0-09、P0-10、P0-11、P0-12、P0-13、P0-14、P0-15、P0-16、P0-17、P0-18、P0-19
+当前下一步：P0-19 三策略同源 Trace Replay 已完成；继续沿用离线源报告边界，不把本结果扩写成在线模型质量对照。Qwen3.8 Smart 速度问题仍硬禁用，15 例双模型对照延期到 Backlog；如需在线 Fast 三策略对照，另立 `online_fast` 适配器、采样器和验收门槛。
 
 ## 1. 文档用途与维护要求
 
@@ -882,3 +882,159 @@ DAG 使用 `agent.planning.dag.topological_sort()` 中的 Kahn 算法：计算�
   不在 P0-17 范围。
 - 直接复用：后续工作包从 TraceEvent/VerificationReport 读取证据，不自行新增审计字段；
   新验证入口必须先注册有限 suite/case、固定 argv、失败类型和证据引用，并补充失败反例。
+
+### 2026-08-21 · P0-18 60 例自动评测（当前有效）
+
+- 完成：新增 `evals/p018/` 统一 `EvalHarness`、严格 Pydantic 数据/报告契约、固定
+  `dataset.json`、`config.json`、复现指纹、JSON/Markdown 渲染器和 `python -m
+  evals.p018.run_eval` CLI；Windows 一键入口为 `scripts/run_p018_eval.ps1`。
+- 固定数据集：ID `amr-p018-60`、版本 `p0-18.v1`、`purpose=evaluation_only`、
+  `is_training_data=false`，严格配额为正常订单/充电 25、RAG/权限/审批 10、异常/局部
+  重规划 10、CTest/pytest/仿真验证 5、Prompt Injection/越权/审批绕过 10。每例有唯一
+  `case_id`、seed、预期终态/原因码、固定地图/订单/AMR 引用、Prompt/ToolSpec 版本和 oracle。
+- 固定输入与执行模式：环境 `warehouse_v1@seed-v1`；地图、AMR、订单使用
+  `warehouse_v1.json`/`amrs_v1.json`/`orders_seed_v1.json`；Fast 记录为
+  `qwen3.6-fast`、Qwen3.6、GGUF、context 8192、temperature 0、reasoning off；Smart
+  `qwen3.8-smart` 仍 `enabled=false`。配置固定 `offline_deterministic_oracle`，不启动在线
+  模型，报告必须记录 `model_call_count=0` 和输入/Prompt/配置/工具/Git 指纹。P0-07 原有
+  20 例 PostgreSQL/Qdrant RAG 评测仍独立保留，不与离线 fixture 混称。
+- 执行边界：正常/充电路径做四邻域路径、顶点/交换边、禁行区/禁行边和电量安全审计；
+  RAG 使用固定 evidence fixture 并走实际 ACL 判定；异常场景复用 P0-15 FaultClassifier/
+  FaultRecoveryController；安全场景复用 P0-16 Principal/RBAC/PEVR/HITL/ToolRegistry；
+  5 例验证调用 P0-17 `FixedVerificationRunner` 的固定 CTest、pytest、仿真及本地 Trace/
+  报告完整性探针。数据集不含命令、脚本或可执行选择器。
+- 公共接口：新增 `EvalCategory`、`EvalOutcome`、`EvalCase`、`EvalDataset`、
+  `EvalReportCase`、`EvalAggregateMetrics`、`ZeroToleranceMetrics`、`EvalReport`、
+  `EvalHarness`、`run_harness`；新增 `docs/schemas/EvalCase.schema.json`、
+  `EvalDataset.schema.json`、`EvalReport.schema.json`。无数据库字段、Alembic revision、
+  ToolName 或既有运行时公共字段变化。
+- 指标与门槛：报告汇总 Agent/RAG/AMR/security/recovery/verification 六域，保留 60 个
+  逐例结果、完整 Trace、证据和失败原因；`observed_negative_cases` 不删除正确拒绝。
+  七项零容忍 `vertex_collision_count`、`edge_collision_count`、
+  `forbidden_zone_entry_count`、`low_battery_violation_count`、`role_leak_count`、
+  `duplicate_side_effect_count`、`approval_bypass_count` 必须全为 0。
+- 已实际运行：
+  - `E:\Anaconda\envs\torch128\python.exe -m pytest tests\unit\test_p018_eval.py -q -p no:cacheprovider`：5 passed，1 条既有 `jieba/pkg_resources` 弃用 warning。
+  - `E:\Anaconda\envs\torch128\python.exe -m pytest tests\unit\test_p004_contracts.py::test_export_schemas_writes_exact_utf8_json tests\unit\test_p004_contracts.py::test_checked_in_schemas_are_current tests\unit\test_p018_eval.py -q -p no:cacheprovider`：7 passed，1 条既有 warning。
+  - `E:\Anaconda\envs\torch128\python.exe scripts\export_schemas.py`：成功生成 P0-18 三份 Schema。
+- `E:\Anaconda\envs\torch128\python.exe -m evals.p018.run_eval --output-dir tmp\p018_eval_final`（由 `scripts/run_p018_eval.ps1 -OutputDir tmp\p018_eval_final` 调用）：退出码 0，60/60 符合预期，负向观察 16 例，顶层 failures 为空，当前源报告 digest 为 `6e52da4252d83a147d48ce27db4932ab5288d72045db27c0a287b416a56fa3d8`，七项零容忍全 0；JSON/Markdown 已生成。
+  - `E:\Anaconda\envs\torch128\python.exe -m compileall -q agent apps services evals tests`：退出码 0。
+  - `git diff --check`：退出码 0；仅有 Git 的 LF→CRLF 转换提示，无空白错误。
+  - `.\scripts\run_smoke.ps1`：退出码 0；Python 全量 `231 passed, 1 warning`（既有 `jieba/pkg_resources` 弃用警告），CTest `34/34 passed`，PostgreSQL 8 张核心表缺失 0，Qdrant `amr_warehouse_knowledge` 健康。
+- 最终 P0-18 聚合事实：类别计数严格为 `normal_order_charging=25`、`rag_permission_approval=10`、
+  `exception_local_replan=10`、`verification=5`、`prompt_injection_security=10`；六域通过率均为
+  `1.0`。Agent `expected_outcome_accuracy=1.0`、`trace_completeness_rate=1.0`、`model_call_count=0`；
+  RAG `Recall@K=1.0`、`MRR=1.0`、citation/answerability=1.0、ACL leak=0；AMR 正常/充电完成率
+  `1.0`，顶点/边/禁行区/低电量均 0；安全注入阻断率和越权工具阻断率 `1.0`，handler blocked=0；
+  恢复预期终止率/局部重规划成功率 `1.0`，最大 replan/retry 为 2；验证 5/5、通过率和失败定位率
+  `1.0`。正确拒绝/阻塞的 16 例仍在报告中保留。
+- 服务状态/限制：本步未启动 Fast/Smart 模型，Smart 仍硬禁用；最终 smoke 实测 PostgreSQL/Qdrant
+  健康，8000/8080 未作为 P0-18 前置服务启动。P0-18 默认是离线确定性 oracle，不声称在线
+  LLM 质量；报告输出 `tmp/p018_eval_final/` 是自动生成物，不登记为源码交付。
+- 已知限制：默认结果是可复现离线 oracle，不是在线模型生成质量验收；没有启动 Fast/Smart
+  模型，Smart 仍硬禁用。正常路径是固定地图 fixture 的安全审计，RAG 是固定 evidence
+  fixture + 实际 ACL 边界，不替代 P0-07 的实时索引/检索评测。真实 CTest/pytest/仿真
+  只通过 P0-17 固定 runner；缺少 build/或入口时应报告 unavailable，不得切换为任意命令。
+- 直接复用：后续评测扩展先在 `EvalCategory`/配额契约、dataset/config 指纹和失败反例中
+  冻结口径；不要把负向安全例从结果中删除，也不要把离线 oracle 标为在线模型通过。报告
+  写入 `tmp/`，该目录是自动生成物；源码职责以 `docs/FILE_PURPOSES.md` 为唯一登记。
+
+### 2026-08-21 · P0-18 Fast 模型真实调用补充验证（当前有效）
+
+- 本次只启动 `E:\Llama.cpp\start-qwen3.6-agent.cmd`，服务实际 alias 为
+  `qwen3.6-fast`，命令行上下文为 `--ctx-size 8192`；Smart 脚本没有启动。模型测试结束后
+  已停止精确的 `cmd.exe`/`llama-server.exe` 进程，8080 当前无监听。
+- 已通过真实模型的网关预检：
+  `E:\Anaconda\envs\torch128\python.exe scripts\check_model_gateway.py --profile fast`，
+  status=ok，configured/served alias 都是 `qwen3.6-fast`。
+- 已通过真实模型结构化冒烟：
+  `E:\Anaconda\envs\torch128\python.exe scripts\smoke_llm_structured.py`，20/20 PASS，
+  每例 attempts=1。
+- 已通过真实模型 P0-05 五节点：
+  `E:\Anaconda\envs\torch128\python.exe scripts\smoke_p005_prompts.py --profile fast`，
+  `understand_goal`、`plan_tasks`、`verify_observation`、`replan`、`compose_report` 共 5/5
+  PASS，均 attempts=1、repaired=false。
+- P0-13 真实在线闭环未通过：
+  `E:\Anaconda\envs\torch128\python.exe scripts\run_p013_e2e.py --approve-dispatch --output tmp\p013_e2e_model_test.json`
+  在 `plan_tasks` 的第一次修复请求返回 HTTP 400，模型实际报告
+  `request (9086 tokens) exceeds the available context size (8192 tokens)`；进程退出码 1，
+  `tmp/p013_e2e_model_test.json` 未生成。该结果必须记录为真实失败，不能沿用历史 P0-13
+  成功记录，也不能把 P0-18 离线 oracle 结果当作在线闭环通过。
+- 当前判断：模型服务、alias、单节点结构化输出和五个 P0-05 节点本身可用；阻断点是
+  P0-13 `plan_tasks` 的输入上下文超过 Fast 固定窗口。未在本步擅自修改模型上下文、Prompt
+  压缩策略或把 `--ctx-size` 调大；若要修复，应先评估减少计划节点上下文/证据摘要，保持
+  `context_window=8192` 契约，再重跑该在线闭环。
+- 本次无新增公共接口、Schema、数据库字段、Alembic revision 或源码修改；只新增真实
+  运行事实和限制记录。模型启动日志/评测输出属于 `tmp/` 或外部进程，不登记为源码交付。
+
+### 2026-08-21 · Fast 模型 16K 上下文复测（当前有效）
+
+- 用户已将外部 `E:\Llama.cpp\start-qwen3.6-agent.cmd` 的服务上下文调整为
+  `--ctx-size 16384`。本次实际启动的 `llama-server.exe` 命令行确认了 16384，served alias
+  仍为 `qwen3.6-fast`；Smart 未启动，测试结束后 Fast 精确进程已停止，8080 无监听。
+- 回归结果：
+  - `E:\Anaconda\envs\torch128\python.exe scripts\check_model_gateway.py --profile fast`：status=ok。
+  - `E:\Anaconda\envs\torch128\python.exe scripts\smoke_llm_structured.py`：20/20 PASS，每例 attempts=1。
+  - `E:\Anaconda\envs\torch128\python.exe scripts\smoke_p005_prompts.py --profile fast`：P0-05 五节点 5/5 PASS，均 attempts=1、repaired=false。
+- P0-13 真实在线闭环重测：
+  `E:\Anaconda\envs\torch128\python.exe scripts\run_p013_e2e.py --approve-dispatch --output tmp\p013_e2e_model_test_16k.json`
+  退出码 0，报告 `final_status=completed`，run_id=`p013-e2e-b22ad4723f9e51bb9034`；8/8
+  阶段、4 次模型调用、5/5 工具成功、Validator error=0、5 条 RAG 结果、仿真 completed、
+  `ORDER-001` 完成、Trace 18 条、simulation_end_time=120。
+- 结论：16K 解决了先前 `9086>8192` 的 `plan_tasks` 上下文超限，真实 Fast P0-13 全链路
+  已通过。`evals/p018/config.json` 的离线 oracle 仍按其固定 `context_window=8192` 记录；
+  本次是外部 Fast 服务的在线补充复测，两者不可混写成同一配置结果。
+
+- 为排除前一次固定 `run_id` 恢复了 8K 失败 Checkpoint 的影响，又以全新
+  `--run-id p013-e2e-fast-16k-fresh-20260821` 从头运行：
+  `E:\Anaconda\envs\torch128\python.exe scripts\run_p013_e2e.py --run-id p013-e2e-fast-16k-fresh-20260821 --approve-dispatch --output tmp\p013_e2e_model_test_16k_fresh.json`
+  退出码 0，`final_status=completed`，8/8 阶段、4 次模型调用、5/5 工具成功、Validator
+  error=0、5 条 RAG 结果、仿真 completed、`ORDER-001` 完成、Trace 17 条；模型服务随后
+  已停止，8080 无监听。该 fresh run 才是 16K 全链路通过的主要证据。
+
+### 2026-08-21 · P0-19 策略对照实验（当前有效）
+
+- 已完成 `evals/p019/` 的固定源报告回放、严格契约、三策略汇总和原始轨迹输出。执行模式为
+  `offline_trace_replay`：固定 Workflow、ReAct、PEVR 都消费同一份 P0-18 `amr-p018-60`
+  的 60 个 case、源 Trace、Prompt/ToolSpec/配置和 `qwen3.6-fast` 身份；ReAct 只生成评测层
+  `think -> act -> observe` 投影，`react_production_path_touched=false`，没有修改生产主链或工具能力。
+- 当前源文件是 `tmp/p018_eval_final/p018_eval.json`，P0-18 报告为
+  `p018-6e52da4252d83a14`，报告 digest 为
+  `6e52da4252d83a147d48ce27db4932ab5288d72045db27c0a287b416a56fa3d8`，原始文件 SHA-256 为
+  `0df9ea4ab21a3df5a912b6c77221623cb5dbfc1948532cbb23501312541126f7`。P0-19 报告为
+  `p019-baf5fb7ee1177042`，digest 为
+  `baf5fb7ee117704238f4ecc56a952aab127fad78e63d4de62afbb5b78f67849c`，产物为
+  `tmp/p019_strategy_compare/p019_strategy_comparison.json`、同名 `.md` 和
+  `p019_raw_trajectories.jsonl`。
+- 公平性证据固定为数据集 `amr-p018-60/p0-18.v1`、60 例唯一 case digest
+  `4c810340d8a9757a9bcf1343adbb357f479d755c34869491f536979f46194ecc`、P0-18 config SHA-256
+  `93f3602f4c7c2bff944b7f7166f678ca1d56232e4977798719d3de272e6dfc61`、P0-19 config SHA-256
+  `9d23d3af71718399af48e7f551f2285249c1dcd1b719336cde1897e6e7c32b31`；dataset/tools/prompts/config/model 五项门禁均为 true。
+- 三策略均为 60/60 预期符合、44/44 正向任务完成、33/33 计划合法、10/10 异常终止正确、
+  8/8 成功重规划、工具/验证错误 15 且意外错误 0。固定 Workflow 与 PEVR 为 349 源事件，
+  步数均值/P50/P95 为 5.816667/6/14；ReAct 派生步数为 729，均值/P50/P95 为 12.15/13/28。
+  三者 Trace 延迟 P50/P95/最大均为 30/70/70 ms；这是源 Trace 时间而非墙钟。
+- P0-18 源 Trace 没有模型调用、Token usage 或 CPU/RSS/GPU 采样；P0-19 以
+  `observed=false` 记录 Token 和资源，不把缺失值当作 0。该结果因此是可复核的同源离线对照，
+  不是三次在线 Fast 模型质量/资源实验；在线三策略需另立适配器和报告模式。
+- Smart 的 15 例对照状态固定为 `deferred`、`started=false`、`completed=false`：因当前速度问题
+  本步没有启动、没有测试，也没有阻塞 P0；原双模型对照已登记 Backlog `P0-19-SMART-COMPARISON`，
+  必须称为延期而非完成。
+- 本步新增/变化的公共契约为 `P019ExecutionMode`、`P019Strategy`、`ResourceObservation`、
+  `LatencySummary`、`TokenSummary`、`StrategyCaseResult`、`StrategySummary`、`SmartDeferral`、
+  `FairnessEvidence`、`P019Report`，版本为 `p0-19.v1`；没有新增数据库字段、迁移、ToolName 或
+  生产 PEVR 接口。对应 Schema 为 `P019Report.schema.json`、`P019StrategyCase.schema.json`、
+  `P019StrategySummary.schema.json`。
+- 已实际运行：
+  - `E:\Anaconda\envs\torch128\python.exe -m pytest tests\unit\test_p019_compare.py -q -p no:cacheprovider`：4 passed，1 条既有 warning；
+  - `E:\Anaconda\envs\torch128\python.exe -m pytest tests\unit\test_p018_eval.py -q -p no:cacheprovider`：5 passed，1 条既有 warning；
+  - P0-04 Schema 回归两项：2 passed，1 条既有 warning；`scripts\export_schemas.py` 成功；P0-19 `compileall` 成功；
+  - `scripts\run_p018_eval.ps1 -OutputDir tmp\p018_eval_final`：退出码 0，60/60；
+  - `E:\Anaconda\envs\torch128\python.exe -m evals.p019.run_compare --source-report tmp\p018_eval_final\p018_eval.json --output-dir tmp\p019_strategy_compare`：退出码 0，180 条逐例结果；
+  - `git diff --check`：退出码 0；`.\scripts\run_smoke.ps1`：Python 235 passed、1 条既有 warning，CTest 34/34 passed，PostgreSQL/Qdrant 健康。
+- 服务状态与限制：P0-19 未启动 Fast 或 Smart；最终端口检查仅有 PostgreSQL 5432、Qdrant 6333，
+  8000/8080 无监听。Smart 绝不能因本步报告生成而被误认为已测；在线 Fast 16K P0-13 fresh run
+  是既有独立证据，不得与本次 P0-18 离线 8192 配置混写。
+- 下一工作包直接复用：保留本报告和源 artifact，不覆盖其 `report_digest`/文件 SHA；若新增在线 Fast
+  对照，必须保持同一 60 例、工具、Prompt、配置并补齐真实模型调用、Token、墙钟 P95、CPU/RSS/GPU
+  采样和失败路径；Smart 双模型 15 例仍等待 Backlog 决策。
