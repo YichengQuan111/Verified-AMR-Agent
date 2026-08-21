@@ -63,9 +63,17 @@
           "type": "integer"
         },
         "max_replans": {
+          "default": 2,
           "maximum": 2,
           "minimum": 0,
           "title": "Max Replans",
+          "type": "integer"
+        },
+        "max_retries": {
+          "default": 2,
+          "maximum": 4,
+          "minimum": 0,
+          "title": "Max Retries",
           "type": "integer"
         }
       },
@@ -73,8 +81,7 @@
         "max_total_seconds",
         "max_input_tokens",
         "max_output_tokens",
-        "max_tool_steps",
-        "max_replans"
+        "max_tool_steps"
       ],
       "title": "ExecutionBudgets",
       "type": "object"

@@ -16,8 +16,11 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from agent.planning.contracts import PlanTask, TaskContract  # noqa: E402
+from agent.runtime.hitl import ApprovalGrant, HITLInterrupt, HITLRequest  # noqa: E402
 from agent.runtime.state import Observation, RunState  # noqa: E402
 from agent.runtime.pevr import PEVRRunReport  # noqa: E402
+from agent.runtime.trace import TraceError, TraceEvent  # noqa: E402
+from agent.security.contracts import Principal  # noqa: E402
 from agent.tools.contracts import ToolResult, ToolSpec  # noqa: E402
 from agent.tools.schemas import (  # noqa: E402
     AllocateTasksInput,
@@ -54,6 +57,11 @@ from services.amr_simulator.contracts import (  # noqa: E402
     SimulationPlan,
     SimulationResult,
 )
+from services.validation.contracts import (  # noqa: E402
+    ParsedVerificationCase,
+    VerificationEvidenceLocation,
+    VerificationReport,
+)
 
 
 SCHEMA_DIRECTORY = PROJECT_ROOT / "docs" / "schemas"
@@ -67,6 +75,15 @@ SCHEMA_MODELS: dict[str, type[BaseModel]] = {
     "ToolResult.schema.json": ToolResult,
     "Observation.schema.json": Observation,
     "RunState.schema.json": RunState,
+    # P0-17 Trace 事件是节点、模型、工具和验证报告共用的事实索引；错误和
+    # 证据位置同源导出，避免消费者只拿到不完整的失败字段。
+    "TraceError.schema.json": TraceError,
+    "TraceEvent.schema.json": TraceEvent,
+    # P0-16 身份和 HITL 票据是跨 API/PEVR/持久化的安全契约，继续由运行时模型同源导出。
+    "Principal.schema.json": Principal,
+    "HITLRequest.schema.json": HITLRequest,
+    "ApprovalGrant.schema.json": ApprovalGrant,
+    "HITLInterrupt.schema.json": HITLInterrupt,
     # P0-13 最终报告把 P0-05 FinalReport 与工具审计/实际指标合并，作为主闭环
     # CLI 和后续 Checkpoint 的机器可读交付契约。
     "PEVRRunReport.schema.json": PEVRRunReport,
@@ -102,6 +119,9 @@ SCHEMA_MODELS: dict[str, type[BaseModel]] = {
     "ExecutionStateOutput.schema.json": ExecutionStateOutput,
     "RunVerificationSuiteInput.schema.json": RunVerificationSuiteInput,
     "VerificationSuiteOutput.schema.json": VerificationSuiteOutput,
+    "ParsedVerificationCase.schema.json": ParsedVerificationCase,
+    "VerificationEvidenceLocation.schema.json": VerificationEvidenceLocation,
+    "VerificationReport.schema.json": VerificationReport,
     "RequestApprovalInput.schema.json": RequestApprovalInput,
     "ApprovalRequestOutput.schema.json": ApprovalRequestOutput,
 }

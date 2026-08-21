@@ -1,0 +1,187 @@
+{
+  "$defs": {
+    "VerificationEvidenceLocation": {
+      "additionalProperties": false,
+      "description": "一条可跳回原始 stdout/stderr 或仿真快照的证据位置。",
+      "properties": {
+        "source": {
+          "enum": [
+            "stdout",
+            "stderr",
+            "simulation",
+            "metadata"
+          ],
+          "title": "Source",
+          "type": "string"
+        },
+        "line": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Line"
+        },
+        "citation": {
+          "maxLength": 512,
+          "minLength": 1,
+          "title": "Citation",
+          "type": "string"
+        },
+        "excerpt": {
+          "maxLength": 512,
+          "minLength": 1,
+          "title": "Excerpt",
+          "type": "string"
+        }
+      },
+      "required": [
+        "source",
+        "citation",
+        "excerpt"
+      ],
+      "title": "VerificationEvidenceLocation",
+      "type": "object"
+    },
+    "VerificationFailureType": {
+      "description": "日志中可稳定识别的失败类型；未知失败保持 ``unknown`` 而不猜测。",
+      "enum": [
+        "none",
+        "assertion",
+        "schema",
+        "timeout",
+        "permission",
+        "unsafe_plan",
+        "simulation_blocked",
+        "tool_error",
+        "infrastructure",
+        "unknown"
+      ],
+      "title": "VerificationFailureType",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "日志解析后的单个 case 事实，供工具输出和报告共同复用。",
+  "properties": {
+    "case_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Case Id",
+      "type": "string"
+    },
+    "status": {
+      "enum": [
+        "passed",
+        "failed",
+        "timeout"
+      ],
+      "title": "Status",
+      "type": "string"
+    },
+    "exit_code": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Exit Code"
+    },
+    "duration_ms": {
+      "minimum": 0,
+      "title": "Duration Ms",
+      "type": "integer"
+    },
+    "stdout_digest": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Stdout Digest",
+      "type": "string"
+    },
+    "stderr_digest": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Stderr Digest",
+      "type": "string"
+    },
+    "failure_type": {
+      "$ref": "#/$defs/VerificationFailureType",
+      "default": "none"
+    },
+    "task_id": {
+      "anyOf": [
+        {
+          "maxLength": 128,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Task Id"
+    },
+    "tool_name": {
+      "anyOf": [
+        {
+          "maxLength": 64,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Tool Name"
+    },
+    "parameters_digest": {
+      "anyOf": [
+        {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Parameters Digest"
+    },
+    "evidence_refs": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Evidence Refs",
+      "type": "array"
+    },
+    "evidence_locations": {
+      "items": {
+        "$ref": "#/$defs/VerificationEvidenceLocation"
+      },
+      "title": "Evidence Locations",
+      "type": "array"
+    },
+    "summary": {
+      "default": "",
+      "maxLength": 512,
+      "title": "Summary",
+      "type": "string"
+    }
+  },
+  "required": [
+    "case_id",
+    "status",
+    "exit_code",
+    "duration_ms",
+    "stdout_digest",
+    "stderr_digest"
+  ],
+  "title": "ParsedVerificationCase",
+  "type": "object"
+}

@@ -180,6 +180,30 @@ class DatabaseSettings(StrictSettingsModel):
     )
 
 
+class SecuritySettings(StrictSettingsModel):
+    """API 身份验证与 JWT 生命周期配置。
+
+    开发默认值只用于本地冒烟；部署必须通过环境变量替换 secret。业务路由的
+    认证依赖始终开启，只有健康检查保持匿名，避免忘记在生产配置中打开开关。
+    """
+
+    jwt_secret: SecretStr = SecretStr(
+        "p016-development-only-change-this-jwt-secret-2026"
+    )
+    issuer: str = Field(default="amr-agent", min_length=1, max_length=128)
+    audience: str = Field(default="amr-agent-api", min_length=1, max_length=128)
+    leeway_seconds: int = Field(default=0, ge=0, le=300)
+
+    @field_validator("jwt_secret")
+    @classmethod
+    def validate_jwt_secret(cls, value: SecretStr) -> SecretStr:
+        """拒绝过短密钥；SecretStr 本身仍避免日志打印明文。"""
+
+        if len(value.get_secret_value()) < 32:
+            raise ValueError("security.jwt_secret 至少需要 32 个字符")
+        return value
+
+
 class RetrievalSettings(StrictSettingsModel):
     """P0-07 仓储知识检索的可复现配置。
 
@@ -235,6 +259,7 @@ class AppSettings(StrictSettingsModel):
     logging: LoggingSettings = Field(default_factory=LoggingSettings)
     model_gateway: ModelGatewaySettings = Field(default_factory=ModelGatewaySettings)
     database: DatabaseSettings = Field(default_factory=DatabaseSettings)
+    security: SecuritySettings = Field(default_factory=SecuritySettings)
     retrieval: RetrievalSettings = Field(default_factory=RetrievalSettings)
 
 
@@ -318,6 +343,10 @@ def _apply_environment(data: dict[str, Any], environ: Mapping[str, str]) -> dict
             lambda value: _parse_bool("MODEL_GATEWAY_VALIDATE_ON_STARTUP", value),
         ),
         "POSTGRES_DSN": (("database", "postgres_dsn"), str),
+        "AMR_JWT_SECRET": (("security", "jwt_secret"), str),
+        "AMR_JWT_ISSUER": (("security", "issuer"), str),
+        "AMR_JWT_AUDIENCE": (("security", "audience"), str),
+        "AMR_JWT_LEEWAY_SECONDS": (("security", "leeway_seconds"), int),
         "QDRANT_URL": (("retrieval", "qdrant_url"), str),
         "RAG_COLLECTION_NAME": (("retrieval", "collection_name"), str),
         "RAG_EMBEDDING_MODEL_PATH": (("retrieval", "embedding_model_path"), str),

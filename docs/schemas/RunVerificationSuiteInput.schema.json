@@ -8,7 +8,9 @@
         "p0-12",
         "p0_python",
         "p0_cpp",
-        "p0_smoke"
+        "p0_smoke",
+        "p0_simulation",
+        "p0_sim"
       ],
       "title": "Suite Id",
       "type": "string"
@@ -26,6 +28,20 @@
       ],
       "default": null,
       "title": "Run Id"
+    },
+    "trace_id": {
+      "anyOf": [
+        {
+          "maxLength": 128,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Trace Id"
     },
     "case_ids": {
       "anyOf": [

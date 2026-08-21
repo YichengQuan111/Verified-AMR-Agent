@@ -93,13 +93,14 @@ class DynamicStateSnapshot(ContextContract):
 
 
 class BudgetUsage(ContextContract):
-    """调用节点前已经实际消耗的五类预算。"""
+    """调用节点前已经实际消耗的六类预算。"""
 
     input_tokens: int = Field(default=0, ge=0)
     output_tokens: int = Field(default=0, ge=0)
     tool_steps: int = Field(default=0, ge=0)
     elapsed_seconds: float = Field(default=0, ge=0)
     replans: int = Field(default=0, ge=0)
+    retries: int = Field(default=0, ge=0)
 
 
 class BudgetSnapshot(ContextContract):
@@ -136,6 +137,13 @@ class BudgetSnapshot(ContextContract):
 
     @computed_field
     @property
+    def remaining_retries(self) -> int:
+        """返回普通工具重试的剩余额度；重规划不占用这条额度。"""
+
+        return max(0, self.limits.max_retries - self.usage.retries)
+
+    @computed_field
+    @property
     def already_exceeded(self) -> bool:
         """识别调用前已经超过任一总预算的异常状态。"""
 
@@ -146,6 +154,7 @@ class BudgetSnapshot(ContextContract):
                 self.usage.tool_steps > self.limits.max_tool_steps,
                 self.usage.elapsed_seconds > self.limits.max_total_seconds,
                 self.usage.replans > self.limits.max_replans,
+                self.usage.retries > self.limits.max_retries,
             )
         )
 

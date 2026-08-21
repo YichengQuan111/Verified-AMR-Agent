@@ -588,6 +588,22 @@ def test_normal_pevr_graph_runs_all_eight_states_with_mocks() -> None:
     assert "environment_ref" not in registry.calls[-1][1]
     assert isinstance(result.run_state, RunState)
     assert result.run_state.status.value == "completed"
+    assert result.trace_id.startswith("trace-")
+    assert result.report.trace_id == result.trace_id
+    assert [event.sequence for event in result.trace_events] == list(
+        range(1, len(result.trace_events) + 1)
+    )
+    assert sum(event.event_type == "node" for event in result.trace_events) == 8
+    assert sum(event.event_type == "model" for event in result.trace_events) == 4
+    assert sum(event.event_type == "tool" for event in result.trace_events) == 5
+    assert all(event.run_id == run_id for event in result.trace_events)
+    assert any(
+        event.event_type == "tool"
+        and event.tool_name == ToolName.DISPATCH_SIMULATION.value
+        and event.task_id == "TASK-DISPATCH"
+        and event.evidence_refs
+        for event in result.trace_events
+    )
 
 
 def test_plan_jsonvalue_wrappers_are_canonicalized_before_validation() -> None:

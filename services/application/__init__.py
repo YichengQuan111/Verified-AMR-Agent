@@ -10,8 +10,10 @@ from services.application.contracts import (
     StoredDocument,
 )
 from services.application.document_service import DocumentService, MAX_DOCUMENT_BYTES
+from services.application.hitl_service import PostgresHITLStore
 from services.application.exceptions import (
     ApplicationError,
+    DocumentAccessDeniedError,
     DocumentTooLargeError,
     InvalidDocumentError,
     InvalidOperationError,
@@ -30,6 +32,7 @@ __all__ = [
     "DocumentMetadataInput",
     "DocumentService",
     "DocumentTooLargeError",
+    "DocumentAccessDeniedError",
     "DocumentView",
     "EventView",
     "InvalidDocumentError",
@@ -37,6 +40,7 @@ __all__ = [
     "MAX_DOCUMENT_BYTES",
     "PersistenceConflictError",
     "PlanView",
+    "PostgresHITLStore",
     "ResourceNotFoundError",
     "RunService",
     "PostgresCheckpointStore",

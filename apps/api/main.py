@@ -9,10 +9,12 @@ from typing import AsyncIterator
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 
+from agent.security import JWTAuthenticator
 from apps.api.routers import documents_router, evals_router, runs_router
 from services.application import (
     ApplicationError,
     DocumentService,
+    PostgresHITLStore,
     PostgresRuntimeStore,
     RunService,
 )
@@ -40,6 +42,12 @@ def create_app(
     """
 
     resolved_settings = settings or load_settings()
+    authenticator = JWTAuthenticator(
+        resolved_settings.security.jwt_secret.get_secret_value(),
+        issuer=resolved_settings.security.issuer,
+        audience=resolved_settings.security.audience,
+        leeway_seconds=resolved_settings.security.leeway_seconds,
+    )
     provider = model_provider or ModelProvider(resolved_settings.model_gateway)
     owned_database_runtime: DatabaseRuntime | None = None
     resolved_session_factory = session_factory
@@ -52,6 +60,10 @@ def create_app(
     # P0-14 的运行图通过此共享 Store 注入 Checkpoint/Effect Ledger；这里仅组装
     # PostgreSQL 边界，不在 API 进程启动时主动创建表或执行工具副作用。
     checkpoint_store = PostgresRuntimeStore(resolved_session_factory)
+    hitl_store = PostgresHITLStore(
+        resolved_session_factory,
+        signing_secret=resolved_settings.security.jwt_secret.get_secret_value(),
+    )
 
     @asynccontextmanager
     async def lifespan(application: FastAPI) -> AsyncIterator[None]:
@@ -65,6 +77,7 @@ def create_app(
         application.state.run_service = run_service
         application.state.document_service = document_service
         application.state.checkpoint_store = checkpoint_store
+        application.state.hitl_store = hitl_store
         try:
             if resolved_settings.model_gateway.validate_on_startup:
                 # ModelProvider 是同步 SDK；to_thread 避免在等待模型服务时阻塞
@@ -88,6 +101,8 @@ def create_app(
         version=resolved_settings.app.version,
         lifespan=lifespan,
     )
+    # 认证器在路由依赖执行前固定到 app.state；健康检查仍不读取身份。
+    application.state.authenticator = authenticator
 
     @application.exception_handler(ApplicationError)
     async def application_error_handler(

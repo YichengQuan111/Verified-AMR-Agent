@@ -24,6 +24,7 @@ from agent.runtime.checkpoint import (
 )
 from agent.runtime.graph import PEVRGraphRunner
 from agent.runtime.pevr import PEVRRequest
+from agent.runtime.trace import TraceEvent
 from agent.tools import ToolName, ToolResult, ToolResultStatus
 from agent.tools.snapshots import DefaultWarehouseSnapshotProvider
 from services.application import PostgresRuntimeStore
@@ -260,6 +261,44 @@ def test_postgres_checkpoint_and_effect_ledger_are_restart_readable(
         assert len(entries) == 1
         assert entries[0].status.value == "completed"
         assert entries[0].result is not None
+    finally:
+        _cleanup(runtime, run_id)
+
+
+def test_postgres_trace_before_run_creation_is_flushed_idempotently(
+    database_runtime: DatabaseRuntime,
+) -> None:
+    """理解节点早于 runs 时先缓存 Trace，建 run 后补写且重复提交不复制事件。"""
+
+    runtime = database_runtime
+    run_id = f"run_p017_trace_{uuid4().hex[:16]}"
+    contract = _contract()
+    store = PostgresRuntimeStore(runtime.session_factory, clock=lambda: NOW)
+    event = TraceEvent(
+        trace_id=f"trace-p017-{uuid4().hex[:16]}",
+        run_id=run_id,
+        sequence=1,
+        event_type="model",
+        status="completed",
+        node="understand",
+        model_version="qwen3.6-fast",
+        prompt_id="understand_goal",
+        prompt_version="p0-05.v1",
+        input_tokens=10,
+        output_tokens=5,
+        total_tokens=15,
+        latency_ms=0,
+        started_at=NOW,
+        finished_at=NOW,
+        parameters_digest="a" * 64,
+        evidence_refs=["prompt://understand_goal"],
+    )
+    try:
+        store.append_trace_event(event)
+        store.ensure_run(run_id, contract)
+        store.append_trace_event(event)
+        persisted = store.list_trace_events(run_id)
+        assert persisted == [event]
     finally:
         _cleanup(runtime, run_id)
 

@@ -45,6 +45,13 @@ disabled_reason = "Smart 在线 P0-05 验收仅通过 2/5，等待用户明确�
 [database]
 postgres_dsn = "postgresql://amr:123456@localhost:5432/amr_agent"
 
+[security]
+# 仅用于本地开发/冒烟；部署必须通过 AMR_JWT_SECRET 注入独立密钥。
+jwt_secret = "p016-development-only-change-this-jwt-secret-2026"
+issuer = "amr-agent"
+audience = "amr-agent-api"
+leeway_seconds = 0
+
 [retrieval]
 qdrant_url = "http://localhost:6333"
 collection_name = "amr_warehouse_knowledge"

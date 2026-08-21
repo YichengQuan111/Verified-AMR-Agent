@@ -1,0 +1,53 @@
+{
+  "$defs": {
+    "JsonValue": {}
+  },
+  "additionalProperties": false,
+  "description": "失败事件的稳定错误索引；原始异常正文不作为任意代码执行。",
+  "properties": {
+    "category": {
+      "maxLength": 64,
+      "minLength": 1,
+      "title": "Category",
+      "type": "string"
+    },
+    "code": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Code",
+      "type": "string"
+    },
+    "message": {
+      "maxLength": 2000,
+      "minLength": 1,
+      "title": "Message",
+      "type": "string"
+    },
+    "retryable": {
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Retryable"
+    },
+    "details": {
+      "additionalProperties": {
+        "$ref": "#/$defs/JsonValue"
+      },
+      "title": "Details",
+      "type": "object"
+    }
+  },
+  "required": [
+    "category",
+    "code",
+    "message"
+  ],
+  "title": "TraceError",
+  "type": "object"
+}

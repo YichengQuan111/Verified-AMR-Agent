@@ -2,7 +2,7 @@
   "$defs": {
     "VerificationCaseOutput": {
       "additionalProperties": false,
-      "description": "一个固定验证命令的结果摘要，不把可执行命令暴露成输入契约。",
+      "description": "一个固定验证命令的结果和失败定位，不暴露可执行命令本身。",
       "properties": {
         "case_id": {
           "title": "Case Id",
@@ -42,6 +42,66 @@
           "pattern": "^[0-9a-f]{64}$",
           "title": "Stderr Digest",
           "type": "string"
+        },
+        "failure_type": {
+          "$ref": "#/$defs/VerificationFailureType",
+          "default": "none"
+        },
+        "task_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Task Id"
+        },
+        "tool_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Tool Name"
+        },
+        "parameters_digest": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parameters Digest"
+        },
+        "evidence_refs": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Evidence Refs",
+          "type": "array"
+        },
+        "evidence_locations": {
+          "items": {
+            "$ref": "#/$defs/VerificationEvidenceLocation"
+          },
+          "title": "Evidence Locations",
+          "type": "array"
+        },
+        "summary": {
+          "default": "",
+          "title": "Summary",
+          "type": "string"
         }
       },
       "required": [
@@ -54,10 +114,75 @@
       ],
       "title": "VerificationCaseOutput",
       "type": "object"
+    },
+    "VerificationEvidenceLocation": {
+      "additionalProperties": false,
+      "description": "一条可跳回原始 stdout/stderr 或仿真快照的证据位置。",
+      "properties": {
+        "source": {
+          "enum": [
+            "stdout",
+            "stderr",
+            "simulation",
+            "metadata"
+          ],
+          "title": "Source",
+          "type": "string"
+        },
+        "line": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Line"
+        },
+        "citation": {
+          "maxLength": 512,
+          "minLength": 1,
+          "title": "Citation",
+          "type": "string"
+        },
+        "excerpt": {
+          "maxLength": 512,
+          "minLength": 1,
+          "title": "Excerpt",
+          "type": "string"
+        }
+      },
+      "required": [
+        "source",
+        "citation",
+        "excerpt"
+      ],
+      "title": "VerificationEvidenceLocation",
+      "type": "object"
+    },
+    "VerificationFailureType": {
+      "description": "日志中可稳定识别的失败类型；未知失败保持 ``unknown`` 而不猜测。",
+      "enum": [
+        "none",
+        "assertion",
+        "schema",
+        "timeout",
+        "permission",
+        "unsafe_plan",
+        "simulation_blocked",
+        "tool_error",
+        "infrastructure",
+        "unknown"
+      ],
+      "title": "VerificationFailureType",
+      "type": "string"
     }
   },
   "additionalProperties": false,
-  "description": "受控验证套件的汇总。",
+  "description": "受控验证套件的汇总和可追溯 JSON/Markdown 报告。",
   "properties": {
     "suite_id": {
       "title": "Suite Id",
@@ -74,6 +199,18 @@
       ],
       "title": "Run Id"
     },
+    "trace_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Trace Id"
+    },
     "status": {
       "enum": [
         "passed",
@@ -84,7 +221,7 @@
       "type": "string"
     },
     "case_count": {
-      "minimum": 0,
+      "exclusiveMinimum": 0,
       "title": "Case Count",
       "type": "integer"
     },
@@ -103,6 +240,62 @@
         "$ref": "#/$defs/VerificationCaseOutput"
       },
       "title": "Cases",
+      "type": "array"
+    },
+    "report_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Report Id"
+    },
+    "report_digest": {
+      "anyOf": [
+        {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Report Digest"
+    },
+    "report_json": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Report Json"
+    },
+    "report_markdown": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Report Markdown"
+    },
+    "evidence_refs": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Evidence Refs",
       "type": "array"
     }
   },

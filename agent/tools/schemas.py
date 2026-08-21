@@ -25,6 +25,10 @@ from agent.tools.contracts import UserRole
 from domains.amr_warehouse import AMRState, GridPosition
 from services.amr_simulator.contracts import RouteStep, SimulationPlan, SimulationResult
 from services.retrieval.contracts import RetrievalResponse
+from services.validation.contracts import (
+    VerificationEvidenceLocation,
+    VerificationFailureType,
+)
 
 
 class ToolSchema(BaseModel):
@@ -212,7 +216,15 @@ class QueryExecutionStateInput(ToolSchema):
         return self
 
 
-VerificationSuiteId = Literal["p0_12", "p0-12", "p0_python", "p0_cpp", "p0_smoke"]
+VerificationSuiteId = Literal[
+    "p0_12",
+    "p0-12",
+    "p0_python",
+    "p0_cpp",
+    "p0_smoke",
+    "p0_simulation",
+    "p0_sim",
+]
 
 
 class RunVerificationSuiteInput(ToolSchema):
@@ -220,6 +232,7 @@ class RunVerificationSuiteInput(ToolSchema):
 
     suite_id: VerificationSuiteId
     run_id: str | None = Field(default=None, min_length=1, max_length=64)
+    trace_id: str | None = Field(default=None, min_length=1, max_length=128)
     case_ids: list[str] | None = None
 
     @model_validator(mode="after")
@@ -409,7 +422,7 @@ class ExecutionStateOutput(ToolSchema):
 
 
 class VerificationCaseOutput(ToolSchema):
-    """一个固定验证命令的结果摘要，不把可执行命令暴露成输入契约。"""
+    """一个固定验证命令的结果和失败定位，不暴露可执行命令本身。"""
 
     case_id: str
     status: Literal["passed", "failed", "timeout"]
@@ -417,18 +430,49 @@ class VerificationCaseOutput(ToolSchema):
     duration_ms: int = Field(ge=0)
     stdout_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
     stderr_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    failure_type: VerificationFailureType = VerificationFailureType.NONE
+    task_id: str | None = None
+    tool_name: str | None = None
+    parameters_digest: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    evidence_refs: list[str] = Field(default_factory=list)
+    evidence_locations: list[VerificationEvidenceLocation] = Field(default_factory=list)
+    summary: str = ""
+
+    @model_validator(mode="after")
+    def validate_execution_fact(self) -> "VerificationCaseOutput":
+        """工具输出状态必须与固定子进程退出事实一致，不能伪造 passed。"""
+
+        if self.status == "passed" and self.exit_code != 0:
+            raise ValueError("passed case 必须来自 exit_code=0")
+        if self.status == "failed" and (self.exit_code is None or self.exit_code == 0):
+            raise ValueError("failed case 必须来自非零 exit_code")
+        if self.status == "timeout" and self.exit_code is not None:
+            raise ValueError("timeout case 的 exit_code 必须为 null")
+        if self.status == "passed" and self.failure_type is not VerificationFailureType.NONE:
+            raise ValueError("passed case 不能携带失败类型")
+        if self.status == "timeout" and self.failure_type is not VerificationFailureType.TIMEOUT:
+            raise ValueError("timeout case 必须使用 timeout 失败类型")
+        if self.status == "failed" and self.failure_type is VerificationFailureType.NONE:
+            raise ValueError("failed case 必须携带失败类型")
+        return self
 
 
 class VerificationSuiteOutput(ToolSchema):
-    """受控验证套件的汇总。"""
+    """受控验证套件的汇总和可追溯 JSON/Markdown 报告。"""
 
     suite_id: str
     run_id: str | None
+    trace_id: str | None = None
     status: Literal["passed", "failed", "timeout"]
-    case_count: int = Field(ge=0)
+    case_count: int = Field(gt=0)
     passed_count: int = Field(ge=0)
     failed_count: int = Field(ge=0)
     cases: list[VerificationCaseOutput]
+    report_id: str | None = None
+    report_digest: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    report_json: str | None = None
+    report_markdown: str | None = None
+    evidence_refs: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def validate_summary(self) -> "VerificationSuiteOutput":
@@ -444,6 +488,10 @@ class VerificationSuiteOutput(ToolSchema):
         expected_status = "timeout" if timed_out else "failed" if failed else "passed"
         if self.status != expected_status:
             raise ValueError("suite status 与 cases 不一致")
+        if any(item.status == "passed" and item.failure_type is not VerificationFailureType.NONE for item in self.cases):
+            raise ValueError("通过 case 不能携带失败类型")
+        if any(item.status == "timeout" and item.failure_type is not VerificationFailureType.TIMEOUT for item in self.cases):
+            raise ValueError("timeout case 必须携带 timeout 失败类型")
         return self
 
 
@@ -494,6 +542,8 @@ __all__ = [
     "ValidationEvidenceOutput",
     "ValidationResponse",
     "VerificationCaseOutput",
+    "VerificationEvidenceLocation",
+    "VerificationFailureType",
     "VerificationSuiteOutput",
     "VerificationSuiteId",
 ]

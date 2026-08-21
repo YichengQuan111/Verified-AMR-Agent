@@ -45,6 +45,21 @@ class ObservationStatus(str, Enum):
     BLOCKED = "blocked"
 
 
+class FaultRecord(RuntimeContract):
+    """已经处理过的故障审计记录，用于 Checkpoint 恢复时防止状态循环。"""
+
+    fault_id: str = Field(min_length=1, max_length=128)
+    category: str = Field(min_length=1, max_length=64)
+    code: str = Field(min_length=1, max_length=128)
+    action: str = Field(min_length=1, max_length=32)
+    task_id: str | None = Field(default=None, max_length=128)
+    tool_name: str | None = Field(default=None, max_length=64)
+    observed_at: AwareDatetime
+    retry_count: int = Field(ge=0)
+    replan_count: int = Field(ge=0)
+    terminal: bool
+
+
 class RunStatus(str, Enum):
     """一次 Agent 运行的生命周期状态。"""
 
@@ -122,6 +137,8 @@ class RunState(RuntimeContract):
     created_at: AwareDatetime
     updated_at: AwareDatetime
     replan_count: int = Field(ge=0)
+    retry_count: int = Field(default=0, ge=0)
+    fault_history: list[FaultRecord] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def validate_run_state(self) -> "RunState":
@@ -213,6 +230,16 @@ class RunState(RuntimeContract):
             raise ValueError("updated_at 不能早于 created_at")
         if self.replan_count > self.task_contract.budgets.max_replans:
             raise ValueError("replan_count 超过 TaskContract 允许的重规划次数")
+        if self.retry_count > self.task_contract.budgets.max_retries:
+            raise ValueError("retry_count 超过 TaskContract 允许的重试次数")
+        fault_ids = [item.fault_id for item in self.fault_history]
+        if len(fault_ids) != len(set(fault_ids)):
+            raise ValueError("fault_history 不能包含重复 fault_id")
+        for record in self.fault_history:
+            if record.retry_count > self.retry_count:
+                raise ValueError("FaultRecord.retry_count 不能超过 RunState.retry_count")
+            if record.replan_count > self.replan_count:
+                raise ValueError("FaultRecord.replan_count 不能超过 RunState.replan_count")
 
         terminal_statuses = {RunStatus.COMPLETED, RunStatus.FAILED, RunStatus.CANCELLED}
         if self.status in terminal_statuses and self.current_task_id is not None:
@@ -253,6 +280,7 @@ class RunState(RuntimeContract):
 
 __all__ = [
     "ConstraintViolation",
+    "FaultRecord",
     "Observation",
     "ObservationSource",
     "ObservationStatus",

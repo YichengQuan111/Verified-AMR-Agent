@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from agent.context import PlanTasksOutput
 from agent.planning import TaskContract
+from agent.security import Principal, authorize_operator
 from services.application.contracts import ApprovalView, EventView, PlanView, RunView
 from services.application.exceptions import (
     InvalidOperationError,
@@ -403,9 +404,14 @@ class RunService:
         decided_by: str,
         comment: str | None = None,
         task_id: str | None = None,
+        principal: Principal | None = None,
     ) -> ApprovalView:
         """锁定运行和待审批行，原子保存决定、运行状态与审计事件。"""
 
+        if principal is not None:
+            authorize_operator(principal)
+            if decided_by != principal.subject:
+                raise InvalidOperationError("审批人必须等于已验证主体")
         now = datetime.now(timezone.utc)
         try:
             with self._session_factory() as session:

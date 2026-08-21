@@ -24,6 +24,9 @@ from typing import Any, Callable, Mapping
 
 from pydantic import BaseModel, ValidationError
 
+from agent.runtime.hitl import ApprovalGrant
+from agent.security.contracts import Principal
+from agent.security.rbac import AuthorizationError, assert_retrieval_scope, authorize_tool
 from agent.tools.approval import ApprovalStoreProtocol, InMemoryApprovalStore
 from agent.tools.contracts import (
     TOOL_ARGUMENT_POLICIES,
@@ -120,6 +123,9 @@ class ToolInvocationContext:
     tool_name: ToolName
     call_id: str
     principal_role: UserRole
+    # secure registry 会把完整 Principal 传给 handler；旧模式保持 None，便于
+    # P0-12 的本地 fake 继续验证工具契约而不伪造身份。
+    principal: Principal | None
     input_digest: str
     # 副作用调用由 P0-14 注入稳定业务键；只读工具或旧 P0-12 调用可为 None。
     # handler 只能用它关联外部事实，不能自行生成或改写。
@@ -173,6 +179,7 @@ class _InFlightInvocation:
 
     tool_name: ToolName
     principal_role: UserRole
+    principal_subject: str | None
     fingerprints: frozenset[str]
     completed: threading.Event
 
@@ -229,6 +236,47 @@ def _unique_refs(refs: list[str] | tuple[str, ...]) -> list[str]:
     """按首次出现顺序去重证据引用，避免同一证据污染审计结果。"""
 
     return list(dict.fromkeys(refs))
+
+
+_FORBIDDEN_EXECUTION_KEYS = frozenset(
+    {
+        "command",
+        "commands",
+        "shell",
+        "sql",
+        "query_sql",
+        "executable",
+        "cwd",
+        "script",
+        "code",
+        "eval",
+        "exec",
+        "http_url",
+        "url",
+        "headers",
+        "endpoint",
+    }
+)
+
+
+def _find_forbidden_execution_key(value: Any, *, path: str = "") -> str | None:
+    """递归拒绝命令/SQL/Shell/外部 HTTP 选择器，但不扫描用户 query 文本。"""
+
+    if isinstance(value, Mapping):
+        for key, child in value.items():
+            key_text = str(key).strip().lower()
+            child_path = f"{path}.{key_text}" if path else key_text
+            if key_text in _FORBIDDEN_EXECUTION_KEYS:
+                return child_path
+            found = _find_forbidden_execution_key(child, path=child_path)
+            if found is not None:
+                return found
+    elif isinstance(value, (list, tuple)):
+        for index, child in enumerate(value):
+            found = _find_forbidden_execution_key(child, path=f"{path}[{index}]")
+            if found is not None:
+                return found
+    return None
 
 
 def _failure(
@@ -360,14 +408,19 @@ def _retrieve_handler(dependencies: ToolDependencies) -> ToolHandler:
 
     def handler(model: BaseModel, context: ToolInvocationContext) -> ToolHandlerResponse:
         request = RetrieveKnowledgeInput.model_validate(model)
-        role_scope = request.role_scope or context.principal_role
-        if role_scope is UserRole.OPERATOR and context.principal_role is UserRole.VIEWER:
-            raise _failure(
-                "viewer 不能请求 operator 文档范围",
-                category=ToolErrorCategory.PERMISSION_DENIED,
-                code="rag_role_scope_escalation",
-                retryable=False,
+        try:
+            role_scope = (
+                assert_retrieval_scope(context.principal, request.role_scope)
+                if context.principal is not None
+                else request.role_scope or context.principal_role
             )
+        except AuthorizationError as exc:
+            raise _failure(
+                str(exc),
+                category=ToolErrorCategory.PERMISSION_DENIED,
+                code=exc.code,
+                retryable=False,
+            ) from exc
         try:
             # 默认检索器也在异常映射内延迟构造；Embedding/Qdrant 初始化失败应
             # 明确归类 unavailable，不能泄漏成执行器 generic internal。
@@ -823,6 +876,7 @@ def _verification_handler(dependencies: ToolDependencies) -> ToolHandler:
             output = runner.run(
                 request.suite_id,
                 run_id=request.run_id,
+                trace_id=request.trace_id,
                 case_ids=request.case_ids,
                 timeout_seconds=_child_timeout(ToolName.RUN_VERIFICATION_SUITE),
             )
@@ -833,6 +887,8 @@ def _verification_handler(dependencies: ToolDependencies) -> ToolHandler:
                 category=ToolErrorCategory.TIMEOUT,
                 code="verification_suite_timeout",
                 retryable=True,
+                output=exc.output,
+                evidence_refs=(exc.output.evidence_refs if exc.output is not None else None),
             ) from exc
         except VerificationRunnerUnavailable as exc:
             raise _failure(
@@ -851,9 +907,22 @@ def _verification_handler(dependencies: ToolDependencies) -> ToolHandler:
         effect_id = f"verification-{context.input_digest[:24]}"
         return ToolHandlerResponse(
             output=output,
-            evidence_refs=(f"verification://{request.suite_id}",),
+            evidence_refs=tuple(
+                dict.fromkeys(
+                    [
+                        f"verification://{request.suite_id}",
+                        *output.evidence_refs,
+                    ]
+                )
+            ),
             effect_id=effect_id,
-            audit_metadata={"case_count": output.case_count, "suite_status": output.status},
+            audit_metadata={
+                "case_count": output.case_count,
+                "suite_status": output.status,
+                "report_id": output.report_id,
+                "report_digest": output.report_digest,
+                "trace_id": output.trace_id,
+            },
         )
 
     return handler
@@ -1069,12 +1138,27 @@ def _definitions(dependencies: ToolDependencies) -> list[ToolDefinition]:
 
 
 class ToolRegistry:
-    """封闭的九工具注册表；可注入 fake handler 做契约/失败路径测试。"""
+    """封闭的九工具注册表；可注入 fake handler 做契约/失败路径测试。
 
-    def __init__(self, definitions: list[ToolDefinition]) -> None:
+    ``security_required=True`` 是 API/PEVR 的生产边界：没有验签 Principal 就
+    不能执行任何工具。默认 legacy 模式只为 P0-12 的纯契约测试保留，不应由
+    外部请求直接使用。
+    """
+
+    def __init__(
+        self,
+        definitions: list[ToolDefinition],
+        *,
+        bound_principal: Principal | None = None,
+        security_required: bool = False,
+        approval_verifier: Callable[[ApprovalGrant, ToolSpec, Mapping[str, Any]], None] | None = None,
+    ) -> None:
         if len({item.spec.tool_name for item in definitions}) != len(definitions):
             raise ValueError("工具注册表不能包含重复 tool_name")
         self._definitions = {item.spec.tool_name: item for item in definitions}
+        self.bound_principal = bound_principal
+        self.security_required = security_required
+        self.approval_verifier = approval_verifier
         self._executor = ToolExecutor(self)
 
     @property
@@ -1105,11 +1189,18 @@ class ToolRegistry:
         tool_name: ToolName | str,
         arguments: Mapping[str, Any],
         *,
-        role: UserRole = UserRole.OPERATOR,
+        role: UserRole | None = None,
         call_id: str | None = None,
         idempotency_key: str | None = None,
+        principal: Principal | None = None,
+        approval_grant: ApprovalGrant | None = None,
     ) -> ToolResult:
-        """调用统一执行器；参数、权限和输出错误均变成 ToolResult。"""
+        """调用统一执行器；参数、权限和输出错误均变成 ToolResult。
+
+        安全模式下 ``role`` 只是兼容性校验值，真实角色始终取自 Principal；
+        没有 Principal、主体不匹配或高风险工具缺少可验证 grant 都会在 handler
+        前返回 denied。
+        """
 
         return self._executor.execute(
             tool_name,
@@ -1117,6 +1208,8 @@ class ToolRegistry:
             role=role,
             call_id=call_id,
             idempotency_key=idempotency_key,
+            principal=principal,
+            approval_grant=approval_grant,
         )
 
 
@@ -1135,6 +1228,7 @@ class ToolExecutor:
         *,
         call_id: str,
         role: UserRole | None,
+        principal_subject: str | None,
         input_digest: str,
         started_at: datetime,
         status: ToolResultStatus,
@@ -1176,6 +1270,7 @@ class ToolExecutor:
             effect_id=effect_id,
             tool_version=definition.spec.version,
             principal_role=role,
+            principal_subject=principal_subject,
             input_digest=input_digest,
             output_digest=output_digest,
             # 副作用任务由上层传入 run:plan_version:task；旧调用未传时仍以
@@ -1190,6 +1285,7 @@ class ToolExecutor:
         *,
         call_id: str,
         role: UserRole | None,
+        principal_subject: str | None = None,
         input_digest: str,
         started_at: datetime,
         category: ToolErrorCategory,
@@ -1223,6 +1319,7 @@ class ToolExecutor:
             definition,
             call_id=call_id,
             role=role,
+            principal_subject=principal_subject,
             input_digest=input_digest,
             started_at=started_at,
             status=status,
@@ -1249,36 +1346,104 @@ class ToolExecutor:
         tool_name: ToolName | str,
         arguments: Mapping[str, Any],
         *,
-        role: UserRole = UserRole.OPERATOR,
+        role: UserRole | None = None,
         call_id: str | None = None,
         idempotency_key: str | None = None,
+        principal: Principal | None = None,
+        approval_grant: ApprovalGrant | None = None,
     ) -> ToolResult:
         """严格按固定顺序执行一次工具调用。"""
 
         definition = self._registry.get(tool_name)
         started_at = datetime.now(timezone.utc)
         raw_arguments = dict(arguments) if isinstance(arguments, Mapping) else {}
-        try:
-            role = role if isinstance(role, UserRole) else UserRole(role)
-        except (TypeError, ValueError) as exc:
-            invalid_digest = sha256(repr(role).encode("utf-8")).hexdigest()
+        bound_principal = self._registry.bound_principal
+        if bound_principal is not None:
+            if principal is not None and principal != bound_principal:
+                # 不把两个主体合并；同一注册表绑定的身份必须保持稳定。
+                principal = bound_principal
+                role = None
+                mismatch = True
+            else:
+                principal = bound_principal
+                mismatch = False
+        else:
+            mismatch = False
+        if principal is not None:
+            effective_role = principal.role
+            if role is not None:
+                try:
+                    supplied_role = role if isinstance(role, UserRole) else UserRole(role)
+                except (TypeError, ValueError):
+                    supplied_role = None
+                if supplied_role is not principal.role:
+                    mismatch = True
+        else:
+            try:
+                effective_role = UserRole.OPERATOR if role is None else (
+                    role if isinstance(role, UserRole) else UserRole(role)
+                )
+            except (TypeError, ValueError) as exc:
+                invalid_digest = sha256(repr(role).encode("utf-8")).hexdigest()
+                return self._error_result(
+                    definition,
+                    call_id=call_id or f"call-{invalid_digest[:24]}",
+                    role=None,
+                    input_digest=invalid_digest,
+                    started_at=started_at,
+                    category=ToolErrorCategory.INVALID_ARGUMENT,
+                    code="role_invalid",
+                    message="role 必须是 viewer 或 operator",
+                    retryable=False,
+                    details={"error_type": type(exc).__name__},
+                    idempotency_key=idempotency_key,
+                    preflight_validated=False,
+                )
+
+        # secure registry 的主体要求必须在幂等查重前生效，避免无身份调用复用
+        # 另一主体的缓存结果；显式 role 也不能覆盖绑定 Principal。
+        if self._registry.security_required and principal is None:
+            digest = sha256(repr(raw_arguments).encode("utf-8")).hexdigest()
             return self._error_result(
                 definition,
-                call_id=call_id or f"call-{invalid_digest[:24]}",
-                # 无效角色不能在审计记录中伪装成 operator。
+                call_id=call_id or f"call-{digest[:24]}",
                 role=None,
-                input_digest=invalid_digest,
+                input_digest=digest,
                 started_at=started_at,
-                category=ToolErrorCategory.INVALID_ARGUMENT,
-                code="role_invalid",
-                message="role 必须是 viewer 或 operator",
+                category=ToolErrorCategory.PERMISSION_DENIED,
+                code="principal_required",
+                message="安全工具调用必须携带已验签 Principal",
                 retryable=False,
-                details={"error_type": type(exc).__name__},
                 idempotency_key=idempotency_key,
                 preflight_validated=False,
             )
+        if mismatch:
+            digest = sha256(repr(raw_arguments).encode("utf-8")).hexdigest()
+            return self._error_result(
+                definition,
+                call_id=call_id or f"call-{digest[:24]}",
+                role=principal.role if principal is not None else None,
+                principal_subject=principal.subject if principal is not None else None,
+                input_digest=digest,
+                started_at=started_at,
+                category=ToolErrorCategory.PERMISSION_DENIED,
+                code="principal_role_mismatch",
+                message="调用方声明的 role 与已验证 Principal 不一致",
+                retryable=False,
+                idempotency_key=idempotency_key,
+                preflight_validated=False,
+            )
+        role = effective_role
+        principal_subject = principal.subject if principal is not None else None
         try:
-            raw_digest = _canonical_digest({"tool": definition.spec.tool_name.value, "role": role.value, "arguments": raw_arguments})
+            raw_digest = _canonical_digest(
+                {
+                    "tool": definition.spec.tool_name.value,
+                    "role": role.value,
+                    "principal_subject": principal_subject,
+                    "arguments": raw_arguments,
+                }
+            )
         except (TypeError, ValueError) as exc:
             raw_digest = sha256(repr(raw_arguments).encode("utf-8")).hexdigest()
             result = self._error_result(
@@ -1359,6 +1524,7 @@ class ToolExecutor:
                     previous_fingerprint in request_fingerprints
                     and previous.tool_name is definition.spec.tool_name
                     and previous.principal_role is role
+                    and previous.principal_subject == principal_subject
                 ):
                     cached_result = previous
                 else:
@@ -1369,12 +1535,14 @@ class ToolExecutor:
                     self._inflight[ledger_key] = _InFlightInvocation(
                         tool_name=definition.spec.tool_name,
                         principal_role=role,
+                        principal_subject=principal_subject,
                         fingerprints=frozenset(request_fingerprints),
                         completed=threading.Event(),
                     )
                 elif (
                     inflight.tool_name is definition.spec.tool_name
                     and inflight.principal_role is role
+                    and inflight.principal_subject == principal_subject
                     and not inflight.fingerprints.isdisjoint(request_fingerprints)
                 ):
                     wait_for = inflight.completed
@@ -1431,6 +1599,24 @@ class ToolExecutor:
             )
 
         # 顶层参数白名单先执行；因此未知字段不会触发输入模型副作用或 handler。
+        forbidden_key = _find_forbidden_execution_key(raw_arguments)
+        if forbidden_key is not None:
+            result = self._error_result(
+                definition,
+                call_id=active_call_id,
+                role=role,
+                principal_subject=principal_subject,
+                input_digest=raw_digest,
+                started_at=started_at,
+                category=ToolErrorCategory.PERMISSION_DENIED,
+                code="forbidden_execution_surface",
+                message=f"工具参数包含禁止的执行选择器: {forbidden_key}",
+                retryable=False,
+                details={"path": forbidden_key},
+                idempotency_key=idempotency_key,
+                preflight_validated=False,
+            )
+            return self._finalize_result(ledger_key, result)
         try:
             validate_tool_arguments(definition.spec.tool_name, raw_arguments)
         except (TypeError, ValueError) as exc:
@@ -1454,6 +1640,7 @@ class ToolExecutor:
                 definition,
                 call_id=active_call_id,
                 role=role,
+                principal_subject=principal_subject,
                 input_digest=normalised_digest or raw_digest,
                 started_at=started_at,
                 category=ToolErrorCategory.PERMISSION_DENIED,
@@ -1464,6 +1651,24 @@ class ToolExecutor:
                 preflight_validated=False,
             )
             return self._finalize_result(ledger_key, result)
+        if self._registry.security_required and principal is not None:
+            try:
+                authorize_tool(principal, definition.spec)
+            except AuthorizationError as exc:
+                result = self._error_result(
+                    definition,
+                    call_id=active_call_id,
+                    role=role,
+                    principal_subject=principal_subject,
+                    input_digest=normalised_digest or raw_digest,
+                    started_at=started_at,
+                    category=ToolErrorCategory.PERMISSION_DENIED,
+                    code=exc.code,
+                    message=str(exc),
+                    retryable=False,
+                    preflight_validated=False,
+                )
+                return self._finalize_result(ledger_key, result)
 
         try:
             parsed = definition.input_model.model_validate(raw_arguments)
@@ -1472,6 +1677,7 @@ class ToolExecutor:
                 definition,
                 call_id=active_call_id,
                 role=role,
+                principal_subject=principal_subject,
                 input_digest=raw_digest,
                 started_at=started_at,
                 category=ToolErrorCategory.INVALID_ARGUMENT,
@@ -1483,13 +1689,66 @@ class ToolExecutor:
             )
             return self._finalize_result(ledger_key, result)
 
-        # 输入模型经过规范化后重新计算 digest，审计的是实际交给 handler 的值。
+        # 输入模型经过规范化后重新计算 digest；审批验证使用的正是 handler 将收到
+        # 的规范化输入，而不是调用方可能重复排列的原始 JSON。
         input_digest = normalised_digest or _canonical_digest(parsed)
+        if self._registry.security_required and definition.spec.requires_approval:
+            if approval_grant is None:
+                result = self._error_result(
+                    definition,
+                    call_id=active_call_id,
+                    role=role,
+                    principal_subject=principal_subject,
+                    input_digest=input_digest,
+                    started_at=started_at,
+                    category=ToolErrorCategory.PERMISSION_DENIED,
+                    code="approval_required",
+                    message=f"工具 {definition.spec.tool_name.value} 需要有效 HITL 审批",
+                    retryable=False,
+                    preflight_validated=False,
+                )
+                return self._finalize_result(ledger_key, result)
+            verifier = self._registry.approval_verifier
+            if verifier is None:
+                result = self._error_result(
+                    definition,
+                    call_id=active_call_id,
+                    role=role,
+                    principal_subject=principal_subject,
+                    input_digest=input_digest,
+                    started_at=started_at,
+                    category=ToolErrorCategory.PERMISSION_DENIED,
+                    code="approval_verifier_unconfigured",
+                    message="安全注册表未配置审批票据验证器",
+                    retryable=False,
+                    preflight_validated=False,
+                )
+                return self._finalize_result(ledger_key, result)
+            try:
+                verifier(approval_grant, definition.spec, raw_arguments)
+            except Exception as exc:
+                result = self._error_result(
+                    definition,
+                    call_id=active_call_id,
+                    role=role,
+                    principal_subject=principal_subject,
+                    input_digest=input_digest,
+                    started_at=started_at,
+                    category=ToolErrorCategory.PERMISSION_DENIED,
+                    code="approval_invalid",
+                    message="HITL 审批票据未通过存储、计划或 Validator 核对",
+                    retryable=False,
+                    details={"error_type": type(exc).__name__},
+                    preflight_validated=False,
+                )
+                return self._finalize_result(ledger_key, result)
+
         cancellation_event = threading.Event()
         context = ToolInvocationContext(
             tool_name=definition.spec.tool_name,
             call_id=active_call_id,
             principal_role=role,
+            principal=principal,
             input_digest=input_digest,
             idempotency_key=idempotency_key,
             cancelled=cancellation_event,
@@ -1612,6 +1871,7 @@ class ToolExecutor:
             definition,
             call_id=active_call_id,
             role=role,
+            principal_subject=principal_subject,
             input_digest=input_digest,
             started_at=started_at,
             status=ToolResultStatus.SUCCESS,
@@ -1636,8 +1896,15 @@ def build_tool_registry(
     verification_runner: FixedVerificationRunner | Any | None = None,
     approval_store: ApprovalStoreProtocol | None = None,
     knowledge_root: str | Path | None = None,
+    principal: Principal | None = None,
+    security_required: bool = False,
+    approval_verifier: Callable[[ApprovalGrant, ToolSpec, Mapping[str, Any]], None] | None = None,
 ) -> ToolRegistry:
-    """构造正式九工具注册表；所有可变依赖都在组装时显式注入。"""
+    """构造正式九工具注册表；所有可变依赖都在组装时显式注入。
+
+    security_required 必须由 API/PEVR 显式打开；旧的 P0-12 契约测试因此可以
+    继续使用不含身份的本地 registry，而真实入口不会意外落回 legacy 角色参数。
+    """
 
     dependencies = ToolDependencies(
         settings=settings,
@@ -1652,7 +1919,12 @@ def build_tool_registry(
         approval_store=approval_store or InMemoryApprovalStore(),
         knowledge_root=Path(knowledge_root) if knowledge_root is not None else None,
     )
-    return ToolRegistry(_definitions(dependencies))
+    return ToolRegistry(
+        _definitions(dependencies),
+        bound_principal=principal,
+        security_required=security_required,
+        approval_verifier=approval_verifier,
+    )
 
 
 def get_tool_specs() -> tuple[ToolSpec, ...]:

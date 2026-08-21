@@ -104,5 +104,29 @@ E:\Anaconda\envs\torch128\python.exe -m pytest tests\integration\test_p014_postg
 - 单独构造 `ToolRegistry` 时，仿真执行状态和审批仍默认是进程内适配器。真实 PEVR CLI
   已把 `PostgresRuntimeStore` 同时注入运行图和 execution store；其他未来副作用工具仍
   必须提供各自可靠的外部状态适配器，未知状态不会被推断为 `not_found`。
-- 当前 P0-13 正常合同的 `max_replans=0`，LocalReplanner 契约本身支持后续合同显式给出
-  重规划预算；RunState 会拒绝超过合同上限的版本更新。
+- 历史 P0-13 正常闭环测试夹具仍显式使用 `max_replans=0`；P0-15 的恢复合同默认
+  `max_replans=2`（上限仍为 2），并通过 `FaultRecoveryController` 控制局部版本数。
+  LocalReplanner 契约支持后续合同显式收紧预算；RunState 会拒绝超过合同上限的版本更新。
+
+## 7. P0-15 消费边界
+
+P0-15 从本专题复用 `RecoveryAssessment`、Effect Ledger 业务键、完成任务锚点和
+`LocalReplanner` 的完整复验，不在 P0-14 中重新执行副作用。故障分类、重试/重规划额度、
+终止动作和 `FaultRecord` 见 [`P015_FAULTS.md`](P015_FAULTS.md)。
+
+## 8. P0-16 安全恢复边界
+
+安全 PEVR 的 waiting Checkpoint 还必须保存 `HITLInterrupt`、当前 Principal 关联的
+审批定位、已完成工具证据和计划/Validator 摘要。恢复不能只看 Checkpoint 中的布尔批准
+字段，而要从 HITL Store 重新核对 operator、签名、期限、请求状态、计划版本和摘要；
+票据或计划任一事实漂移时，在 handler 前拒绝继续。完整 RBAC、ACL、Prompt Injection
+和审批状态机见 [`P016_SECURITY.md`](P016_SECURITY.md)。
+
+## P0-17 Trace 持久化边界
+
+P0-17 的 graph_state 还包含 trace_id 和严格递增的 trace_events；TraceEvent 记录节点、
+任务、模型/Prompt/工具版本、Token、延迟、错误、摘要和 evidence_refs。PostgresRuntimeStore
+将其以 trace.node/trace.model/trace.tool/trace.verification 事件写入既有 events 表，
+不新增表或 migration。理解节点在 runs 行创建前产生的首条模型事件会暂存，ensure_run
+建立外键后补写；同一 run 不允许混用 trace_id。详细验证 suite、日志解析和 JSON/Markdown
+报告见 P017_TRACE_VERIFICATION.md；本节为文档更新，无核心代码注释需求。

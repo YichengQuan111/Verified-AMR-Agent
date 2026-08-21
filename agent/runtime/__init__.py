@@ -7,6 +7,7 @@ PEVR 图类型采用延迟导出：``services.amr_simulator.contracts`` 需要�
 
 from agent.runtime.state import (
     ConstraintViolation,
+    FaultRecord,
     Observation,
     ObservationSource,
     ObservationStatus,
@@ -27,9 +28,21 @@ from agent.runtime.checkpoint import (
     RecoveryDecision,
     make_effect_idempotency_key,
 )
+from agent.runtime.hitl import (
+    ApprovalGrant,
+    HITLInterrupt,
+    HITLInterruptError,
+    HITLController,
+    HITLReason,
+    HITLRequest,
+    HITLStatus,
+    InMemoryHITLStore,
+)
+from agent.runtime.trace import TraceCollector, TraceError, TraceEvent, new_trace_id
 
 __all__ = [
     "ConstraintViolation",
+    "FaultRecord",
     "Observation",
     "ObservationSource",
     "ObservationStatus",
@@ -47,7 +60,31 @@ __all__ = [
     "RecoveryCoordinator",
     "RecoveryDecision",
     "make_effect_idempotency_key",
+    "ApprovalGrant",
+    "HITLInterrupt",
+    "HITLInterruptError",
+    "HITLController",
+    "HITLReason",
+    "HITLRequest",
+    "HITLStatus",
+    "InMemoryHITLStore",
+    "TraceCollector",
+    "TraceError",
+    "TraceEvent",
+    "new_trace_id",
+    "FAULT_POLICIES",
+    "FaultCategory",
+    "FaultClassifier",
+    "FaultDecision",
+    "FaultPolicy",
+    "FaultRecoveryController",
+    "FaultRecoveryResult",
+    "FaultSignal",
+    "RecoveryAction",
+    "RecoveryUsage",
+    "fault_classification_table",
     "PEVRExecutionError",
+    "PEVRInterrupt",
     "PEVRGraphRunner",
     "PEVRMetrics",
     "PEVRRequest",
@@ -64,6 +101,7 @@ def __getattr__(name: str):
 
     lazy_names = {
         "PEVRExecutionError",
+        "PEVRInterrupt",
         "PEVRGraphRunner",
         "PEVRMetrics",
         "PEVRRequest",
@@ -76,7 +114,26 @@ def __getattr__(name: str):
     if name in lazy_names:
         from agent.runtime import graph, pevr
 
-        value = getattr(graph if name in {"PEVRExecutionError", "PEVRGraphRunner"} else pevr, name)
+        value = getattr(graph if name in {"PEVRExecutionError", "PEVRInterrupt", "PEVRGraphRunner"} else pevr, name)
+        globals()[name] = value
+        return value
+    fault_names = {
+        "FAULT_POLICIES",
+        "FaultCategory",
+        "FaultClassifier",
+        "FaultDecision",
+        "FaultPolicy",
+        "FaultRecoveryController",
+        "FaultRecoveryResult",
+        "FaultSignal",
+        "RecoveryAction",
+        "RecoveryUsage",
+        "fault_classification_table",
+    }
+    if name in fault_names:
+        from agent.runtime import faults
+
+        value = getattr(faults, name)
         globals()[name] = value
         return value
     raise AttributeError(name)

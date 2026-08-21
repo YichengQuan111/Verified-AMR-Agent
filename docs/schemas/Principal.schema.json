@@ -1,0 +1,95 @@
+{
+  "$defs": {
+    "UserRole": {
+      "description": "P0 固定的两级工具访问角色。",
+      "enum": [
+        "viewer",
+        "operator"
+      ],
+      "title": "UserRole",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "由签名令牌或受信任内部适配器产生的调用主体。\n\n``role`` 只在 JWT 验签成功后从令牌读取；它不能由 API body 或 Agent 自己\n传入。时间字段用于把身份生命周期带入审计，不作为权限提升的可选开关。",
+  "properties": {
+    "subject": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Subject",
+      "type": "string"
+    },
+    "role": {
+      "$ref": "#/$defs/UserRole"
+    },
+    "issuer": {
+      "default": "amr-agent",
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Issuer",
+      "type": "string"
+    },
+    "audience": {
+      "default": "amr-agent-api",
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Audience",
+      "type": "string"
+    },
+    "token_id": {
+      "anyOf": [
+        {
+          "maxLength": 128,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Token Id"
+    },
+    "issued_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Issued At"
+    },
+    "expires_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Expires At"
+    },
+    "auth_method": {
+      "default": "jwt",
+      "enum": [
+        "jwt",
+        "internal"
+      ],
+      "title": "Auth Method",
+      "type": "string"
+    }
+  },
+  "required": [
+    "subject",
+    "role"
+  ],
+  "title": "Principal",
+  "type": "object"
+}

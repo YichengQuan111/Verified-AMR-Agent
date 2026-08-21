@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from datetime import datetime, timezone
+from enum import Enum
 import hashlib
 import inspect
 import json
@@ -62,6 +63,17 @@ from agent.runtime.pevr import (
     PEVRTraceEvent,
     PEVR_STAGE_ORDER,
 )
+from agent.runtime.hitl import (
+    ApprovalGrant,
+    HITLInterrupt,
+    HITLInterruptError,
+    HITLReason,
+    HITLStatus,
+    HITLStoreProtocol,
+    InMemoryHITLStore,
+    build_hitl_request,
+)
+from agent.security.contracts import Principal
 from agent.runtime.checkpoint import (
     CheckpointSnapshot,
     EffectLedgerStatus,
@@ -81,6 +93,8 @@ from agent.runtime.state import (
     RunState,
     RunStatus,
 )
+from agent.runtime.faults import FaultClassifier, FaultSignal
+from agent.runtime.trace import TraceError, TraceEvent, new_trace_id
 from agent.tools import (
     ToolName,
     ToolRegistry,
@@ -240,10 +254,38 @@ class _RegistryExternalStateReconciler:
 class PEVRExecutionError(RuntimeError):
     """主图在任一确定性门禁失败时抛出的可定位错误。"""
 
-    def __init__(self, stage: PEVRStage, code: str, message: str) -> None:
+    def __init__(
+        self,
+        stage: PEVRStage,
+        code: str,
+        message: str,
+        *,
+        fault: FaultSignal | None = None,
+    ) -> None:
         super().__init__(message)
         self.stage = stage
         self.code = code
+        # P0-15 只附加结构化分类，不改变 P0-13 既有 code/message 异常契约；
+        # 未显式绑定的异常也统一进入 fail-closed 分类，避免上层漏掉终止门禁。
+        self.fault = fault or FaultClassifier.classify(
+            {"code": code, "message": message},
+            stage=stage.value,
+        )
+
+
+class PEVRInterrupt(PEVRExecutionError):
+    """PEVR 已保存 waiting_approval Checkpoint，必须由同一 run 恢复。"""
+
+    def __init__(self, interrupt: HITLInterrupt) -> None:
+        super().__init__(
+            PEVRStage.EXECUTE,
+            "hitl_interrupt",
+            (
+                f"run {interrupt.run_id} 在 task {interrupt.task_id} 等待审批 "
+                f"{interrupt.approval_id}"
+            ),
+        )
+        self.interrupt = interrupt
 
 
 class PEVRGraphRunner:
@@ -264,7 +306,9 @@ class PEVRGraphRunner:
         "max_input_tokens": 30000,
         "max_output_tokens": 5000,
         "max_tool_steps": 8,
-        "max_replans": 0,
+        # P0-15 的默认自动恢复额度；合同仍可显式收紧到 0～2。
+        "max_replans": 2,
+        "max_retries": 2,
     }
     DEFAULT_PAYLOAD_KG = 1.0
 
@@ -277,9 +321,24 @@ class PEVRGraphRunner:
         checkpoint_store: RuntimePersistenceProtocol | None = None,
         external_state_reconciler: Any | None = None,
         clock: Clock = _utc_now,
+        hitl_store: HITLStoreProtocol | None = None,
+        security_required: bool = False,
+        hitl_ttl_seconds: int = 900,
     ) -> None:
         self.provider = provider
-        self.registry = registry or build_tool_registry()
+        self.security_required = security_required
+        self.hitl_ttl_seconds = hitl_ttl_seconds
+        self.hitl_store = hitl_store or (InMemoryHITLStore() if security_required else None)
+        self._active_approval_grant: ApprovalGrant | None = None
+        self.registry = registry or build_tool_registry(
+            security_required=security_required,
+            approval_verifier=self._registry_approval_verifier if security_required else None,
+        )
+        # 调用方注入的正式 ToolRegistry 也必须切到同一安全模式；fake registry
+        # 没有这些属性时仍由 _registry_execute 的签名兼容逻辑保护旧测试。
+        if security_required and isinstance(self.registry, ToolRegistry):
+            self.registry.security_required = True
+            self.registry.approval_verifier = self._registry_approval_verifier
         self.snapshot_provider = snapshot_provider or DefaultWarehouseSnapshotProvider()
         self.checkpoint_store = checkpoint_store
         # 默认使用当前注册表的只读状态查询；若调用方提供真实仿真/工具适配器，
@@ -290,6 +349,49 @@ class PEVRGraphRunner:
         )
         self._clock = clock
         self.graph = self._build_graph()
+
+    def _registry_approval_verifier(
+        self,
+        grant: ApprovalGrant,
+        spec: Any,
+        arguments: Mapping[str, Any],
+    ) -> None:
+        """把 Registry 的最后一道审批门禁绑定到当前已核对票据。"""
+
+        del spec, arguments
+        if self._active_approval_grant is None or grant != self._active_approval_grant:
+            raise PermissionError("工具调用未绑定当前 PEVR 已核对的审批票据")
+
+    @staticmethod
+    def classify_failure(
+        error: Any,
+        *,
+        stage: str | PEVRStage | None = None,
+        task_id: str | None = None,
+        tool_name: ToolName | str | None = None,
+        idempotent: bool = True,
+        has_side_effects: bool = False,
+        side_effect_not_found: bool = False,
+        details: Mapping[str, Any] | None = None,
+    ) -> FaultSignal:
+        """把 PEVR 异常交给 P0-15；已绑定信号原样保留影响实体和证据。"""
+
+        attached_fault = getattr(error, "fault", None)
+        if isinstance(error, FaultSignal):
+            return error.model_copy(deep=True)
+        if isinstance(attached_fault, FaultSignal):
+            return attached_fault.model_copy(deep=True)
+        resolved_stage = stage.value if isinstance(stage, PEVRStage) else stage
+        return FaultClassifier.classify(
+            error,
+            stage=resolved_stage,
+            task_id=task_id,
+            tool_name=tool_name,
+            idempotent=idempotent,
+            has_side_effects=has_side_effects,
+            side_effect_not_found=side_effect_not_found,
+            details=details,
+        )
 
     def _build_graph(self):
         """编译只含固定节点和固定边的状态图，不允许模型动态添加节点。"""
@@ -322,6 +424,7 @@ class PEVRGraphRunner:
             self._reconcile_checkpoint(checkpoint)
             try:
                 restored = self._restore_graph_state(checkpoint.graph_state)
+                self._merge_persisted_trace_events(restored, resolved_request.run_id)
             except (TypeError, ValueError, ValidationError) as exc:
                 # 损坏 JSONB 不允许通过过滤坏项“自愈”；恢复必须停在确定性边界，
                 # 同时不给调用方泄漏整份持久化载荷。
@@ -330,14 +433,22 @@ class PEVRGraphRunner:
                     "checkpoint_corrupt",
                     f"Checkpoint 无法通过当前图状态契约: {type(exc).__name__}",
                 ) from exc
+            trace_id = str(restored.get("trace_id") or resolved_request.trace_id or new_trace_id(resolved_request.run_id))
+            resolved_request = resolved_request.model_copy(update={"trace_id": trace_id})
+            restored["trace_id"] = trace_id
+            restored["request"] = resolved_request
             if self._is_terminal_graph_state(restored):
                 return self._result_from_graph_state(restored, resolved_request)
         else:
             restored = None
+            trace_id = resolved_request.trace_id or new_trace_id(resolved_request.run_id)
+            resolved_request = resolved_request.model_copy(update={"trace_id": trace_id})
         # 运行前先确认 alias；若 Fast 服务不在或暴露了错误模型，图不会开始执行。
         model_version = self.provider.startup()
         initial: PEVRGraphState = restored or {
             "request": resolved_request,
+            "trace_id": trace_id,
+            "trace_events": [],
             "stage_trace": [],
             "run_state": None,
             "contract": None,
@@ -356,10 +467,15 @@ class PEVRGraphRunner:
             "model_version": model_version,
             "budget_usage": BudgetUsage(),
             "model_call_count": 0,
+            "hitl_interrupt": None,
+            "approval_grant": resolved_request.approval_grant,
         }
         # 当前进程仍需重新确认模型身份；这不会覆盖已持久化的工具/状态事实。
         initial["request"] = resolved_request
+        initial["trace_id"] = trace_id
+        initial.setdefault("trace_events", [])
         initial["model_version"] = model_version
+        initial["approval_grant"] = resolved_request.approval_grant or initial.get("approval_grant")
         state = self.graph.invoke(initial, config={"recursion_limit": 32})
         report = state.get("final_report")
         run_state = state.get("run_state")
@@ -370,6 +486,7 @@ class PEVRGraphRunner:
             raise PEVRExecutionError(PEVRStage.VERIFY, "verification_missing", "PEVR 图未产生 Observation 验证结果")
         return PEVRRunResult(
             request=resolved_request,
+            trace_id=trace_id,
             report=report,
             run_state=run_state,
             stage_trace=list(state.get("stage_trace", [])),
@@ -377,6 +494,7 @@ class PEVRGraphRunner:
             observations=list(state.get("observations", [])),
             verification=verification,
             resource_provenance=list(state.get("resource_provenance", [])),
+            trace_events=list(state.get("trace_events", [])),
         )
 
     def _checkpointed_node(
@@ -389,11 +507,35 @@ class PEVRGraphRunner:
         def wrapped(state: PEVRGraphState) -> dict[str, Any]:
             if self._stage_completed(state, stage):
                 return {}
-            result = handler(state)
-            merged = dict(state)
-            merged.update(result)
-            self._persist_checkpoint(merged, stage=stage)
-            return result
+            started_at = self._clock()
+            try:
+                result = handler(state)
+                merged = dict(state)
+                merged.update(result)
+                node_event = self._make_node_trace_event(
+                    merged,
+                    stage=stage,
+                    status="completed",
+                    started_at=started_at,
+                    finished_at=self._clock(),
+                )
+                trace_events = self._append_trace_events(merged, [node_event])
+                merged["trace_events"] = trace_events
+                self._persist_checkpoint(merged, stage=stage)
+                return {**result, "trace_events": trace_events}
+            except Exception as exc:
+                # 失败节点没有正常返回 state，因此必须直接写入持久化 Trace；下一次
+                # 恢复会从 Checkpoint 的已有事件继续，而不会伪造成功的 stage_trace。
+                failure_event = self._make_node_trace_event(
+                    state,
+                    stage=stage,
+                    status=self._trace_status_for_exception(exc),
+                    started_at=started_at,
+                    finished_at=self._clock(),
+                    error=self._trace_error_for_exception(exc, stage=stage),
+                )
+                self._persist_trace_event(failure_event)
+                raise
 
         return wrapped
 
@@ -415,8 +557,14 @@ class PEVRGraphRunner:
             # understand 节点会第一次持久化，避免保存一个不可恢复的半信封。
             return
         graph_state = cast(dict[str, Any], to_jsonable(dict(state)))
+        interrupt = state.get("hitl_interrupt")
+        checkpoint_id = (
+            interrupt.checkpoint_id
+            if isinstance(interrupt, HITLInterrupt)
+            else f"cp_{uuid4().hex}"
+        )
         snapshot = CheckpointSnapshot(
-            checkpoint_id=f"cp_{uuid4().hex}",
+            checkpoint_id=checkpoint_id,
             run_id=request.run_id,
             stage=stage.value,
             status=run_state.status.value,
@@ -426,6 +574,154 @@ class PEVRGraphRunner:
             saved_at=self._clock(),
         )
         self.checkpoint_store.save_checkpoint(snapshot)
+
+    def _persist_trace_event(self, event: TraceEvent) -> None:
+        """将 Trace 事件写入可选持久化层；没有 sink 时保持纯内存运行兼容。"""
+
+        if self.checkpoint_store is None:
+            return
+        append = getattr(self.checkpoint_store, "append_trace_event", None)
+        if callable(append):
+            append(event)
+
+    def _append_trace_events(
+        self,
+        state: Mapping[str, Any],
+        events: list[TraceEvent],
+    ) -> list[TraceEvent]:
+        """按当前状态继续分配 Trace 序号，并在同一时刻持久化新增事件。"""
+
+        request = state.get("request")
+        if not isinstance(request, PEVRRequest):
+            raise PEVRExecutionError(PEVRStage.GUARD, "trace_request_missing", "Trace 缺少 PEVRRequest")
+        trace_id = str(state.get("trace_id") or request.trace_id or "")
+        if not trace_id:
+            raise PEVRExecutionError(PEVRStage.GUARD, "trace_id_missing", "Trace 缺少 trace_id")
+        existing_payload = state.get("trace_events", [])
+        if not isinstance(existing_payload, list):
+            raise PEVRExecutionError(PEVRStage.GUARD, "trace_state_invalid", "Trace events 必须是数组")
+        existing = [
+            item if isinstance(item, TraceEvent) else TraceEvent.model_validate(item)
+            for item in existing_payload
+        ]
+        output = [item.model_copy(deep=True) for item in existing]
+        for event in events:
+            if event.trace_id != trace_id or event.run_id != request.run_id:
+                raise PEVRExecutionError(PEVRStage.GUARD, "trace_identity_mismatch", "Trace 事件身份不一致")
+            expected = len(output) + 1
+            if event.sequence != expected:
+                raise PEVRExecutionError(
+                    PEVRStage.GUARD,
+                    "trace_sequence_gap",
+                    f"Trace 序号不连续，期待 {expected}，收到 {event.sequence}",
+                )
+            self._persist_trace_event(event)
+            output.append(event.model_copy(deep=True))
+        return output
+
+    def _make_node_trace_event(
+        self,
+        state: Mapping[str, Any],
+        *,
+        stage: PEVRStage,
+        status: str,
+        started_at: datetime,
+        finished_at: datetime,
+        error: TraceError | None = None,
+    ) -> TraceEvent:
+        """为节点成功/失败统一生成事件，失败仍保留当前任务和业务证据。"""
+
+        request = state.get("request")
+        if not isinstance(request, PEVRRequest):
+            raise PEVRExecutionError(PEVRStage.GUARD, "trace_request_missing", "Trace 缺少 PEVRRequest")
+        run_state = state.get("run_state")
+        task_id = run_state.current_task_id if isinstance(run_state, RunState) else None
+        evidence_refs = (
+            [ref for observation in run_state.observations for ref in observation.evidence_refs]
+            if isinstance(run_state, RunState)
+            else []
+        )
+        error_details = error.details if error is not None else {}
+        if isinstance(error_details, Mapping):
+            detail_task_id = error_details.get("task_id")
+            if task_id is None and isinstance(detail_task_id, str):
+                task_id = detail_task_id
+            detail_evidence = error_details.get("evidence_refs")
+            if isinstance(detail_evidence, list):
+                evidence_refs.extend(item for item in detail_evidence if isinstance(item, str))
+        detail_tool_name = (
+            error_details.get("tool_name")
+            if isinstance(error_details, Mapping)
+            else None
+        )
+        if isinstance(detail_tool_name, Enum):
+            detail_tool_name = detail_tool_name.value
+        parameters_digest = (
+            error_details.get("parameters_digest")
+            if isinstance(error_details, Mapping)
+            else None
+        )
+        if not isinstance(parameters_digest, str):
+            parameters_digest = (
+                error_details.get("input_digest")
+                if isinstance(error_details, Mapping)
+                else None
+            )
+        trace_id = str(state.get("trace_id") or request.trace_id or "")
+        if not trace_id:
+            raise PEVRExecutionError(PEVRStage.GUARD, "trace_id_missing", "Trace 缺少 trace_id")
+        latency_ms = max(0, int((finished_at - started_at).total_seconds() * 1000))
+        return TraceEvent(
+            trace_id=trace_id,
+            run_id=request.run_id,
+            sequence=len(state.get("trace_events", [])) + 1,
+            event_type="node",
+            status=status,  # type: ignore[arg-type]
+            node=stage.value,
+            task_id=task_id,
+            tool_name=detail_tool_name if isinstance(detail_tool_name, str) else None,
+            latency_ms=latency_ms,
+            started_at=started_at,
+            finished_at=finished_at,
+            parameters_digest=parameters_digest if isinstance(parameters_digest, str) else None,
+            error=error,
+            evidence_refs=list(dict.fromkeys(evidence_refs)),
+            metadata={"stage": stage.value},
+        )
+
+    @staticmethod
+    def _trace_status_for_exception(error: Exception) -> str:
+        """把 P0-15/工具错误映射到有限 Trace 状态，不把异常字符串当命令。"""
+
+        code = str(getattr(error, "code", "")).lower()
+        fault = getattr(error, "fault", None)
+        category = str(getattr(getattr(fault, "category", None), "value", "")).lower()
+        if "timeout" in code or "timeout" in category:
+            return "timeout"
+        if any(token in code for token in ("permission", "approval", "principal", "role", "denied")):
+            return "denied"
+        return "failed"
+
+    @staticmethod
+    def _trace_error_for_exception(error: Exception, *, stage: PEVRStage) -> TraceError:
+        """把节点异常固定为安全、可搜索的 Trace 错误载荷。"""
+
+        fault = getattr(error, "fault", None)
+        category = getattr(getattr(fault, "category", None), "value", None) or "runtime"
+        code = str(getattr(error, "code", None) or type(error).__name__)
+        message = str(error) or code
+        details: dict[str, Any] = {"stage": stage.value, "exception_type": type(error).__name__}
+        if isinstance(fault, BaseModel):
+            fault_payload = fault.model_dump(mode="json")
+            if isinstance(fault_payload, Mapping):
+                details.update(dict(fault_payload))
+        return TraceError(
+            category=str(category),
+            code=code[:128],
+            message=message[:2000],
+            retryable=getattr(fault, "retryable", None) if isinstance(getattr(fault, "retryable", None), bool) else None,
+            details=details,
+        )
 
     def _load_checkpoint(self, run_id: str) -> CheckpointSnapshot | None:
         """读取恢复点；新运行没有 PostgreSQL 行时仍允许先走 understand。"""
@@ -441,6 +737,39 @@ class PEVRGraphRunner:
                 return None
             raise
 
+    def _merge_persisted_trace_events(
+        self,
+        state: PEVRGraphState,
+        run_id: str,
+    ) -> None:
+        """恢复时用独立 Trace 事件流补齐短快照，分叉则 fail-closed。"""
+
+        if self.checkpoint_store is None:
+            return
+        loader = getattr(self.checkpoint_store, "list_trace_events", None)
+        if not callable(loader):
+            return
+        persisted = list(loader(run_id) or [])
+        if not persisted:
+            return
+        if state.get("trace_id") not in {None, persisted[0].trace_id}:
+            raise ValueError("Checkpoint trace_id 与独立 Trace 事件流不一致")
+        current_payload = state.get("trace_events", [])
+        current = [
+            item if isinstance(item, TraceEvent) else TraceEvent.model_validate(item)
+            for item in current_payload
+        ]
+        for left, right in zip(current, persisted):
+            if left.model_dump(mode="json") != right.model_dump(mode="json"):
+                raise ValueError("Checkpoint trace_events 与独立 Trace 事件流发生分叉")
+        if len(persisted) < len(current):
+            raise ValueError("Checkpoint trace_events 超过独立持久化 Trace")
+        for expected, event in enumerate(persisted, start=1):
+            if event.sequence != expected or event.run_id != run_id:
+                raise ValueError("独立 Trace 事件流序号或 run_id 非法")
+        state["trace_id"] = persisted[0].trace_id
+        state["trace_events"] = [item.model_copy(deep=True) for item in persisted]
+
     @staticmethod
     def _validate_resume_request(checkpoint: CheckpointSnapshot, request: PEVRRequest) -> None:
         """同一 run_id 恢复时只接受同一环境和原始请求，避免串用 Checkpoint。"""
@@ -452,6 +781,11 @@ class PEVRGraphRunner:
             payload.get("raw_request") != request.raw_request
             or payload.get("environment_ref") != request.environment_ref
             or payload.get("seed") != request.seed
+            or (
+                request.trace_id is not None
+                and payload.get("trace_id") is not None
+                and payload.get("trace_id") != request.trace_id
+            )
         ):
             raise PEVRExecutionError(
                 PEVRStage.GUARD,
@@ -497,10 +831,26 @@ class PEVRGraphRunner:
                         note=assessment.reason,
                         compensation_required=True,
                     )
+            recovery_fault = FaultClassifier.classify(
+                {
+                    "code": "state_conflict",
+                    "message": assessment.reason,
+                    "details": {
+                        "recovery_decision": assessment.decision.value,
+                        "idempotency_key": assessment.idempotency_key,
+                    },
+                },
+                stage=PEVRStage.EXECUTE.value,
+                task_id=entry.task_id,
+                tool_name=entry.tool_name,
+                idempotent=True,
+                has_side_effects=True,
+            )
             raise PEVRExecutionError(
                 PEVRStage.EXECUTE,
                 f"recovery_{assessment.decision.value}",
                 assessment.reason,
+                fault=recovery_fault,
             )
 
     @staticmethod
@@ -516,6 +866,26 @@ class PEVRGraphRunner:
         if not isinstance(request_payload, Mapping):
             raise ValueError("Checkpoint request 必须是对象")
         restored["request"] = PEVRRequest.model_validate(request_payload)
+        raw_trace_id = payload.get("trace_id") or restored["request"].trace_id
+        if raw_trace_id is None:
+            # P0-14 早期 Checkpoint 没有 Trace 字段；用 run_id 的稳定摘要补齐，
+            # 这样旧快照恢复后仍能在同一条可追溯链上继续，而不是随机切换身份。
+            raw_trace_id = f"trace-restored-{hashlib.sha256(restored['request'].run_id.encode('utf-8')).hexdigest()[:24]}"
+        if not isinstance(raw_trace_id, str) or not raw_trace_id.strip():
+            raise ValueError("Checkpoint trace_id 必须是非空字符串")
+        restored["trace_id"] = raw_trace_id
+        trace_events_payload = payload.get("trace_events", [])
+        if not isinstance(trace_events_payload, list) or not all(
+            isinstance(item, Mapping) for item in trace_events_payload
+        ):
+            raise ValueError("Checkpoint trace_events 必须是对象数组")
+        restored_trace_events = [TraceEvent.model_validate(item) for item in trace_events_payload]
+        for expected, event in enumerate(restored_trace_events, start=1):
+            if event.sequence != expected:
+                raise ValueError("Checkpoint trace_events 序号必须连续")
+            if event.trace_id != raw_trace_id or event.run_id != restored["request"].run_id:
+                raise ValueError("Checkpoint trace_events 的 run/trace 身份不一致")
+        restored["trace_events"] = restored_trace_events
         if isinstance(payload.get("stage"), str):
             restored["stage"] = PEVRStage(payload["stage"])
         elif payload.get("stage") is not None:
@@ -557,6 +927,21 @@ class PEVRGraphRunner:
                 restored[key] = None
             else:
                 raise ValueError(f"Checkpoint {key} 必须是对象或 null")
+
+        hitl_payload = payload.get("hitl_interrupt")
+        if isinstance(hitl_payload, Mapping):
+            restored["hitl_interrupt"] = HITLInterrupt.model_validate(hitl_payload)
+        elif hitl_payload is None:
+            restored["hitl_interrupt"] = None
+        else:
+            raise ValueError("Checkpoint hitl_interrupt 必须是对象或 null")
+        grant_payload = payload.get("approval_grant")
+        if isinstance(grant_payload, Mapping):
+            restored["approval_grant"] = ApprovalGrant.model_validate(grant_payload)
+        elif grant_payload is None:
+            restored["approval_grant"] = None
+        else:
+            raise ValueError("Checkpoint approval_grant 必须是对象或 null")
 
         rag_payload = require_list("rag_evidence")
         result_payload = require_list("tool_results")
@@ -626,6 +1011,7 @@ class PEVRGraphRunner:
             raise PEVRExecutionError(PEVRStage.FINISH, "checkpoint_terminal_state_invalid", "终态 Checkpoint 不完整")
         return PEVRRunResult(
             request=request,
+            trace_id=str(state.get("trace_id") or request.trace_id or ""),
             report=report,
             run_state=run_state,
             stage_trace=list(state.get("stage_trace", [])),
@@ -633,6 +1019,7 @@ class PEVRGraphRunner:
             observations=list(state.get("observations", [])),
             verification=verification,
             resource_provenance=list(state.get("resource_provenance", [])),
+            trace_events=list(state.get("trace_events", [])),
         )
 
     def _mark_stage(self, state: PEVRGraphState, stage: PEVRStage) -> list[PEVRTraceEvent]:
@@ -681,12 +1068,136 @@ class PEVRGraphRunner:
             )
         return result.output
 
+    def _append_model_trace(
+        self,
+        state: PEVRGraphState,
+        result: Any,
+        *,
+        node: str | None = None,
+        task_id: str | None = None,
+    ) -> TraceEvent:
+        """把一次 P0-05 模型节点结果即时写入图状态和持久化 Trace。"""
+
+        request = state["request"]
+        route = str(getattr(getattr(result, "route", None), "value", getattr(result, "route", "failed")))
+        status = "completed" if route == "success" else "failed"
+        before = getattr(result, "usage_before", None)
+        after = getattr(result, "usage_after", None)
+        input_before = getattr(before, "input_tokens", None)
+        input_after = getattr(after, "input_tokens", None)
+        output_before = getattr(before, "output_tokens", None)
+        output_after = getattr(after, "output_tokens", None)
+        input_tokens = max(0, input_after - input_before) if isinstance(input_after, int) and isinstance(input_before, int) else None
+        output_tokens = max(0, output_after - output_before) if isinstance(output_after, int) and isinstance(output_before, int) else None
+        error = None
+        if status != "completed":
+            error = TraceError(
+                category="budget" if route == "fallback" else "model",
+                code=str(getattr(result, "reason_code", None) or "model_node_failed"),
+                message=str(getattr(result, "reason", None) or "模型节点没有成功输出"),
+                details={"route": route},
+            )
+        started_at = getattr(result, "started_at", self._clock())
+        finished_at = getattr(result, "finished_at", started_at)
+        event = TraceEvent(
+            trace_id=state.get("trace_id") or request.trace_id or "",
+            run_id=request.run_id,
+            sequence=len(state.get("trace_events", [])) + 1,
+            event_type="model",
+            status=status,  # type: ignore[arg-type]
+            node=node or str(getattr(getattr(result, "node_name", None), "value", getattr(result, "node_name", "model"))),
+            task_id=task_id,
+            model_version=getattr(result, "model_alias", None),
+            prompt_id=getattr(result, "prompt_id", None),
+            prompt_version=getattr(result, "prompt_version", None),
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            total_tokens=(input_tokens + output_tokens if input_tokens is not None and output_tokens is not None else None),
+            latency_ms=max(0, int((finished_at - started_at).total_seconds() * 1000)),
+            started_at=started_at,
+            finished_at=finished_at,
+            parameters_digest=getattr(result, "context_digest", None),
+            error=error,
+            metadata={
+                "route": route,
+                "reason_code": getattr(result, "reason_code", None),
+                "estimated_input_tokens": getattr(result, "estimated_input_tokens", 0),
+            },
+        )
+        state["trace_events"] = self._append_trace_events(state, [event])
+        return event
+
+    def _append_tool_trace(
+        self,
+        state: PEVRGraphState,
+        result: ToolResult,
+        *,
+        node: PEVRStage,
+        task_id: str | None = None,
+        parameters: Mapping[str, Any] | None = None,
+        recovered: bool = False,
+    ) -> TraceEvent:
+        """把 ToolResult 的版本、参数摘要、错误和证据即时写入 Trace。"""
+
+        request = state["request"]
+        status_map = {
+            ToolResultStatus.SUCCESS: "completed",
+            ToolResultStatus.FAILED: "failed",
+            ToolResultStatus.TIMEOUT: "timeout",
+            ToolResultStatus.DENIED: "denied",
+        }
+        status = status_map[result.status]
+        error = None
+        if result.error is not None:
+            category = getattr(result.error.category, "value", result.error.category)
+            error = TraceError(
+                category=str(category),
+                code=result.error.code,
+                message=result.error.message,
+                retryable=result.error.retryable,
+                details=dict(result.error.details),
+            )
+        event = TraceEvent(
+            trace_id=state.get("trace_id") or request.trace_id or "",
+            run_id=request.run_id,
+            sequence=len(state.get("trace_events", [])) + 1,
+            event_type="tool",
+            status=status,  # type: ignore[arg-type]
+            node=node.value,
+            task_id=task_id,
+            tool_name=result.tool_name.value,
+            tool_version=result.tool_version,
+            latency_ms=max(0, int((result.finished_at - result.started_at).total_seconds() * 1000)),
+            started_at=result.started_at,
+            finished_at=result.finished_at,
+            parameters_digest=canonical_json_digest(parameters) if parameters is not None else None,
+            input_digest=result.input_digest,
+            output_digest=result.output_digest,
+            error=error,
+            evidence_refs=list(result.evidence_refs),
+            metadata={
+                "call_id": result.call_id,
+                "effect_id": result.effect_id,
+                "idempotency_key": result.idempotency_key,
+                "recovered": recovered,
+                **result.audit_metadata,
+            },
+        )
+        state["trace_events"] = self._append_trace_events(state, [event])
+        return event
+
     def _guard_node(self, state: PEVRGraphState) -> dict[str, Any]:
         """执行入口长度、角色、环境和工具审批声明检查。"""
 
         request = state["request"]
         if request.principal_role is not UserRole.OPERATOR:
             raise PEVRExecutionError(PEVRStage.GUARD, "role_not_allowed", "正常执行必须使用 operator")
+        if self.security_required and request.principal is None:
+            raise PEVRExecutionError(
+                PEVRStage.GUARD,
+                "principal_required",
+                "安全 PEVR 必须使用已验签 Principal",
+            )
         dispatch_spec = self.registry.get(ToolName.DISPATCH_SIMULATION).spec
         if not dispatch_spec.requires_approval:
             raise PEVRExecutionError(
@@ -725,7 +1236,8 @@ class PEVRGraphRunner:
                     "maximum_load_kg": 100,
                     "enforce_time_windows": True,
                     "max_tool_steps": 8,
-                    "max_replans": 0,
+                    "max_replans": 2,
+                    "max_retries": 2,
                 },
             },
             budget_limits=self._budget_limits(None),
@@ -738,6 +1250,7 @@ class PEVRGraphRunner:
             generated_at=self._clock(),
         )
         result = understand_goal(self.provider, context)
+        self._append_model_trace(state, result, node=PromptNodeName.UNDERSTAND_GOAL.value)
         contract = cast(TaskContract, self._node_output_or_fail(result, PEVRStage.UNDERSTAND, "understand_goal"))
         self._validate_contract_against_snapshot(contract, snapshot)
         now = self._clock()
@@ -809,11 +1322,22 @@ class PEVRGraphRunner:
             f"{contract.goal}；请参考仓储运输 SOP、交通冲突、电量安全余量、"
             "Validator 和运输完成条件。"
         )
+        retrieve_arguments = {
+            "query": query,
+            "top_k": 5,
+            "role_scope": request.principal_role,
+        }
         result = self.registry.execute(
             ToolName.RETRIEVE_KNOWLEDGE,
-            {"query": query, "top_k": 5, "role_scope": request.principal_role},
+            retrieve_arguments,
             role=request.principal_role,
             call_id=f"{request.run_id}:retrieve",
+        )
+        self._append_tool_trace(
+            state,
+            result,
+            node=PEVRStage.RETRIEVE,
+            parameters=retrieve_arguments,
         )
         if result.status is not ToolResultStatus.SUCCESS:
             raise PEVRExecutionError(
@@ -903,6 +1427,7 @@ class PEVRGraphRunner:
             generated_at=self._clock(),
         )
         result = plan_tasks(self.provider, context)
+        self._append_model_trace(state, result, node=PromptNodeName.PLAN_TASKS.value)
         raw_plan = cast(PlanTasksOutput, self._node_output_or_fail(result, PEVRStage.PLAN, "plan_tasks"))
         plan, normalization_notes = canonicalize_normal_pevr_plan(
             raw_plan,
@@ -949,6 +1474,7 @@ class PEVRGraphRunner:
                 generated_at=self._clock(),
             )
             repair_result = plan_tasks(self.provider, repair_context)
+            self._append_model_trace(state, repair_result, node=PromptNodeName.PLAN_TASKS.value)
             repaired_raw = cast(
                 PlanTasksOutput,
                 self._node_output_or_fail(
@@ -1000,7 +1526,19 @@ class PEVRGraphRunner:
         )
         if not validation.valid:
             detail = "; ".join(f"{item.code}: {item.message}" for item in validation.errors)
-            raise PEVRExecutionError(PEVRStage.VALIDATE, "plan_validation_failed", detail)
+            raise PEVRExecutionError(
+                PEVRStage.VALIDATE,
+                "plan_validation_failed",
+                detail,
+                fault=FaultClassifier.classify(
+                    {
+                        "code": "plan_validation_failed",
+                        "message": detail,
+                        "errors": [item.model_dump(mode="json") for item in validation.errors],
+                    },
+                    stage=PEVRStage.VALIDATE.value,
+                ),
+            )
         run_state = self._replace_run_state(cast(RunState, state["run_state"]), status=RunStatus.VALIDATING)
         return {
             "stage": PEVRStage.VALIDATE,
@@ -1017,16 +1555,23 @@ class PEVRGraphRunner:
         role: UserRole,
         call_id: str,
         idempotency_key: str | None = None,
+        principal: Principal | None = None,
+        approval_grant: ApprovalGrant | None = None,
     ) -> ToolResult:
         """调用真实或旧版 fake Registry，并在支持时传入业务幂等键。"""
 
         kwargs: dict[str, Any] = {"role": role, "call_id": call_id}
         try:
-            accepts_key = "idempotency_key" in inspect.signature(self.registry.execute).parameters
+            parameters = inspect.signature(self.registry.execute).parameters
         except (TypeError, ValueError):
-            accepts_key = False
+            parameters = {}
+        accepts_key = "idempotency_key" in parameters
         if accepts_key and idempotency_key is not None:
             kwargs["idempotency_key"] = idempotency_key
+        if "principal" in parameters and principal is not None:
+            kwargs["principal"] = principal
+        if "approval_grant" in parameters and approval_grant is not None:
+            kwargs["approval_grant"] = approval_grant
         result = self.registry.execute(tool_name, arguments, **kwargs)
         if idempotency_key is not None and not accepts_key and result.idempotency_key != idempotency_key:
             # P0-13 的 fake 仍返回 call_id；进入 P0-14 持久化边界后统一修正为
@@ -1117,9 +1662,159 @@ class PEVRGraphRunner:
                 PEVRStage.EXECUTE,
                 f"recovery_{assessment.decision.value}",
                 assessment.reason,
+                fault=FaultClassifier.classify(
+                    {
+                        "code": "state_conflict",
+                        "message": assessment.reason,
+                        "details": {
+                            "recovery_decision": assessment.decision.value,
+                            "idempotency_key": key,
+                        },
+                    },
+                    stage=PEVRStage.EXECUTE.value,
+                    task_id=task.task_id,
+                    tool_name=task.tool_name,
+                    idempotent=definition.spec.idempotent,
+                    has_side_effects=definition.spec.has_side_effects,
+                ),
             )
         # 外部明确 not_found 时沿用原唯一键继续；新结果仍覆盖同一 reserved 行。
         return key, None
+
+    def _hitl_digests(
+        self,
+        *,
+        plan: PlanTasksOutput,
+        validation: PlanValidationResult,
+    ) -> tuple[str, str]:
+        """只从当前内存中的完整计划和确定性 Validator 结果计算审批摘要。"""
+
+        return canonical_json_digest(plan), canonical_json_digest(validation)
+
+    def _request_hitl_interrupt(
+        self,
+        *,
+        state: PEVRGraphState,
+        task: PlanTask,
+        plan: PlanTasksOutput,
+        validation: PlanValidationResult,
+        run_state: RunState,
+    ) -> HITLInterrupt:
+        """创建 pending 审批并先保存 waiting Checkpoint，再向上抛出 interrupt。"""
+
+        request = state["request"]
+        if request.principal is None:
+            raise PEVRExecutionError(
+                PEVRStage.EXECUTE,
+                "principal_required",
+                "安全 HITL 必须绑定已验签 Principal",
+            )
+        if self.hitl_store is None:
+            raise PEVRExecutionError(
+                PEVRStage.EXECUTE,
+                "hitl_store_unavailable",
+                "安全 HITL 未配置审批存储，拒绝继续执行副作用",
+            )
+        plan_digest, validator_digest = self._hitl_digests(plan=plan, validation=validation)
+        checkpoint_id = f"cp_{uuid4().hex}"
+        hitl_request = build_hitl_request(
+            run_id=request.run_id,
+            task_id=task.task_id,
+            plan_version=plan.plan_version,
+            requested_by=request.principal.subject,
+            reason_code=HITLReason.HIGH_RISK_WRITE,
+            reason=f"工具 {task.tool_name.value} 是高风险写操作，需要人工审批",
+            checkpoint_id=checkpoint_id,
+            plan_digest=plan_digest,
+            validator_digest=validator_digest,
+            now=self._clock(),
+            ttl_seconds=self.hitl_ttl_seconds,
+        )
+        stored = self.hitl_store.request_approval(hitl_request)
+        interrupt = HITLInterrupt(
+            run_id=request.run_id,
+            task_id=task.task_id,
+            approval_id=stored.approval_id,
+            checkpoint_id=stored.checkpoint_id,
+            reason_code=stored.reason_code,
+            created_at=stored.requested_at,
+            expires_at=stored.expires_at,
+        )
+        waiting_state = self._replace_task_state(
+            run_state,
+            task_id=task.task_id,
+            status=PlanTaskStatus.WAITING_APPROVAL,
+            current_task_id=task.task_id,
+            run_status=RunStatus.WAITING_APPROVAL,
+        )
+        self._persist_checkpoint(
+            {
+                **state,
+                "stage": PEVRStage.EXECUTE,
+                "run_state": waiting_state,
+                "hitl_interrupt": interrupt,
+                "approval_grant": None,
+            },
+            stage=PEVRStage.EXECUTE,
+        )
+        return interrupt
+
+    def _verify_hitl_grant(
+        self,
+        *,
+        state: PEVRGraphState,
+        task: PlanTask,
+        plan: PlanTasksOutput,
+        validation: PlanValidationResult,
+        grant: ApprovalGrant,
+    ) -> ApprovalGrant:
+        """恢复前再次核对存储票据、当前主体、计划和 Validator 摘要。"""
+
+        request = state["request"]
+        interrupt = state.get("hitl_interrupt")
+        if request.principal is None:
+            raise PEVRExecutionError(
+                PEVRStage.EXECUTE,
+                "principal_required",
+                "恢复高风险工具必须携带已验签 Principal",
+            )
+        if not isinstance(interrupt, HITLInterrupt):
+            raise PEVRExecutionError(
+                PEVRStage.EXECUTE,
+                "approval_checkpoint_missing",
+                "审批票据没有对应的 waiting_approval Checkpoint",
+            )
+        if interrupt.approval_id != grant.approval_id or interrupt.task_id != task.task_id:
+            raise PEVRExecutionError(
+                PEVRStage.EXECUTE,
+                "approval_checkpoint_mismatch",
+                "审批票据与当前等待任务不匹配",
+            )
+        if self.hitl_store is None:
+            raise PEVRExecutionError(
+                PEVRStage.EXECUTE,
+                "hitl_store_unavailable",
+                "安全 HITL 未配置审批存储",
+            )
+        plan_digest, validator_digest = self._hitl_digests(plan=plan, validation=validation)
+        try:
+            verified = self.hitl_store.verify_grant(
+                grant,
+                principal=request.principal,
+                run_id=request.run_id,
+                task_id=task.task_id,
+                plan_version=plan.plan_version,
+                plan_digest=plan_digest,
+                validator_digest=validator_digest,
+                now=self._clock(),
+            )
+        except Exception as exc:
+            raise PEVRExecutionError(
+                PEVRStage.EXECUTE,
+                "approval_invalid",
+                "审批票据未通过存储、计划或 Validator 核对",
+            ) from exc
+        return verified
 
     def _execute_node(self, state: PEVRGraphState) -> dict[str, Any]:
         """按拓扑顺序执行或恢复任务，并在每个任务后落 Checkpoint。"""
@@ -1187,14 +1882,66 @@ class PEVRGraphRunner:
                 continue
 
             spec = self.registry.get(task.tool_name).spec
-            if spec.requires_approval and not request.approval_granted:
-                # 这是副作用工具的最后一道 guard；Planner、Prompt 和自然语言都
-                # 不能把 requires_approval 变成批准事实。
-                raise PEVRExecutionError(
-                    PEVRStage.EXECUTE,
-                    "approval_required",
-                    f"工具 {task.tool_name.value} 需要可信审批上下文",
-                )
+            approved_grant: ApprovalGrant | None = None
+            if spec.requires_approval:
+                # 这是副作用工具的最后一道 guard；Planner、Prompt、request body
+                # 和 legacy bool 都不能在安全模式下伪造批准事实。
+                if self.security_required or request.principal is not None:
+                    candidate = request.approval_grant or state.get("approval_grant")
+                    if candidate is None:
+                        existing_interrupt = state.get("hitl_interrupt")
+                        if isinstance(existing_interrupt, HITLInterrupt):
+                            if existing_interrupt.expires_at <= self._clock():
+                                raise PEVRExecutionError(
+                                    PEVRStage.EXECUTE,
+                                    "approval_expired",
+                                    "HITL 审批已过期，拒绝继续执行副作用",
+                                )
+                            get_request = getattr(self.hitl_store, "get_request", None)
+                            stored_request = (
+                                get_request(existing_interrupt.approval_id)
+                                if callable(get_request)
+                                else None
+                            )
+                            if stored_request is not None and stored_request.status is HITLStatus.REJECTED:
+                                raise PEVRExecutionError(
+                                    PEVRStage.EXECUTE,
+                                    "approval_rejected",
+                                    "HITL 审批已拒绝，拒绝继续执行副作用",
+                                )
+                            raise PEVRInterrupt(existing_interrupt)
+                        pause_state = {
+                            **state,
+                            "run_state": run_state,
+                            "tool_results": results,
+                            "tool_task_ids": task_ids,
+                            "derived_plan": derived_plan,
+                            "observations": observations,
+                            "resource_provenance": resource_provenance,
+                            "budget_usage": usage,
+                        }
+                        interrupt = self._request_hitl_interrupt(
+                            state=pause_state,
+                            task=task,
+                            plan=plan,
+                            validation=validation,
+                            run_state=run_state,
+                        )
+                        raise PEVRInterrupt(interrupt)
+                    approved_grant = self._verify_hitl_grant(
+                        state=state,
+                        task=task,
+                        plan=plan,
+                        validation=validation,
+                        grant=candidate,
+                    )
+                    self._active_approval_grant = approved_grant
+                elif not request.approval_granted:
+                    raise PEVRExecutionError(
+                        PEVRStage.EXECUTE,
+                        "approval_required",
+                        f"工具 {task.tool_name.value} 需要可信审批上下文",
+                    )
             run_state = self._replace_task_state(
                 run_state,
                 task_id=task_id,
@@ -1202,6 +1949,9 @@ class PEVRGraphRunner:
                 current_task_id=task_id,
                 run_status=RunStatus.EXECUTING,
             )
+            # 让后续失败 Trace 也能定位到尚未完成的当前任务；正常返回仍以
+            # 下方的完整 Checkpoint 状态为准，不把这个临时指针当作外部事实。
+            state["run_state"] = run_state
             arguments = self._materialize_arguments(
                 task,
                 results_by_task=results_by_task,
@@ -1220,6 +1970,16 @@ class PEVRGraphRunner:
                 role=request.principal_role,
                 call_id=f"{request.run_id}:plan:{plan.plan_version}:task:{task.task_id}",
                 idempotency_key=idempotency_key,
+                principal=request.principal,
+                approval_grant=approved_grant,
+            )
+            self._append_tool_trace(
+                state,
+                result,
+                node=PEVRStage.EXECUTE,
+                task_id=task.task_id,
+                parameters=arguments,
+                recovered=recovered_result is not None,
             )
             if result.status is not ToolResultStatus.SUCCESS:
                 if self.checkpoint_store is not None and spec.has_side_effects:
@@ -1232,6 +1992,14 @@ class PEVRGraphRunner:
                     PEVRStage.EXECUTE,
                     result.error.code if result.error is not None else "tool_failed",
                     result.error.message if result.error is not None else f"工具 {task.tool_name.value} 失败",
+                    fault=FaultClassifier.classify(
+                        result,
+                        stage=PEVRStage.EXECUTE.value,
+                        task_id=task.task_id,
+                        tool_name=task.tool_name,
+                        idempotent=spec.idempotent,
+                        has_side_effects=spec.has_side_effects,
+                    ),
                 )
             if self.checkpoint_store is not None and spec.has_side_effects and recovered_result is None:
                 self.checkpoint_store.complete_effect(
@@ -1255,6 +2023,16 @@ class PEVRGraphRunner:
                         PEVRStage.EXECUTE,
                         "validator_postcondition_failed",
                         "工具返回的 Validator 结果不是 valid=true",
+                        fault=FaultClassifier.classify(
+                            {
+                                "code": "validator_postcondition_failed",
+                                "message": "工具返回的 Validator 结果不是 valid=true",
+                                "output": result.output,
+                            },
+                            stage=PEVRStage.EXECUTE.value,
+                            task_id=task.task_id,
+                            tool_name=task.tool_name,
+                        ),
                     )
             elif task.tool_name is ToolName.DISPATCH_SIMULATION:
                 simulation = SimulationResult.model_validate(result.output)
@@ -1263,6 +2041,18 @@ class PEVRGraphRunner:
                         PEVRStage.EXECUTE,
                         "simulation_not_completed",
                         "正常闭环要求仿真完成全部订单",
+                        fault=FaultClassifier.classify(
+                            {
+                                "code": "simulation_not_completed",
+                                "message": "正常闭环要求仿真完成全部订单",
+                                "output": result.output,
+                            },
+                            stage=PEVRStage.EXECUTE.value,
+                            task_id=task.task_id,
+                            tool_name=task.tool_name,
+                            idempotent=spec.idempotent,
+                            has_side_effects=spec.has_side_effects,
+                        ),
                     )
             observation = self._observation_from_tool(result, task_id=task.task_id)
             observations.append(observation)
@@ -1278,6 +2068,7 @@ class PEVRGraphRunner:
                 completed_task_ids=sorted(completed_ids),
                 observations=observations,
             )
+            state["run_state"] = run_state
             usage = self._add_tool_usage(usage, result)
             resource_provenance = build_task_resource_provenance(
                 plan,
@@ -1297,6 +2088,8 @@ class PEVRGraphRunner:
                     "resource_provenance": resource_provenance,
                     "observations": observations,
                     "budget_usage": usage,
+                    "hitl_interrupt": None,
+                    "approval_grant": None,
                 },
                 stage=PEVRStage.EXECUTE,
             )
@@ -1363,6 +2156,7 @@ class PEVRGraphRunner:
             generated_at=self._clock(),
         )
         result = verify_observation(self.provider, context)
+        self._append_model_trace(state, result, node=PromptNodeName.VERIFY_OBSERVATION.value)
         verification = cast(ObservationVerification, self._node_output_or_fail(result, PEVRStage.VERIFY, "verify_observation"))
         expected_orders = {order.order_id for order in contract.orders}
         actual_completed = {
@@ -1444,6 +2238,7 @@ class PEVRGraphRunner:
             generated_at=self._clock(),
         )
         result = compose_report(self.provider, context)
+        self._append_model_trace(state, result, node=PromptNodeName.COMPOSE_REPORT.value)
         llm_report = cast(FinalReport, self._node_output_or_fail(result, PEVRStage.FINISH, "compose_report"))
         expected_orders = {order.order_id for order in contract.orders}
         if (
@@ -1471,6 +2266,7 @@ class PEVRGraphRunner:
         metrics = self._build_metrics(state, validation, retrieval_response, simulation)
         report = PEVRRunReport(
             run_id=request.run_id,
+            trace_id=state.get("trace_id") or request.trace_id,
             final_status=normalized_report.final_status,
             state_version=normalized_report.state_version,
             plan_version=normalized_report.plan_version,
@@ -1504,6 +2300,7 @@ class PEVRGraphRunner:
             tool_steps=usage.tool_steps + 1,
             elapsed_seconds=usage.elapsed_seconds + result.duration_ms / 1000.0,
             replans=usage.replans,
+            retries=usage.retries,
         )
 
     @staticmethod
@@ -1747,4 +2544,4 @@ class PEVRGraphRunner:
         )
 
 
-__all__ = ["PEVRExecutionError", "PEVRGraphRunner"]
+__all__ = ["PEVRExecutionError", "PEVRGraphRunner", "PEVRInterrupt"]

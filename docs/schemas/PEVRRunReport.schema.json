@@ -2,7 +2,7 @@
   "$defs": {
     "BudgetUsage": {
       "additionalProperties": false,
-      "description": "调用节点前已经实际消耗的五类预算。",
+      "description": "调用节点前已经实际消耗的六类预算。",
       "properties": {
         "input_tokens": {
           "default": 0,
@@ -32,6 +32,12 @@
           "default": 0,
           "minimum": 0,
           "title": "Replans",
+          "type": "integer"
+        },
+        "retries": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Retries",
           "type": "integer"
         }
       },
@@ -247,6 +253,18 @@
             }
           ]
         },
+        "principal_subject": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Principal Subject"
+        },
         "input_digest": {
           "anyOf": [
             {
@@ -366,6 +384,20 @@
       "minLength": 1,
       "title": "Run Id",
       "type": "string"
+    },
+    "trace_id": {
+      "anyOf": [
+        {
+          "maxLength": 128,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Trace Id"
     },
     "final_status": {
       "$ref": "#/$defs/FinalReportStatus"

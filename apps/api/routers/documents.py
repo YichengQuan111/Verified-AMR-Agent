@@ -9,7 +9,12 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, s
 from pydantic import ValidationError
 
 from agent.tools import UserRole
-from apps.api.dependencies import get_document_service
+from agent.security import Principal
+from apps.api.dependencies import (
+    get_current_principal,
+    get_document_service,
+    get_operator_principal,
+)
 from services.application import (
     DocumentMetadataInput,
     DocumentService,
@@ -60,9 +65,11 @@ async def upload_document(
     source: str = Form(...),
     metadata_json: str = Form(default="{}"),
     service: DocumentService = Depends(get_document_service),
+    principal: Principal = Depends(get_operator_principal),
 ) -> DocumentView:
     """上传不超过 10 MiB 的文档，并返回不含正文的元数据。"""
 
+    del principal
     metadata = _parse_document_metadata(
         filename=file.filename or "",
         content_type=file.content_type or "application/octet-stream",
@@ -83,10 +90,11 @@ async def upload_document(
 async def get_document(
     document_id: str,
     service: DocumentService = Depends(get_document_service),
+    principal: Principal = Depends(get_current_principal),
 ) -> DocumentView:
     """查询文档元数据；原始正文只提供给后续受控索引 Service。"""
 
-    stored = await asyncio.to_thread(service.get_document, document_id)
+    stored = await asyncio.to_thread(service.get_document, document_id, principal=principal)
     return stored.metadata
 
 

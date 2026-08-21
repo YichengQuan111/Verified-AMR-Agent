@@ -1,0 +1,79 @@
+{
+  "$defs": {
+    "HITLReason": {
+      "description": "必须停下来等待人的四类安全触发原因。",
+      "enum": [
+        "high_priority_override",
+        "human_takeover",
+        "high_risk_write",
+        "fault_recovery"
+      ],
+      "title": "HITLReason",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "写入 Checkpoint 的暂停事实；恢复入口可据此定位审批。",
+  "properties": {
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "run_id": {
+      "maxLength": 64,
+      "minLength": 1,
+      "title": "Run Id",
+      "type": "string"
+    },
+    "task_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Task Id",
+      "type": "string"
+    },
+    "approval_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Approval Id",
+      "type": "string"
+    },
+    "checkpoint_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Checkpoint Id",
+      "type": "string"
+    },
+    "reason_code": {
+      "$ref": "#/$defs/HITLReason"
+    },
+    "status": {
+      "const": "waiting_approval",
+      "default": "waiting_approval",
+      "title": "Status",
+      "type": "string"
+    },
+    "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+    },
+    "expires_at": {
+      "format": "date-time",
+      "title": "Expires At",
+      "type": "string"
+    }
+  },
+  "required": [
+    "run_id",
+    "task_id",
+    "approval_id",
+    "checkpoint_id",
+    "reason_code",
+    "created_at",
+    "expires_at"
+  ],
+  "title": "HITLInterrupt",
+  "type": "object"
+}

@@ -12,6 +12,7 @@ from sqlalchemy import delete, event, inspect, select
 
 from agent.context import PlanTasksOutput
 from agent.planning import TaskContract
+from agent.tools import UserRole
 from apps.api.main import create_app
 from services.application import (
     DocumentMetadataInput,
@@ -290,17 +291,29 @@ def test_all_p006_http_interfaces_use_real_postgres(
     application = create_app(settings=settings, session_factory=session_factory)
     try:
         with TestClient(application) as client:
+            # P0-16 后业务路由统一要求签名身份；沿用 operator 主体覆盖原有
+            # P0-06 事务契约，而不把测试改成绕过认证的特殊入口。
+            auth_headers = {
+                "Authorization": (
+                    "Bearer "
+                    + application.state.authenticator.issue_token(
+                        subject="api-operator",
+                        role=UserRole.OPERATOR,
+                    )
+                )
+            }
             contract = _unique_contract(approval_required=True)
             create_response = client.post(
                 "/agent/runs",
                 json={"task_contract": contract.model_dump(mode="json")},
+                headers=auth_headers,
             )
             assert create_response.status_code == 201
             run_id = create_response.json()["run_id"]
             run_ids.append(run_id)
 
-            assert client.get(f"/agent/runs/{run_id}").status_code == 200
-            event_response = client.get(f"/agent/runs/{run_id}/events")
+            assert client.get(f"/agent/runs/{run_id}", headers=auth_headers).status_code == 200
+            event_response = client.get(f"/agent/runs/{run_id}/events", headers=auth_headers)
             assert event_response.status_code == 200
             assert event_response.headers["content-type"].startswith("text/event-stream")
             assert "event: run.created" in event_response.text
@@ -312,6 +325,7 @@ def test_all_p006_http_interfaces_use_real_postgres(
                     "decided_by": "api-operator",
                     "comment": "API 集成测试批准",
                 },
+                headers=auth_headers,
             )
             assert approval_response.status_code == 200
             assert approval_response.json()["status"] == "approved"
@@ -325,7 +339,7 @@ def test_all_p006_http_interfaces_use_real_postgres(
                 }
             )
             RunService(session_factory).save_plan(run_id, plan)
-            plan_response = client.get(f"/agent/runs/{run_id}/plan")
+            plan_response = client.get(f"/agent/runs/{run_id}/plan", headers=auth_headers)
             assert plan_response.status_code == 200
             assert plan_response.json()["plan_version"] == 1
 
@@ -338,11 +352,12 @@ def test_all_p006_http_interfaces_use_real_postgres(
                     "source": "api-test",
                     "metadata_json": '{"category":"safety"}',
                 },
+                headers=auth_headers,
             )
             assert upload_response.status_code == 201
             document_id = upload_response.json()["document_id"]
             document_ids.append(document_id)
-            assert client.get(f"/documents/{document_id}").status_code == 200
+            assert client.get(f"/documents/{document_id}", headers=auth_headers).status_code == 200
 
             eval_contract = _unique_contract()
             eval_response = client.post(
@@ -353,6 +368,7 @@ def test_all_p006_http_interfaces_use_real_postgres(
                     "case_ids": ["case-001"],
                     "requested_by": "pytest",
                 },
+                headers=auth_headers,
             )
             assert eval_response.status_code == 201
             assert eval_response.json()["run_kind"] == "eval"

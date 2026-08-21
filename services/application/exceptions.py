@@ -53,9 +53,17 @@ class DocumentTooLargeError(InvalidDocumentError):
     status_code = 413
 
 
+class DocumentAccessDeniedError(ApplicationError):
+    """文档 ACL 拒绝访问；对外伪装为 404，避免泄漏文档是否存在。"""
+
+    code = "DOCUMENT_NOT_FOUND"
+    status_code = 404
+
+
 __all__ = [
     "ApplicationError",
     "DocumentTooLargeError",
+    "DocumentAccessDeniedError",
     "InvalidDocumentError",
     "InvalidOperationError",
     "PersistenceConflictError",

@@ -16,9 +16,13 @@ guard → understand → retrieve → plan → validate → execute → verify �
   环境、订单或工具参数来“修绿”。
 - `validate` 再次使用确定性 `validate_normal_pevr_plan`；只有无错误结果才能进入 Executor。
 - `execute` 只通过 P0-12 `ToolRegistry` 调用 Hungarian、A*、P0-10 Validator 和 Python 仿真。
-- `dispatch_simulation` 的 ToolSpec 仍要求审批；`--approve-dispatch` 是 CLI 注入的可信 operator 上下文，Planner 不能自行批准。
+- `dispatch_simulation` 的 ToolSpec 仍要求审批；旧的 `--approve-dispatch` 只保留给 P0-13
+  离线兼容夹具，生产安全入口必须使用 P0-16 的已验签 operator 和 HITL ApprovalGrant，
+  Planner 不能自行批准。
 - `verify` 只接受仿真订单全部完成且 Observation 验证为真；中断恢复与局部重规划由 P0-14
-  的运行时适配器承接，复杂异常分类和自动补偿仍留给 P0-15。
+  的运行时适配器承接，复杂异常分类和确定终止策略见 P0-15 专题；身份、ACL、HITL
+  中断和恢复前审批核验见 [docs/P016_SECURITY.md](P016_SECURITY.md)；自动补偿工具仍不在
+  P0 范围内。
 
 Planner 的 `JsonValue` 在本地 Fast 模型上可能被写成有限的 `{type,value}` 或固定事实引用。兼容层只还原白名单原语、两个正式数据流 `$ref` 和固定执行事实；不执行表达式，未知引用仍由 Validator 拒绝。
 
@@ -71,3 +75,11 @@ dispatch、仿真 ToolResult success 但订单 blocked 时不宣布完成。
 同时注入 ToolRegistry 和 PEVR Runner，使 Checkpoint、Effect Ledger 和外部仿真状态都
 能跨进程恢复。直接构造 Runner 且不传 Store 时仍可用于 P0-13 单元级纯内存成功路径。
 P0-14 的恢复顺序和失败边界见 [docs/P014_CHECKPOINT.md](P014_CHECKPOINT.md)。
+
+## P0-17 Trace 关联
+
+每次 PEVR 请求可带 trace_id；省略时由 Runner 生成并在恢复时从 Checkpoint 复用。
+PEVRRunResult 和 PEVRRunReport 都返回该关联键，trace_events 按序记录八个图节点、
+具名 Prompt 的 prompt_id/prompt_version、模型 served alias、Token 增量、延迟、工具
+版本、输入/输出摘要、错误和 evidence_refs。详细 Trace 字段、失败事件和受控验证报告
+见 [P017_TRACE_VERIFICATION.md](P017_TRACE_VERIFICATION.md)；本节为文档更新，无核心代码注释需求。

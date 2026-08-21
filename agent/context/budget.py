@@ -63,6 +63,12 @@ def evaluate_budget_before_call(
             "REPLAN_BUDGET_EXHAUSTED",
             "自动重规划次数已耗尽，需要人工处理",
         )
+    if budget.usage.retries > budget.limits.max_retries:
+        return BudgetDecision(
+            NodeRoute.FALLBACK,
+            "RETRY_BUDGET_EXCEEDED",
+            "普通工具重试次数已经超过任务合同预算",
+        )
     if budget.already_exceeded:
         return BudgetDecision(
             NodeRoute.FALLBACK,

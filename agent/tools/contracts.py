@@ -112,7 +112,7 @@ TOOL_ARGUMENT_POLICIES: dict[ToolName, ToolArgumentPolicy] = {
     ),
     ToolName.RUN_VERIFICATION_SUITE: ToolArgumentPolicy(
         required=frozenset({"suite_id"}),
-        optional=frozenset({"run_id", "case_ids"}),
+        optional=frozenset({"run_id", "trace_id", "case_ids"}),
     ),
     ToolName.REQUEST_APPROVAL: ToolArgumentPolicy(
         required=frozenset({"run_id", "task_id", "reason"}),
@@ -170,6 +170,7 @@ class ToolSpec(ToolContract):
             "tool_name",
             "tool_version",
             "principal_role",
+            "principal_subject",
             "input_digest",
             "output_digest",
             "started_at",
@@ -256,6 +257,9 @@ class ToolResult(ToolContract):
     # 原始参数/正文的情况下证明重试是否针对同一输入和输出。
     tool_version: str | None = Field(default=None, min_length=1)
     principal_role: UserRole | None = None
+    # 角色只能作为主体审计字段的一部分保存；subject 来自验签 Principal，不能
+    # 由 tool arguments 或自然语言覆盖，便于追溯“谁”批准/执行了副作用。
+    principal_subject: str | None = Field(default=None, min_length=1, max_length=128)
     input_digest: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
     output_digest: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
     idempotency_key: str | None = Field(default=None, min_length=1)

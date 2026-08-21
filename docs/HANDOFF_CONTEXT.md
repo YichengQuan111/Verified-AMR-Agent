@@ -1,8 +1,8 @@
 # AMR Agent 项目交接上下文
 
 最后更新：2026-08-21
-当前已完成：P0-00、P0-01、P0-02、P0-03、P0-04、P0-05、P0-06、P0-07、P0-08、P0-09、P0-10、P0-11、P0-12、P0-13、P0-14
-当前下一步：冻结在 P0-14，先由用户审阅本次阶段审计修复；不要推进 P0-15。Smart 暂时硬禁用，等待用户日后明确指示。
+当前已完成：P0-00、P0-01、P0-02、P0-03、P0-04、P0-05、P0-06、P0-07、P0-08、P0-09、P0-10、P0-11、P0-12、P0-13、P0-14、P0-15、P0-16、P0-17
+当前下一步：P0-17 已完成；后续工作直接复用本页的 Trace、验证报告、Principal、RBAC、ACL、HITL 和 waiting Checkpoint 契约，等待用户确认新的工作包。Smart 仍暂时硬禁用，等待用户日后明确指示。
 
 ## 1. 文档用途与维护要求
 
@@ -725,3 +725,160 @@ DAG 使用 `agent.planning.dag.topological_sort()` 中的 Kahn 算法：计算�
 - 当前建议：不要进入 P0-15，先让用户审阅/接受本次修复并处理现有未提交工作树。若用户
   日后要求启用 Smart，应先修改受审配置，再依次重跑 alias、五个 P0-05 节点和至少三次
   真实 PEVR；任何一步未通过都应恢复禁用。
+
+### 2026-08-21 · P0-15 故障分类与终止策略
+
+- 范围差异：上方阶段审计记录是在用户本次明确指令之前写入的，曾要求冻结且不推进
+  P0-15；本次用户明确授权推进 P0-15，因此本节和文件顶部是当前有效状态，旧记录仅保留
+  历史事实。
+- 完成：新增 `agent.runtime.faults`，以稳定 `FaultCategory` 覆盖 `low_battery`、
+  `amr_offline`、`channel_closed`、`workstation_occupied`、`tool_timeout`、
+  `plan_infeasible`、`state_conflict`，未知错误固定 `fatal`；策略动作固定为
+  `retry/replan/fallback/human/fatal`，并记录 raw code、阶段、任务/工具、影响实体和证据。
+- 完成：`FaultRecoveryController` 先检查总步骤/总时长/输入输出 Token，再检查全局
+  retry/replan 额度和幂等/副作用安全属性。默认 `max_replans=2`、`max_retries=2`，
+  `ExecutionBudgets.max_replans<=2`、`max_retries<=4`；PEVR 入口默认总预算为
+  300 秒、30000 输入 Token、5000 输出 Token、8 工具步。相同终态故障幂等复用；相同
+  非终态故障继续消耗有限额度，避免状态循环。
+- 完成：`ExecutionBudgets` 新增 `max_retries`；`BudgetUsage/BudgetSnapshot`、节点
+  用量推进和 `RunState` 同步记录 retry；`RunState` 新增 `FaultRecord` 列表并拒绝重复
+  fault_id、计数超过合同或与任务状态不一致的 Checkpoint。
+- 完成：`PEVRExecutionError` 保留原 `stage/code/message`，并统一附加 `FaultSignal`；
+  `PEVRGraphRunner.classify_failure()` 和 `FaultRecoveryController` 可直接消费已有
+  影响集合。PEVR 仍是固定八节点图，不动态插入模型循环。
+- 完成：`apply_replan/apply_model_replan` 复用 P0-14 `LocalReplanner`，只替换受影响
+  未完成子图；已完成任务及 `effect_id` 保留，计划版本严格加一并重新通过完整 Validator。
+  `save_replan_checkpoint()` 使用同一 Runtime Store；不删除、复制或重置旧 Effect Ledger，
+  副作用 timeout 未明确外部 `not_found` 时直接人工处理。
+- 新增/变化公共接口：`FaultCategory`、`RecoveryAction`、`FaultPolicy`、`FaultSignal`、
+  `FaultDecision`、`FaultRecoveryController`、`RecoveryUsage`、`FaultRecord`；
+  `ExecutionBudgets.max_retries`；`BudgetUsage.retries`；`RunState.retry_count` /
+  `fault_history`；`PEVRGraphRunner.classify_failure()`；`PEVRExecutionError.fault`。
+  无数据库字段、Alembic revision、ToolName 或 P0-14 Effect Ledger 键变化。
+- 设计边界：`workstation_occupied` 为 retry→replan→human；普通 timeout 为有限 retry→
+  fallback，副作用状态未知为 human；低电量/离线/封路/计划不可行是最多两次局部 replan→
+  human；状态冲突 human；未知 fatal。没有注册任意补偿工具，`compensation_required`
+  仍必须人工和独立审批。
+- 实际验证：P0-15 单元专项 `tests/unit/test_p015_faults.py` 为 `21 passed`；P0-15
+  集成专项 `tests/integration/test_p015_fault_recovery.py` 为 `8 passed`，两专项合计
+  `29 passed`；P0-04～P0-15 组合回归（含 P0-12 工具、P0-13 PEVR、P0-14
+  Checkpoint/Replanner）为 `163 passed`；
+  每条 pytest 命令各有 1 条既有 jieba `pkg_resources` 弃用 warning。
+- 实际验证：`tests/integration/test_p014_postgres.py` 连接真实 PostgreSQL 为 `3 passed`；
+  `scripts/export_schemas.py` 成功导出 36 份同源 Schema，随后
+  `test_checked_in_schemas_are_current` 为 `1 passed`；没有新增数据库字段或 Alembic revision。
+- 实际验证：`.\scripts\run_smoke.ps1` 退出码 `0`；Python 全量 `207 passed, 1 warning in
+  11.19s`，CMake/Ninja 无需重编，CTest `34/34 passed`，PostgreSQL 8 张核心表缺失数为
+  0，Qdrant collection 健康；`python -m compileall -q agent/context agent/planning
+  agent/runtime tests/unit/test_p015_faults.py tests/integration/test_p015_fault_recovery.py`
+  退出码 `0`，`git diff --check` 退出码 `0`（仅有 Git 的 LF→CRLF 提示，无空白错误）。
+- 服务状态/限制：本步没有启动 Fast 或 Smart；Smart 仍按配置硬禁用。当前实测 Docker
+  `amr-postgres`/`amr-qdrant` 均为 Up，5432/6333/6334 正在监听，8000/8080 无监听；
+  smoke 实测 PostgreSQL/Qdrant 健康；P0-15 集成使用
+  InMemoryRuntimeStore 模拟 Checkpoint 重启；P0-14 的真实 PostgreSQL 集成仍是既有回归门禁，
+  真实底盘/ROS 和未来其他副作用工具的 reconciler 不在本步范围。
+- 直接复用：后续异常入口先调用 `PEVRExecutionError.fault`/`classify_failure()`，再由
+  `FaultRecoveryController` 记录 RunState；局部计划必须继续使用 P0-14 的确定性影响分析、
+  完整 Validator、Effect Ledger 和外部状态核对，不得把错误 message 当作人工批准或 not_found。
+
+### 2026-08-21 · P0-16 RBAC、HITL 与安全边界（当前有效）
+
+- 范围：完成 viewer/operator 两级 RBAC、JWT 身份真实性、文档检索 ACL、工具级权限、
+  Prompt Injection 隔离、禁止任意代码/SQL/Shell/外部 HTTP/未注册工具，以及高优先级覆盖、
+  人工接管和高风险写操作的 HITL interrupt/Checkpoint 恢复。
+- 身份与权限：`agent.security.Principal` 是唯一授权主体；`JWTAuthenticator` 固定 HS256、
+  issuer、audience、iat、exp、sub、role，并拒绝篡改、错误算法、缺 claim 和过期令牌。
+  viewer 只能读 ACL 明确允许的文档和只读 ToolSpec；operator 才能访问写工具、上传文档、
+  创建运行和决定审批。API 不接受 body/query/Prompt/RAG 自声明角色。
+- 检索安全：`assert_retrieval_scope()` 拒绝 viewer 请求 operator 范围；Qdrant/BM25 候选、
+  retrieve_knowledge 输出和 DocumentService 读取均执行 ACL，未授权文档对外统一为 404，
+  避免文档存在性泄漏。检索文本是数据，不能改变系统权限、Schema、Validator、HITL 或工具白名单。
+- 工具边界：安全 `ToolRegistry` 要求已验证 Principal，按 ToolSpec.allowed_roles 授权，
+  输入先过固定 Schema，再拒绝 command、SQL、Shell、script、code、URL/HTTP 等执行选择器；
+  只有九个固定 ToolName 有 handler，ToolResult 记录 principal_subject。旧的 P0-12 直接构造
+  registry 仍保留 legacy role 兼容模式，但不作为 API/安全 PEVR 生产入口。
+- HITL 数据流：安全 PEVR 在 Schema 和确定性 Validator 通过后创建 pending `HITLRequest`，
+  将已完成工具证据、当前任务、`HITLInterrupt` 和审批定位写入 waiting Checkpoint，再抛出
+  `PEVRInterrupt`。operator 通过 API/Store 批准后获得 HMAC `ApprovalGrant`；恢复时重新
+  校验 Checkpoint、审批状态、签名、主体、期限、run/task/plan_version、计划摘要和 Validator
+  摘要，任何不一致都在 handler 前拒绝。Effect Ledger 继续保证恢复不重复派发。
+- 持久化与接口：`PostgresHITLStore` 复用 P0-06 approvals 表的 request_snapshot，不新增
+  Alembic revision；`PEVRRequest` 增加 principal/approval_grant，`PEVRGraphState` 增加
+  hitl_interrupt/approval_grant，身份和 HITL 四个模型加入 `scripts/export_schemas.py`。
+  API 提供 `/agent/runs/{run_id}/hitl/{approval_id}/approve` 和 `/reject`，先核对
+  approval_id 所属 run，再以签名 operator 调用 HITL Store。
+- 实际验证：
+  - `E:\Anaconda\envs\torch128\python.exe -m pytest tests\unit\test_p016_security.py -q -p no:cacheprovider`：专项 8 passed。
+  - `E:\Anaconda\envs\torch128\python.exe -m pytest -q -p no:cacheprovider`：全量 215 passed，1 warning（既有 jieba/pkg_resources 弃用提示）。
+  - `E:\Anaconda\envs\torch128\python.exe scripts\export_schemas.py`：成功导出 40 份公共 Schema；checked-in schema 一致性回归包含在全量测试。
+  - `.\scripts\run_smoke.ps1`：退出码 0；Python 215 passed、1 warning，CTest 34/34 passed，
+    PostgreSQL 8 张核心表无缺失，Qdrant collection 健康。
+  - `E:\Anaconda\envs\torch128\python.exe -m compileall -q agent apps services tests`：退出码 0。
+  - `git diff --check`：退出码 0；仅有 Git 的 LF→CRLF 转换提示，无空白错误。
+- 服务状态与限制：本步未启动 Fast/Smart 模型；Smart 仍硬禁用。Smoke 实测 PostgreSQL/Qdrant
+  健康，8080/8000 无模型服务监听。没有新增数据库表；没有真实 ROS/底盘、在线模型或未来
+  外部副作用 reconciler 验收。HITLController 已覆盖四类暂停原因；实际安全 PEVR 测试覆盖
+  高风险写操作的 pending→approved→resume 路径。
+- 下一工作包：外部入口继续只从验签 Principal 取得角色；任何新工具必须先登记 ToolSpec、
+  Schema、确定性 Validator、ACL/审计/幂等和失败反例，再决定是否接入 HITL，不得增加任意执行面。
+
+### 2026-08-21 · P0-17 Trace、受控验证与证据报告（当前有效）
+
+- 完成：新增 agent.runtime.trace。TraceEvent schema_version=1.0，字段包括
+  trace_id、run_id、sequence、event_type、status、node、task_id、tool_name、
+  tool_version、model_version、prompt_id、prompt_version、input_tokens、
+  output_tokens、total_tokens、started_at、finished_at、latency_ms、
+  parameters_digest、input_digest、output_digest、error、evidence_refs 和 metadata。
+  task/model 是读取别名；失败、timeout、denied 必须有 TraceError，延迟和 Token 汇总可重算。
+- 完成：PEVRRequest 可接收可选 trace_id；PEVRRunResult、PEVRRunReport 和 PEVRGraphState
+  暴露 trace_id/trace_events。固定八节点包装器、四类 P0-05 模型节点、retrieve/execute
+  工具调用和节点异常都会追加 Trace；失败事件在异常重新抛出前写入。旧 Checkpoint 缺少
+  Trace 时按 run_id 稳定摘要补齐，已有 Trace 不允许换 run 或跳号。
+- 完成：InMemoryRuntimeStore 按 run 保存 Trace；PostgresRuntimeStore 复用 events 表，
+  事件类型为 trace.node/trace.model/trace.tool/trace.verification，使用确定性 event_id
+  幂等插入。understand 模型事件早于 runs 创建时暂存，ensure_run 后补写；没有新增表、
+  字段或 Alembic revision。
+- 完成：run_verification_suite 只接受 p0_12/p0-12、p0_python、p0_cpp、p0_smoke、
+  p0_simulation/p0_sim 固定 suite；case 选择是有限枚举，argv、cwd、shell=False 和
+  timeout 都由代码固定。仿真入口为 services.validation.simulation_entry，无参数构造
+  固定 plan/seed/ID，非 completed 以非零退出码退出。
+- 完成：VerificationLogParser 只读固定子进程 stdout/stderr、退出码和超时，结构化
+  status、failure_type、task_id、tool_name、parameters_digest、stdout/stderr digest、
+  evidence_locations 和 evidence_refs。VerificationReportGenerator 从真实逐 case 结果
+  重算状态/计数/report_digest，生成共享身份的 JSON/Markdown；契约拒绝非零退出码的伪造 passed。
+- 公共接口变化：RunVerificationSuiteInput.trace_id；VerificationCaseOutput 的
+  failure_type/task_id/tool_name/parameters_digest/evidence_locations/summary；VerificationSuiteOutput
+  的 trace_id/report_id/report_digest/report_json/report_markdown/evidence_refs；新增
+  ParsedVerificationCase、VerificationFailureType、VerificationEvidenceLocation、
+  VerificationReport、TraceEvent、TraceError。固定入口不接受 executable、script、shell、
+  pytest 表达式或任意命令字段。
+- 实际验证：
+  - tests/unit/test_p017_trace.py：4 passed。
+  - tests/unit/test_p017_validation.py：6 passed，1 条既有 jieba/pkg_resources 弃用 warning。
+  - P0-13/P0-14/Trace/Validation 组合：31 passed，1 warning；随后全量回归覆盖了
+    P0-16 HITL waiting→resume 的 Trace 合并修复。
+  - 真实 services.validation.simulation_entry：退出码 0，SimulationResult.status=completed，
+    validation_result.status=valid，error_count=0。
+  - 真实 FixedVerificationRunner p0_simulation：status=passed、case_count=1、failure_type=none，
+    生成 report_id 和 report_digest；真实 ToolRegistry run_verification_suite 同样返回 success，
+    trace_id=trace-p017-registry。
+  - 真实 FixedVerificationRunner p0_python：status=passed、case_count=1、failure_type=none，
+    生成 report_id=verification-05a1eaac5d745e04e5bb6a58；pytest stdout 通过同一日志解析/报告链。
+  - 真实 FixedVerificationRunner p0_cpp：status=passed、case_count=1、failure_type=none，
+    生成 report_id=verification-94c10417117aa6f4c1e7af17；固定 ctest argv 实际完成 34/34。
+  - scripts/export_schemas.py：成功导出 45 份公共 Schema；checked-in schema 一致性包含在
+    全量测试中。
+  - E:\Anaconda\envs\torch128\python.exe -m pytest -q -p no:cacheprovider：225 passed，
+    1 warning。
+  - E:\Anaconda\envs\torch128\python.exe -m pytest tests\integration\test_p014_postgres.py
+    -q -p no:cacheprovider：4 passed，1 warning。
+  - .\scripts\run_smoke.ps1：退出码 0；Python 225 passed、1 warning，CTest 34/34 passed，
+    PostgreSQL 8 张核心表缺失 0，Qdrant collection 健康。
+  - E:\Anaconda\envs\torch128\python.exe -m compileall -q agent apps services tests：退出码 0；
+    git diff --check：退出码 0，仅有 Git 的 LF→CRLF 转换提示。
+- 服务状态/限制：本步未启动 Fast/Smart 模型；Smart 仍硬禁用。仿真和受控 runner 使用本地
+  Python；CTest 入口要求 build/cpp 已准备，入口缺失返回 unavailable，不会改跑任意命令。
+  Trace 保存 digest/引用而非完整 Prompt/日志；真实 ROS/底盘和未来外部副作用 reconciler
+  不在 P0-17 范围。
+- 直接复用：后续工作包从 TraceEvent/VerificationReport 读取证据，不自行新增审计字段；
+  新验证入口必须先注册有限 suite/case、固定 argv、失败类型和证据引用，并补充失败反例。

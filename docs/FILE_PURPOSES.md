@@ -469,3 +469,102 @@ JSON Schema 与测试数据没有核心代码注释需求；其设计原因记�
 | 修改 | `README.md`、`docs/MODEL_GATEWAY.md`、`docs/SERVICES_STARTUP.md`、`docs/P001_P003_FILE_GUIDE.md`、`docs/P012_TOOLS.md`、`docs/P013_PEVR.md`、`docs/P014_CHECKPOINT.md`、`docs/DATABASE.md` | 对齐 Smart 禁用、摘要幂等键、外部状态持久化、严格恢复、完整局部复验和最新离线/在线证据；均为文档，无核心代码注释需求。 | 操作者和后续工作不再按旧的“Smart 可启动/冒号拼接/内存外部状态”语义行动。 |
 | 修改 | `docs/LESSONS_LEARNED.md` | 沉淀本次模型验收、幂等、digest、进程恢复、reconcile、provenance、空闲 AMR、坏快照、非空地图和 Python 环境十类坑；本步无核心代码注释需求。 | 后续工作包可复用失败模式与反例设计。 |
 | 修改 | `docs/HANDOFF_CONTEXT.md`、`docs/FILE_PURPOSES.md` | 记录全部修复、公共接口、真实命令/结果、服务终态和文件职责；本步无核心代码注释需求。 | 仓库唯一交接/文件作用入口与当前代码一致，当前状态冻结在 P0-14。 |
+
+## 2026-08-21：P0-15 故障分类与终止策略
+
+本步 Python 核心代码和测试均同步补充中文模块说明、类/函数 docstring 与关键分支注释，
+解释分类优先级、预算数据流、副作用安全限制、重复故障和最终终止行为。Markdown 与
+JSON Schema 只记录公共契约/职责，本步无核心代码注释需求；`build/`、`tmp/`、
+`__pycache__/`、`.pytest_cache/` 仍是自动生成物，不属于源码交付。
+
+| 变更 | 文件 | 作用 | 下游影响 |
+|---|---|---|---|
+| 新建 | `agent/runtime/faults.py` | 定义七类稳定 `FaultCategory`、五种 `RecoveryAction`、策略表、`FaultSignal`、有限预算恢复控制器、RunState/Checkpoint 回写和 P0-14 局部重规划适配。 | PEVR、API 或后台执行器消费统一故障决策；未知异常 fail closed，副作用未知状态不重放。 |
+| 修改 | `agent/planning/contracts.py` | 将 `ExecutionBudgets` 默认 `max_replans` 固定为 2，并新增受上限约束的 `max_retries`。 | TaskContract、RunState、Context Budget 和 P0-15 共享同一恢复额度。 |
+| 修改 | `agent/context/contracts.py` | 给 `BudgetUsage/BudgetSnapshot` 增加重试累计和剩余额度/超限计算。 | Prompt 节点和恢复控制器不会因重试绕过总预算。 |
+| 修改 | `agent/context/budget.py`、`agent/context/nodes.py` | 在节点预算门禁及用量推进中保留/拒绝超限重试计数。 | P0-05/P0-13 的旧预算调用继续兼容，超限进入确定 fallback。 |
+| 修改 | `agent/runtime/state.py` | 新增 `retry_count`、`fault_history`、`FaultRecord` 及跨任务/预算/重复 ID 校验。 | Checkpoint 恢复拥有可审计故障事实，状态循环和手工篡改会被拒绝。 |
+| 修改 | `agent/runtime/graph.py` | 给所有 `PEVRExecutionError` 附加结构化 FaultSignal，补充 PEVR 故障分类入口，并保留 P0-14 Checkpoint/Effect Ledger 边界。 | 上层可把固定图失败交给同一恢复控制器，不允许模型动态插入循环。 |
+| 修改 | `agent/runtime/__init__.py` | 从稳定 runtime 入口导出 P0-15 枚举、策略、信号和控制器。 | API/测试不依赖内部模块路径；延迟导入循环边界保持不变。 |
+| 新建 | `tests/unit/test_p015_faults.py` | 覆盖七类分类、默认动作、重试/重规划上限、重复故障终止、副作用 timeout、RunState 校验和完成 effect 保留。 | 后续策略/预算修改必须保留正常与失败路径。 |
+| 新建 | `tests/integration/test_p015_fault_recovery.py` | 用 InMemory Checkpoint Store 验证七类异常进入 retry/replan/terminal 状态，局部重规划跨 Store 回读且旧 effect 锚点不变。 | 证明 P0-15 与 P0-14 Checkpoint/LocalReplanner 的集成不是 fake-only 状态拼接。 |
+| 新建 | `docs/P015_FAULTS.md` | 记录稳定错误分类表、动作升级、预算硬门、终止条件、P0-14 数据流和验收入口；本步无核心代码注释需求。 | 后续 P0-16/运维/接口调用方按同一错误契约接续。 |
+| 修改 | `docs/P014_CHECKPOINT.md` | 修正历史 P0-13 `max_replans=0` 夹具与 P0-15 默认恢复预算的边界，并链接 P0-15 专题；本步无核心代码注释需求。 | 避免把历史测试夹具误读为当前恢复默认值。 |
+| 修改 | `docs/P013_PEVR.md` | 将 P0-13 的异常职责边界更新为由 P0-15 专题承接分类与终止策略；本步无核心代码注释需求。 | P0-13 正常闭环文档不再声称 P0-15 尚未实现。 |
+| 修改 | `README.md` | 将项目状态推进到 P0-15，公开故障动作/预算/副作用边界和专项测试入口；本步无核心代码注释需求。 | 操作者和后续工作包从首页进入 P0-15 专题，不再按旧的 P0-14 待办描述行动。 |
+| 修改 | `docs/schemas/FinalReport.schema.json`、`docs/schemas/PEVRRunReport.schema.json`、`docs/schemas/RunState.schema.json`、`docs/schemas/TaskContract.schema.json` | 由统一 Schema 导出脚本反映 `BudgetUsage`、`ExecutionBudgets` 和 `RunState` 的公共字段变化；本步无核心代码注释需求。 | 机器消费者与 Pydantic 契约同源；不得手工编辑生成物。 |
+| 修改 | `docs/HANDOFF_CONTEXT.md`、`docs/FILE_PURPOSES.md`、`docs/LESSONS_LEARNED.md` | 登记 P0-15 完成内容、公共接口、实际验证、服务状态、文件职责和新坑；本步无核心代码注释需求。 | 下一 Agent 直接复用故障/预算/Checkpoint 事实，不按旧 P0-14 冻结记录行动。 |
+
+## 2026-08-21：P0-16 RBAC、HITL 与安全边界
+
+本步 Python 核心代码同步补充中文模块说明、类/函数 docstring 和关键分支注释，解释身份
+来源、ACL 数据流、审批摘要绑定、恢复前核验、失败关闭和禁止执行面。Markdown、TOML、
+JSON、JSON Schema 和测试登记文件没有核心代码注释需求；其职责、边界和验证事实在本节
+及 `docs/P016_SECURITY.md` 记录。没有新增 Alembic revision；`build/`、`tmp/`、
+`__pycache__/`、`.pytest_cache/` 和在线报告仍是自动生成物，不登记为源码交付。
+
+| 变更 | 文件 | 作用 | 下游影响 |
+|---|---|---|---|
+| 新建 | `agent/security/__init__.py` | 从稳定入口导出 Principal、JWT 验证、RBAC 和 ACL 门禁。 | API、工具和 PEVR 复用同一安全边界，避免各层自行解析角色。 |
+| 新建 | `agent/security/contracts.py` | 定义严格 Principal 与封闭安全契约配置；角色只能来自已验证身份。 | JWT、ToolResult、HITL 和审计共享同一主体模型。 |
+| 新建 | `agent/security/auth.py` | 实现固定 HS256、issuer/audience、时间和必需 claim 校验，并安全映射 JWT。 | FastAPI 业务路由在进入 Service 前取得真实 viewer/operator 身份。 |
+| 新建 | `agent/security/rbac.py` | 实现 operator 门禁、ToolSpec 工具权限、文档 ACL 和检索范围收紧。 | API、检索器和 ToolRegistry 共享 fail-closed 授权语义。 |
+| 新建 | `agent/runtime/hitl.py` | 定义 HITLReason/Status/Request/Grant/Interrupt、摘要签名、存储协议和线程安全内存适配器。 | PEVR、API 和 PostgreSQL 适配器共享 pending→approved/rejected/expired 状态机。 |
+| 修改 | `agent/runtime/graph.py` | 在安全 PEVR 中执行 Principal、Schema、Validator、HITL、Checkpoint 和恢复前票据核验。 | 高风险写操作暂停且保留完整进度，审批后不得重复副作用。 |
+| 修改 | `agent/runtime/pevr.py`、`agent/runtime/__init__.py` | 暴露 principal/approval_grant、HITLInterrupt 和 PEVRInterrupt 公共运行契约。 | 调用方可从稳定入口恢复 waiting Checkpoint，不使用布尔审批旁路。 |
+| 修改 | `agent/tools/contracts.py` | 给 ToolResult/ToolSpec 审计契约增加安全主体字段和默认审计项。 | 每次工具结果可追溯到主体；JSON Schema 与运行时同源。 |
+| 修改 | `agent/tools/registry.py` | 要求安全模式绑定 Principal，执行 ToolSpec 权限、固定输入 Schema、禁止执行选择器和审批票据核验。 | 未注册工具、任意命令/SQL/Shell/HTTP 和越权调用在 handler 前阻断。 |
+| 修改 | `agent/context/prompt_registry.py` | 为系统 Prompt 明确 RAG/node 输入是不可信数据，不能改写权限、Validator、HITL 或工具白名单。 | Prompt Injection 不能把检索内容提升为控制指令。 |
+| 新建 | `services/application/hitl_service.py` | 复用 approvals 表实现跨进程 HITL 请求、行锁审批、HMAC grant 和恢复核验。 | 生产恢复使用 PostgreSQL 事实，不依赖进程内自动批准；无新增表。 |
+| 修改 | `services/application/document_service.py`、`services/application/exceptions.py` | 在文档 Service 读取路径执行 ACL，未授权访问统一隐藏为 404。 | 防止 API 通过状态码枚举 ACL 不可见文档。 |
+| 修改 | `services/application/run_service.py`、`services/application/__init__.py` | 绑定 operator 主体到运行创建/审批决定，并导出 HITL Service。 | 业务服务不信任请求体中的 decided_by 或 role。 |
+| 修改 | `services/persistence/repositories.py` | 增加审批记录查询和行锁读取能力。 | PostgreSQL HITL 适配器在同一事务内完成状态迁移。 |
+| 修改 | `apps/api/dependencies.py`、`apps/api/main.py` | 增加 Bearer JWT/current Principal/operator 依赖，并组装认证器和 PostgreSQL HITL Store。 | 健康检查保持匿名，业务路由统一先认证/授权。 |
+| 修改 | `apps/api/routers/documents.py`、`apps/api/routers/runs.py`、`apps/api/routers/evals.py`、`apps/api/schemas.py` | 将上传、运行、评测和审批入口绑定已验证主体，兼容字段不能提升权限。 | viewer/operator 权限在 HTTP 边界统一执行，审批者身份由令牌决定。 |
+| 修改 | `services/config/settings.py`、`services/config/__init__.py`、`config/default.toml`、`.env.example` | 增加 JWT/HITL 密钥、issuer、audience 和 leeway 的配置契约。 | 默认开发配置可运行，生产必须注入独立随机密钥。 |
+| 修改 | `scripts/export_schemas.py` | 将 Principal、HITLRequest、ApprovalGrant、HITLInterrupt 加入同源 Schema 导出。 | API/持久化/跨语言消费者不会手写安全字段。 |
+| 新建 | `docs/schemas/Principal.schema.json`、`docs/schemas/HITLRequest.schema.json`、`docs/schemas/ApprovalGrant.schema.json`、`docs/schemas/HITLInterrupt.schema.json` | 保存身份与审批公共 JSON Schema；由脚本生成，不手工分叉。 | 契约测试验证运行时 Pydantic 与 checked-in Schema 一致。 |
+| 修改 | `docs/schemas/FinalReport.schema.json`、`docs/schemas/PEVRRunReport.schema.json`、`docs/schemas/RunState.schema.json`、`docs/schemas/SimulationResult.schema.json`、`docs/schemas/TaskContract.schema.json`、`docs/schemas/ToolResult.schema.json`、`docs/schemas/Observation.schema.json` | 由统一导出脚本反映本步运行态/审计字段变化。 | 机器消费者继续使用同源闭合 Schema；本步无核心代码注释需求。 |
+| 新建 | `tests/unit/test_p016_security.py` | 覆盖 JWT 篡改/算法/过期、HTTP 认证、viewer 越权、工具注入、检索 ACL 泄漏、审批绕过和 Checkpoint 恢复。 | P0-16 的安全反例门禁要求全部阻断，专项目标阻断率 100%。 |
+| 修改 | `tests/integration/test_p006_postgres.py` | 将既有 API 集成请求改为使用真实 operator JWT，回归新认证契约。 | P0-06 PostgreSQL/API 测试继续覆盖真实业务入口，不绕过 RBAC。 |
+| 修改 | `docs/P013_PEVR.md`、`docs/P014_CHECKPOINT.md` | 补充 P0-16 安全审批和 waiting Checkpoint 的职责边界；本步无核心代码注释需求。 | 后续 Agent 不把 legacy approval_granted 或普通 Checkpoint 当作生产安全恢复。 |
+| 新建 | `docs/P016_SECURITY.md` | 记录 RBAC、ACL、工具白名单、HITL 状态机、持久化复用、验证事实和限制；本步无核心代码注释需求。 | 作为 P0-16 专题唯一详细说明入口。 |
+| 修改 | `README.md` | 更新项目状态、P0-16 能力、审批流程和专项测试入口；本步无核心代码注释需求。 | 用户从首页可找到当前安全边界和验收命令。 |
+| 修改 | `docs/HANDOFF_CONTEXT.md`、`docs/FILE_PURPOSES.md`、`docs/LESSONS_LEARNED.md` | 记录本步完成内容、公共接口、真实测试/服务状态、文件职责和安全坑；本步无核心代码注释需求。 | 后续工作从有效的 P0-16 事实接续，不复用过时 P0-15 状态。 |
+
+## 2026-08-21：P0-17 Trace、受控验证与证据报告
+
+本步 Python 核心代码和测试同步补充中文模块说明、类/函数 docstring 及关键分支注释，
+说明 Trace 数据流、摘要边界、失败关闭、固定验证入口、日志解析和报告重算规则。
+Markdown、README、TOML、JSON Schema 和测试登记文件没有核心代码注释需求；职责与公共
+契约在本节及 P017 专题记录。没有新增 Alembic revision；build/、tmp/、__pycache__/、
+.pytest_cache/ 和系统临时验证输出是自动生成物，不登记为源码交付。
+
+| 变更 | 文件 | 作用 | 调用方/下游 |
+|---|---|---|---|
+| 新建 | agent/runtime/trace.py | 定义 TraceEvent、TraceError、线程安全 TraceCollector、模型/工具/验证结果适配器和可选持久化 sink；只保存摘要与证据引用，不执行日志或参数。 | PEVR、Checkpoint、验证工具、API/报告消费者；后续可接 SSE/OTLP sink。 |
+| 修改 | agent/runtime/pevr.py | 给 PEVRRequest、PEVRRunResult、PEVRRunReport 和 graph state 增加 trace_id/trace_events 关联。 | PEVR 调用方、Checkpoint 恢复和最终报告。 |
+| 修改 | agent/runtime/graph.py | 在固定八节点、模型调用、工具调用和失败路径追加严格 Trace，并在恢复时校验身份/序号。 | P0-13 主图、P0-14 Store；P0-15 Fault 作为失败详情来源。 |
+| 修改 | agent/runtime/checkpoint.py | 为 InMemoryRuntimeStore 增加 Trace 追加/回读，并扩展运行时持久化 Protocol。 | P0-14 单测、PEVR 恢复和后续报告导出。 |
+| 修改 | agent/runtime/__init__.py | 从稳定 runtime 入口导出 TraceCollector、TraceError、TraceEvent 和 new_trace_id。 | API/测试不依赖内部模块路径。 |
+| 修改 | services/application/checkpoint_service.py | 复用 events 表保存 Trace；runs 尚未创建时暂存首批模型事件，ensure_run 后按序补写并做幂等校验。 | 生产 PEVR PostgreSQL Checkpoint；不新增表或 migration。 |
+| 修改 | agent/tools/contracts.py | 把 trace_id 纳入 run_verification_suite 可选参数白名单。 | ToolRegistry、Schema 和受控验证入口。 |
+| 修改 | agent/tools/schemas.py | 增加仿真 suite ID、Trace 关联、逐 case 失败/证据字段、报告字段和退出码状态一致性门禁。 | ToolRegistry、Schema 导出、API/验证消费者。 |
+| 修改 | agent/tools/verification.py | 固定注册 CTest/pytest/smoke/仿真 argv，禁止任意命令，并将真实日志转成报告；超时保留结构化 case。 | run_verification_suite handler；不接受用户 executable/cwd/shell。 |
+| 修改 | agent/tools/registry.py | 透传 trace_id，返回报告/evidence，并把 timeout/验证失败绑定 ToolResult 错误。 | 九工具统一执行器和 PEVR。 |
+| 新建 | services/validation/contracts.py | 定义 ParsedVerificationCase、VerificationReport、失败类型和证据位置公共契约，并禁止伪造通过状态。 | 解析器、报告生成器、工具 Schema 和 Trace 适配器。 |
+| 新建 | services/validation/log_parser.py | 只解析固定入口 stdout/stderr/退出码/超时，提取失败类型、任务、工具、参数摘要和日志行号。 | FixedVerificationRunner 和报告。 |
+| 新建 | services/validation/reporting.py | 从逐 case 真实结果重算状态、计数、digest、JSON 和 Markdown，追加报告证据引用。 | run_verification_suite、人工审阅和机器消费者。 |
+| 新建 | services/validation/simulation_entry.py | 提供无参数、固定 seed/plan/仿真 ID 的预注册仿真验证入口，非 completed 以非零码退出。 | FixedVerificationRunner 的 p0_simulation/p0_sim。 |
+| 修改 | services/validation/__init__.py | 暴露验证契约、解析器和报告生成器稳定入口。 | 工具 runner、测试和未来 API。 |
+| 修改 | scripts/export_schemas.py | 将 TraceError/TraceEvent 与验证 case/report 契约加入同源 JSON Schema 导出。 | docs/schemas 机器消费者；生成物不可手工编辑。 |
+| 新建 | docs/P017_TRACE_VERIFICATION.md | 记录 Trace 字段、受控 suite 白名单、解析/报告数据流、验证命令和限制；本步无核心代码注释需求。 | 后续 Agent、运维、API/报告消费者。 |
+| 修改 | docs/P012_TOOLS.md、docs/P013_PEVR.md、docs/P014_CHECKPOINT.md | 补充 trace_id、报告字段、events 持久化和 P0-17 交接边界；本步无核心代码注释需求。 | P0-12～P0-16 下游工作包和恢复运维。 |
+| 修改 | README.md | 将项目状态推进到 P0-17，公开 Trace、受控验证和专项测试入口；本步无核心代码注释需求。 | 项目入口和新 Agent。 |
+| 新建 | tests/unit/test_p017_trace.py | 覆盖 Trace 字段、序号/失败门禁、模型/工具/验证适配器和证据引用。 | 防止审计字段或失败定位回退。 |
+| 新建 | tests/unit/test_p017_validation.py | 覆盖日志分类、仿真证据、报告重算、固定 argv、真实退出码、非法 case 和 timeout。 | 防止任意命令面和伪造通过结论。 |
+| 修改 | tests/unit/test_p013_pevr.py、tests/unit/test_p014_checkpoint.py | 回归验证 PEVR Trace 数量/序列/报告关联，以及 Checkpoint 恢复复用同一 Trace。 | P0-13/P0-14 公共回归门禁。 |
+| 修改 | tests/integration/test_p014_postgres.py | 验证首条 Trace 在 runs 建立前暂存、建 run 后补写、重复提交幂等且真实 PostgreSQL 可回读。 | P0-14/P0-17 生产持久化边界。 |
+| 新建 | docs/schemas/TraceError.schema.json、docs/schemas/TraceEvent.schema.json、docs/schemas/ParsedVerificationCase.schema.json、docs/schemas/VerificationEvidenceLocation.schema.json、docs/schemas/VerificationReport.schema.json | 由 export_schemas.py 生成 P0-17 机器契约；本步无核心代码注释需求。 | API、工具和跨语言消费者。 |
+| 修改 | docs/schemas/PEVRRunReport.schema.json、docs/schemas/RunVerificationSuiteInput.schema.json、docs/schemas/VerificationSuiteOutput.schema.json | 反映 trace_id、逐 case 失败/证据和报告字段变化；本步无核心代码注释需求。 | P0-13/P0-12 Schema 消费者。 |
+| 修改 | docs/FILE_PURPOSES.md、docs/HANDOFF_CONTEXT.md、docs/LESSONS_LEARNED.md | 登记本步文件职责、公共接口、实际验证、状态和可复用坑；本步为文档，无核心代码注释需求。 | 唯一文件职责/交接/经验入口。 |

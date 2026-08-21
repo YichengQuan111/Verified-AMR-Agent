@@ -25,6 +25,7 @@ from typing import Any, Mapping, Protocol
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, JsonValue, model_validator
 
 from agent.tools.contracts import ToolName, ToolResult
+from agent.runtime.trace import TraceEvent
 
 
 class CheckpointContract(BaseModel):
@@ -210,6 +211,10 @@ class RuntimePersistenceProtocol(Protocol):
 
     def load_checkpoint(self, run_id: str) -> CheckpointSnapshot | None: ...
 
+    def append_trace_event(self, event: TraceEvent) -> None: ...
+
+    def list_trace_events(self, run_id: str) -> list[TraceEvent]: ...
+
     def reserve_effect(
         self,
         *,
@@ -391,6 +396,9 @@ class InMemoryRuntimeStore:
     def __init__(self) -> None:
         self._checkpoints: dict[str, CheckpointSnapshot] = {}
         self._effects: dict[str, EffectLedgerEntry] = {}
+        # Trace 按 run 保存独立序列；Checkpoint 只保存恢复所需的最新图状态，
+        # 两者分开可避免每一条模型/工具事件都复制整份大状态快照。
+        self._trace_events: dict[str, list[TraceEvent]] = {}
         self._lock = RLock()
 
     def save_checkpoint(self, checkpoint: CheckpointSnapshot) -> CheckpointSnapshot:
@@ -409,6 +417,31 @@ class InMemoryRuntimeStore:
         with self._lock:
             value = self._checkpoints.get(run_id)
             return None if value is None else value.model_copy(deep=True)
+
+    def append_trace_event(self, event: TraceEvent) -> None:
+        """原子追加 Trace；相同序号和内容的重试是幂等的，跳号则拒绝。"""
+
+        with self._lock:
+            events = self._trace_events.setdefault(event.run_id, [])
+            if events:
+                last = events[-1]
+                if last.trace_id != event.trace_id:
+                    raise ValueError("同一 run_id 不能混用不同 trace_id")
+            existing = next((item for item in events if item.sequence == event.sequence), None)
+            if existing is not None:
+                if existing.model_dump(mode="json") != event.model_dump(mode="json"):
+                    raise ValueError("同一 Trace 序号不能覆盖不同事件")
+                return
+            expected = len(events) + 1
+            if event.sequence != expected:
+                raise ValueError(f"Trace 序号必须连续，期待 {expected}，收到 {event.sequence}")
+            events.append(event.model_copy(deep=True))
+
+    def list_trace_events(self, run_id: str) -> list[TraceEvent]:
+        """返回运行 Trace 的深拷贝，供报告导出和恢复测试核对。"""
+
+        with self._lock:
+            return [item.model_copy(deep=True) for item in self._trace_events.get(run_id, [])]
 
     def reserve_effect(
         self,

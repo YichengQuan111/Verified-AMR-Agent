@@ -2,7 +2,8 @@
 
 from fastapi import APIRouter, Depends, status
 
-from apps.api.dependencies import get_run_service
+from agent.security import Principal
+from apps.api.dependencies import get_operator_principal, get_run_service
 from apps.api.schemas import CreateEvalRunRequest
 from services.application import RunService, RunView
 
@@ -14,6 +15,7 @@ router = APIRouter(prefix="/evals/runs", tags=["evals"])
 def create_eval_run(
     request: CreateEvalRunRequest,
     service: RunService = Depends(get_run_service),
+    principal: Principal = Depends(get_operator_principal),
 ) -> RunView:
     """创建 run_kind=eval 的运行，不越界实现评测执行器。"""
 
@@ -21,7 +23,7 @@ def create_eval_run(
         request.task_contract,
         suite_id=request.suite_id,
         case_ids=request.case_ids,
-        requested_by=request.requested_by,
+        requested_by=principal.subject,
     )
 
 

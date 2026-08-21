@@ -101,7 +101,10 @@ class ExecutionBudgets(PlanningContract):
     max_input_tokens: int = Field(gt=0)
     max_output_tokens: int = Field(gt=0)
     max_tool_steps: int = Field(gt=0)
-    max_replans: int = Field(ge=0, le=2)
+    # P0-15 将重规划和普通重试分成两条独立计数器；默认值必须是安全的
+    # 有限上限，不能让模型输出省略字段后意外获得无限恢复机会。
+    max_replans: int = Field(default=2, ge=0, le=2)
+    max_retries: int = Field(default=2, ge=0, le=4)
 
 
 class TaskContract(PlanningContract):

@@ -225,3 +225,77 @@
 - 原因：同一桌面会话同时存在项目环境和文档工具环境，依赖能力不同；省略解释器绝对路径会产生与代码无关的假失败。
 - 最终解决：仓库验证统一显式使用 `E:\Anaconda\envs\torch128\python.exe`；可移植 smoke 允许用参数或 `AMR_*` 环境变量覆盖 Python/CMake/Ninja/MSVC 路径，并把误用环境的收集失败与产品测试结果分开记录。
 - 后续避免：运行任何验收前先打印解释器和锁依赖报告；工具专用 runtime 只用于其技能任务，不能据其缺包判断仓库失败。
+
+## 2026-08-21 · 非终态故障不能简单按 fault_id 永久去重
+
+- 现象：最初的恢复控制器对相同 `fault_id` 直接复用第一次 `retry/replan` 决策；同一工具连续失败时，调用方可以无限得到非终态动作。
+- 原因：故障事实去重和恢复尝试计数是两件事；P0-14 的业务幂等键能防止副作用重放，但不会替 P0-15 终止循环。
+- 最终解决：终态决策继续幂等复用；非终态重复事实沿同一策略继续消耗全局 retry/replan 额度，达到上限后进入 `fallback`/`human`，并在 `FaultRecord` 中只保留一条可更新的审计事实。
+- 后续避免：任何“去重”逻辑都必须同时测试重复正常提交、重复非终态失败和重复终态失败三条路径，不能只断言 fault_id 不变。
+
+## 2026-08-21 · 重规划建议与重规划版本不能在同一状态写入
+
+- 现象：在调用 `LocalReplanner.apply()` 之前先记录 `replan_count=1`，`RunState` 会认为计数超过当前版本；直接把计数提前写入又会在真正应用时加倍。
+- 原因：故障控制器既要支持“先落准备重规划 Checkpoint”，也要支持“应用新版本后再落账”；这两个时点的预算事实不同。
+- 最终解决：`record_on_run_state()` 只记录当前实际 `RunState.replan_count`；`apply_replan()` 由 LocalReplanner 完成版本加一后更新同一 `FaultRecord`，旧 Effect Ledger 不删除。
+- 后续避免：涉及版本号的恢复记录要区分 decision、apply 和 checkpoint 三个事务边界，并为“先记录后应用”和“直接应用”各写一个测试。
+
+## 2026-08-21 · 错误载荷的映射字段也必须进入稳定分类
+
+- 现象：分类器只把 Pydantic 错误转换为 `source_mapping`，普通字典中的 `code`、`status` 和 `retryable` 只能通过全文文本间接命中，raw_code/不可行状态等字段会丢失。
+- 原因：工具适配器、HTTP 层和测试替身经常返回 Mapping，而不是统一的 Pydantic 类型；依赖 `getattr(dict, ...)` 会静默得到 `unknown`。
+- 最终解决：对 Mapping 先做浅层字段映射，再保留原始嵌套错误；同时从严格整数坐标和 `from/to` 位置构造 cell/edge 影响标签。
+- 后续避免：分类器测试必须同时使用 BaseModel、ToolResult、ToolError 和普通 JSON Mapping，并断言稳定 code、retryable 和 affected entities，而不只断言类别。
+
+## 2026-08-21 · HITL waiting Checkpoint 必须保存完整执行进度
+
+- 现象：高风险工具第一次暂停时，如果只保存当前任务和审批 ID，恢复后会丢失暂停前
+  已完成工具结果、任务状态或资源 provenance，进而可能重复派发或无法完成闭环。
+- 原因：interrupt 是执行流暂停，不是从空白状态重新开始；Checkpoint 若没有保存局部
+  进度，审批恢复就无法复用 P0-14 Effect Ledger 的已完成事实。
+- 最终解决：waiting Checkpoint 同时保存工具结果、task ID、derived plan、observations、
+  budget、resource provenance、HITLInterrupt 和审批绑定摘要；恢复先严格读取这些事实，
+  再验签/核对计划与 Validator，未完成任务才进入 handler。
+- 后续避免：任何人工暂停都必须测试“暂停前已有副作用、批准后只执行剩余任务、恢复一次”
+  三个断言，不能只测试 pending 状态存在。
+
+## 2026-08-21 · JWT role 和 approval_granted 都不能作为调用方自声明开关
+
+- 现象：如果 API 接受 body 中的 role/decided_by，或 PEVR 继续把
+  `approval_granted=true` 当作安全审批，攻击者可以伪造 operator 或跳过人工决定。
+- 原因：角色和审批是外部安全事实，不能由自然语言、检索文本、工具参数或普通布尔字段
+  证明；签名身份、审批状态、计划摘要和 Validator 摘要必须绑定在同一安全上下文。
+- 最终解决：固定 HS256 JWT 验签后才创建 Principal；安全 PEVR 禁止 Principal 与 legacy
+  approval_granted 同时出现；审批 Store 只向 operator 签发绑定请求/计划/Validator 的
+  HMAC ApprovalGrant，恢复前再次从 Store 核对。
+- 后续避免：新增任何权限或审批入口时，至少加入篡改令牌、viewer 冒充 operator、伪造
+  approved 状态、摘要漂移和过期票据反例，并断言 handler 调用次数为 0。
+
+## 2026-08-21 · P0-17 验证结论必须绑定真实退出码
+
+- 现象：如果报告层只接收 status 字符串，调用方可以把 exit_code=1 的测试伪装成 passed。
+- 原因：日志解析、工具输出和报告契约各自保存状态，缺少从进程事实到结论的最后一道一致性校验。
+- 最终解决：固定 runner 先用 subprocess 返回码/TimeoutExpired 产生 ParsedVerificationCase，再由
+  VerificationReportGenerator 重算计数、状态和 report_digest；passed 必须是 exit_code=0，
+  timeout 必须是 exit_code=null，失败必须带 failure_type 和 evidence。
+- 后续避免：任何新验证 adapter 都只能返回解析后的 case，不能让外部文本或调用方直接传入报告结论。
+
+## 2026-08-21 · P0-17 首条 Trace 可能早于 PostgreSQL runs
+
+- 现象：understand 的模型事件最早发生在 TaskContract 解析完成之前，而 events 表要求
+  run_id 外键；直接写 Trace 会在生产首次运行时触发外键失败。
+- 原因：运行身份和模型审计的事务边界不同，不能为了写审计提前创建不完整的业务 run。
+- 最终解决：PostgresRuntimeStore 对未创建的 run 暂存 Trace，ensure_run 成功后按 Trace
+  sequence 补写；后续事件使用确定性 event_id 幂等插入，Trace 仍不允许跳号或混用身份。
+- 后续避免：新增运行级审计事件时先检查 runs 外键建立时点，并测试“首事件早于 run 创建”和
+  “同一事件重试”两条路径。
+
+## 2026-08-21 · P0-17 固定仿真入口必须无参数
+
+- 现象：把计划、seed 或 Python 表达式作为验证命令参数，会让受控 suite 重新形成任意
+  命令/代码执行面，也使报告无法证明实际执行的是哪份固定验证。
+- 原因：验证入口把业务参数误当成子进程选择器，白名单无法覆盖组合爆炸和路径穿越。
+- 最终解决：p0_simulation 只调用无参数 services.validation.simulation_entry，由入口内部
+  构造固定 plan/seed/simulation_id，stdout 输出真实 SimulationResult，失败使用非零退出码。
+- 后续避免：新增仿真/测试 adapter 只注册无参数或有限枚举 case，并对 unknown case 断言
+  子进程调用次数为 0。

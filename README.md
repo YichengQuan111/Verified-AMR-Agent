@@ -13,9 +13,9 @@
   → 带引用的证据报告
 ```
 
-当前代码范围停在 **P0-00～P0-14**。阶段审计发现的问题已完成修复和复测；本次没有
-推进 P0-15。Smart Profile 因真实 P0-05 在线验收仅通过 2/5，现为硬禁用，只有收到
-用户日后的明确指示并重新完成在线验收后才能启用。
+当前代码范围已完成 **P0-00～P0-17**。P0-16 已把签名身份、两级 RBAC、文档 ACL、
+工具白名单和 HITL/Checkpoint 审批接入安全边界；Smart Profile 因真实 P0-05 在线验收仅通过 2/5，现为硬禁用，
+只有收到用户日后的明确指示并重新完成在线验收后才能启用。
 
 ## 1. 固定范围
 
@@ -48,10 +48,14 @@
 | P0-12 | 已完成 | 九个统一白名单工具、Pydantic 输入/输出 Schema、角色/超时/错误/审计/幂等门禁、固定 C++ JSON 适配器、状态/审批/验证封装。 |
 | P0-13 | 已完成 | 固定 `guard→understand→retrieve→plan→validate→execute→verify→finish` 主图、真实 Fast LLM/RAG/C++/仿真/Observation 成功闭环、带引用和工具证据的报告。 |
 | P0-14 | 已完成 | PostgreSQL Checkpoint、由 `run_id + plan_version + task_id` 规范三元组摘要生成的 Effect Ledger 幂等键、真实状态核对后的中断恢复，以及只替换受影响未完成 DAG 子图的 Local Replanner。 |
+| P0-15 | 已完成 | 覆盖低电量、AMR 离线、通道封闭、工位占用、工具超时、计划不可行和状态冲突的稳定故障分类；有限 retry/replan/fallback/human/fatal 策略；默认最多两次局部重规划、全局步骤/时长/Token/重试门禁，以及与 Checkpoint/Effect Ledger 一致的恢复测试。 |
+| P0-16 | 已完成 | JWT 验签、viewer/operator 两级 RBAC、工具级权限、检索期文档 ACL、Prompt Injection 不可信输入边界、禁止任意代码/SQL/Shell/外部 HTTP、PostgreSQL/内存 HITL 审批和 waiting Checkpoint 恢复；越权、注入、审批绕过和 ACL 泄漏反例全部阻断。 |
+| P0-17 | 已完成 | 严格 TraceEvent（run/trace/node/task、模型/Prompt/工具版本、Token、延迟、错误、摘要和证据引用）、只允许预注册 CTest/pytest/smoke/仿真入口的受控验证、日志失败结构化解析，以及由真实退出码重算的 JSON/Markdown 验证报告。 |
 
-明确尚未实现：P0-15 的复杂异常分类、自动补偿工具和在线重规划编排。单独构造
-`ToolRegistry` 时状态/审批仍默认使用进程内适配器；真实 PEVR CLI 会把 Checkpoint、
-Effect Ledger 和 dispatch 外部状态共同注入 PostgreSQL，能够跨进程恢复。
+明确尚未实现：真实 ROS/底盘接入；P0-15 不注册任意自动补偿工具，副作用未知
+状态仍必须人工核对。单独构造 `ToolRegistry` 时状态/审批仍默认使用进程内适配器；
+真实 PEVR CLI 会把 Checkpoint、Effect Ledger 和 dispatch 外部状态共同注入 PostgreSQL，
+能够跨进程恢复。
 
 ## 3. 已落地架构
 
@@ -111,7 +115,7 @@ BEGIN → INSERT runs → flush → INSERT events → flush → COMMIT
 |---|---|
 | `agent/planning/` | TaskContract、PlanTask、风险/预算和 DAG 校验。 |
 | `agent/context/` | 5 个 Prompt、上下文契约、摘要器、预算门禁和独立节点。 |
-| `agent/runtime/` | Observation、RunState、Checkpoint/Effect Ledger 契约、恢复协调和 PEVR 状态图。 |
+| `agent/runtime/` | Observation、RunState、Checkpoint/Effect Ledger、Trace 契约、恢复协调和 PEVR 状态图。 |
 | `agent/tools/` | 9 个白名单工具名、ToolSpec/ToolResult、输入/输出 Schema、统一执行器、固定 C++/状态/审批/验证适配器。 |
 | `apps/api/` | FastAPI 应用工厂、请求 Schema、依赖和 Router。 |
 | `services/model_gateway/` | 本地模型统一访问边界。 |
@@ -121,6 +125,7 @@ BEGIN → INSERT runs → flush → INSERT events → flush → COMMIT
 | `services/planner_cpp/` | P0-08 C++17 Hungarian/最近空闲分配、P0-09 A*/Dijkstra 路径与时空预约、P0-10 计划验证器、严格 JSON 编解码和 CTest。 |
 | `services/amr_simulator/` | P0-11 Python 固定 tick 仿真、P0-10 Validator 适配、状态/订单/工位/充电快照、Observation/事件日志和 Eval 专用故障注入。 |
 | `docs/P012_TOOLS.md` | 九工具清单、Schema、角色/超时/副作用/幂等、固定 C++ 边界和错误/重复调用语义。 |
+| `docs/P017_TRACE_VERIFICATION.md` | Trace 字段、受控验证白名单、日志解析、证据定位和 JSON/Markdown 报告契约。 |
 | `evals/rag/` | 20 例固定 RAG 数据与 Recall/MRR/Citation/ACL 执行器。 |
 | `domains/amr_warehouse/` | 仓储领域契约和种子数据。 |
 | `migrations/` | Alembic 前向迁移。 |
@@ -178,9 +183,9 @@ docker compose ps
 .\scripts\run_smoke.ps1 -SkipCpp
 ```
 
-最近一次完整验证基线（2026-08-21，P0-00～P0-14 阶段审计修复后）：
+最近一次完整验证基线（2026-08-21，P0-16 完成后）：
 
-- pytest：178/178 通过，唯一警告为既有 `jieba/pkg_resources` 弃用警告。
+- pytest：215/215 通过，唯一警告为既有 `jieba/pkg_resources` 弃用警告。
 - CTest：34/34 通过；新增反例确认未分配/空闲 AMR 的初始位置仍会阻断冲突路线。
 - Alembic：`0001_p006_core (head)`，8 张核心表缺失数 0。
 - Qdrant：健康检查通过，`amr_warehouse_knowledge` 保留 70 个正式 points。
@@ -344,7 +349,70 @@ P0-14 在不新增数据库表的前提下复用 P0-06 的 `runs.run_state_snaps
 
 详细恢复顺序、数据库事务边界和已知限制见 [docs/P014_CHECKPOINT.md](docs/P014_CHECKPOINT.md)。
 
-## 16. 协作与交接入口
+## 16. P0-15 故障分类与终止策略
+
+`agent.runtime.faults` 将底层错误映射为稳定 `FaultCategory` 和五种恢复动作。低电量、
+AMR 离线、封路和计划不可行默认只允许最多两次局部重规划；工位占用按 retry→replan→
+human 处理；普通无副作用 timeout 有限 retry 后 fallback；副作用状态未知、Effect/
+Checkpoint 冲突直接 human；未知错误 fatal。总工具步数、总时长、输入/输出 Token 和重试
+次数均是硬预算，终态决策不能回到执行态。
+
+局部重规划通过 P0-14 `LocalReplanner` 和同一 Checkpoint Store 落账，保留已完成任务及
+Effect Ledger，不重复副作用；完整分类表、预算边界、状态字段和验收命令见
+[docs/P015_FAULTS.md](docs/P015_FAULTS.md)。
+
+专项测试：
+
+```powershell
+& 'E:\Anaconda\envs\torch128\python.exe' -m pytest tests\unit\test_p015_faults.py tests\integration\test_p015_fault_recovery.py -q -p no:cacheprovider
+```
+
+## 17. P0-16 RBAC、HITL 与安全边界
+
+API 业务路由只接受 Bearer JWT；角色从验签后的 Principal 读取，request body、
+Prompt、RAG 正文和工具参数不能声明或提升角色。viewer 只能调用只读工具并只能
+读取 ACL 包含 viewer 的文档；operator 才能调用写工具、上传文档、创建运行和决定
+审批。工具仍只能从九个固定 ToolName 注册项进入，参数 Schema、确定性 Validator
+和 ToolSpec 权限在审批前后都必须通过。
+
+dispatch_simulation 等高风险写操作在安全 PEVR 中创建 pending HITL 请求，把
+HITLInterrupt、当前任务状态和已完成工具证据写入 Checkpoint，随后抛出
+PEVRInterrupt。operator 审批后，带 HMAC 签名的 ApprovalGrant 绑定同一
+run_id/task_id/plan_version、计划摘要和 Validator 摘要；恢复入口重新核对
+Checkpoint、数据库/内存审批存储、签名、期限和主体，才允许继续，Effect Ledger
+仍保证副作用只执行一次。高优先级覆盖和人工接管使用同一 HITLReason/
+HITLController 协议，不能被自然语言自动批准。
+
+生产 API 通过 `/agent/runs/{run_id}/hitl/{approval_id}/approve` 或 `/reject`
+由 operator 决定 HITL 请求；approval_id 必须属于同一 run，服务端不接受请求体中的审批人。
+
+检索文档按不可信数据处理；系统 Prompt 明确拒绝“忽略权限/授予 operator/批准工具”
+等注入内容，Qdrant/BM25 候选过滤、工具输出 ACL 复核和文档 Service ACL 三层均
+fail closed。命令、SQL、Shell、脚本、URL/HTTP 选择器和未注册工具没有可达参数或
+handler。
+
+详细契约、审批状态机、数据库复用和限制见 docs/P016_SECURITY.md。
+
+专项测试：E:\Anaconda\envs\torch128\python.exe -m pytest tests\unit\test_p016_security.py -q -p no:cacheprovider
+
+## 18. P0-17 Trace、受控验证与证据报告
+
+PEVRRunResult/PEVRRunReport 通过同一 trace_id 关联严格递增的 TraceEvent。事件覆盖
+节点、任务、模型/Prompt/工具版本、Token、延迟、错误、输入/输出 digest 和
+evidence_refs；Checkpoint 恢复和 PostgreSQL events 表都保留该链路。验证工具只接受
+预注册的 p0_12、p0_python、p0_cpp、p0_smoke、p0_simulation 入口，不能传入任意命令。
+固定入口的 stdout/stderr、退出码和超时由 Parser 解析为失败类型、任务/工具、参数摘要
+和带行号证据；Report Generator 从真实 case 结果重算 JSON/Markdown 结论。
+
+详细字段、入口和限制见 docs/P017_TRACE_VERIFICATION.md。
+
+专项测试：
+
+    & 'E:\Anaconda\envs\torch128\python.exe' -m pytest tests\unit\test_p017_trace.py tests\unit\test_p017_validation.py -q -p no:cacheprovider
+
+## 19. 协作与交接入口
+
+## 18. 协作与交接入口
 
 开始任何新任务前，按顺序阅读：
 

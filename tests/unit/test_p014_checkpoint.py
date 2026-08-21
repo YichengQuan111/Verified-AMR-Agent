@@ -305,6 +305,11 @@ def test_process_restart_reuses_checkpoint_and_does_not_dispatch_completed_effec
     )
     first = runner.run(request)
     calls_after_first = len(registry.calls)
+    persisted_trace = store.list_trace_events(run_id)
+    assert persisted_trace
+    assert [event.sequence for event in persisted_trace] == list(
+        range(1, len(persisted_trace) + 1)
+    )
     dispatch_key = make_effect_idempotency_key(run_id, 1, "TASK-DISPATCH")
     effect = store.get_effect(dispatch_key)
     assert effect is not None and effect.result is not None
@@ -330,6 +335,8 @@ def test_process_restart_reuses_checkpoint_and_does_not_dispatch_completed_effec
     second = restarted.run(request)
 
     assert first.report.final_status == second.report.final_status
+    assert second.trace_id == first.trace_id
+    assert len(second.trace_events) == len(first.trace_events)
     assert len(registry.calls) == calls_after_first
     assert len(store.list_effects(run_id)) == 1
 

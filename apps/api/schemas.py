@@ -41,7 +41,9 @@ class ApprovalDecisionRequest(ApiRequest):
     """人工审批决定；P0 只接受明确批准或拒绝。"""
 
     decision: Literal["approved", "rejected"]
-    decided_by: str = Field(min_length=1, max_length=128)
+    # 兼容旧客户端的可选回显字段；服务端始终以验签 Principal.subject 为准，
+    # 不允许它冒充另一个审批人。
+    decided_by: str | None = Field(default=None, min_length=1, max_length=128)
     comment: str | None = Field(default=None, max_length=2000)
     task_id: str | None = Field(default=None, min_length=1, max_length=128)
 
@@ -52,7 +54,8 @@ class CreateEvalRunRequest(ApiRequest):
     task_contract: TaskContract
     suite_id: str = Field(min_length=1, max_length=128)
     case_ids: list[str] = Field(min_length=1)
-    requested_by: str = Field(min_length=1, max_length=128)
+    # 保留旧客户端字段但不把它作为身份来源；路由使用签名 Principal.subject。
+    requested_by: str | None = Field(default=None, min_length=1, max_length=128)
 
     @model_validator(mode="after")
     def validate_case_ids(self) -> "CreateEvalRunRequest":

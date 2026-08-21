@@ -1,0 +1,48 @@
+{
+  "additionalProperties": false,
+  "description": "一条可跳回原始 stdout/stderr 或仿真快照的证据位置。",
+  "properties": {
+    "source": {
+      "enum": [
+        "stdout",
+        "stderr",
+        "simulation",
+        "metadata"
+      ],
+      "title": "Source",
+      "type": "string"
+    },
+    "line": {
+      "anyOf": [
+        {
+          "minimum": 1,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Line"
+    },
+    "citation": {
+      "maxLength": 512,
+      "minLength": 1,
+      "title": "Citation",
+      "type": "string"
+    },
+    "excerpt": {
+      "maxLength": 512,
+      "minLength": 1,
+      "title": "Excerpt",
+      "type": "string"
+    }
+  },
+  "required": [
+    "source",
+    "citation",
+    "excerpt"
+  ],
+  "title": "VerificationEvidenceLocation",
+  "type": "object"
+}

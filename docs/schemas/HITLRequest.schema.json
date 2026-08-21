@@ -1,0 +1,138 @@
+{
+  "$defs": {
+    "HITLReason": {
+      "description": "必须停下来等待人的四类安全触发原因。",
+      "enum": [
+        "high_priority_override",
+        "human_takeover",
+        "high_risk_write",
+        "fault_recovery"
+      ],
+      "title": "HITLReason",
+      "type": "string"
+    },
+    "HITLStatus": {
+      "description": "审批状态机；不存在自动从 pending 变 approved 的转移。",
+      "enum": [
+        "pending",
+        "approved",
+        "rejected",
+        "expired"
+      ],
+      "title": "HITLStatus",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "一次绑定到具体 Checkpoint、计划和 Validator 结果的审批请求。",
+  "properties": {
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "approval_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Approval Id",
+      "type": "string"
+    },
+    "run_id": {
+      "maxLength": 64,
+      "minLength": 1,
+      "title": "Run Id",
+      "type": "string"
+    },
+    "task_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Task Id",
+      "type": "string"
+    },
+    "plan_version": {
+      "minimum": 1,
+      "title": "Plan Version",
+      "type": "integer"
+    },
+    "requested_by": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Requested By",
+      "type": "string"
+    },
+    "required_role": {
+      "const": "operator",
+      "default": "operator",
+      "title": "Required Role",
+      "type": "string"
+    },
+    "reason_code": {
+      "$ref": "#/$defs/HITLReason"
+    },
+    "reason": {
+      "maxLength": 2000,
+      "minLength": 1,
+      "title": "Reason",
+      "type": "string"
+    },
+    "checkpoint_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Checkpoint Id",
+      "type": "string"
+    },
+    "plan_digest": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Plan Digest",
+      "type": "string"
+    },
+    "validator_digest": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Validator Digest",
+      "type": "string"
+    },
+    "validator_status": {
+      "const": "valid",
+      "default": "valid",
+      "title": "Validator Status",
+      "type": "string"
+    },
+    "request_digest": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Request Digest",
+      "type": "string"
+    },
+    "requested_at": {
+      "format": "date-time",
+      "title": "Requested At",
+      "type": "string"
+    },
+    "expires_at": {
+      "format": "date-time",
+      "title": "Expires At",
+      "type": "string"
+    },
+    "status": {
+      "$ref": "#/$defs/HITLStatus",
+      "default": "pending"
+    }
+  },
+  "required": [
+    "approval_id",
+    "run_id",
+    "task_id",
+    "plan_version",
+    "requested_by",
+    "reason_code",
+    "reason",
+    "checkpoint_id",
+    "plan_digest",
+    "validator_digest",
+    "request_digest",
+    "requested_at",
+    "expires_at"
+  ],
+  "title": "HITLRequest",
+  "type": "object"
+}

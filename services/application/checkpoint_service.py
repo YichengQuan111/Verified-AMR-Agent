@@ -12,6 +12,7 @@ from collections.abc import Callable, Mapping
 from copy import deepcopy
 from datetime import datetime, timezone
 import hashlib
+from threading import RLock
 from uuid import uuid4
 
 from sqlalchemy.exc import IntegrityError
@@ -30,6 +31,7 @@ from agent.runtime.checkpoint import (
     make_effect_idempotency_key,
     to_jsonable,
 )
+from agent.runtime.trace import TraceEvent
 from agent.tools.contracts import ToolName, ToolResult
 from pydantic import BaseModel, JsonValue
 from services.application.exceptions import (
@@ -87,6 +89,10 @@ class PostgresRuntimeStore(RuntimePersistenceProtocol):
         self._session_factory = session_factory
         self._new_id = identifier_factory
         self._clock = clock
+        # understand 模型事件发生在 TaskContract 首次落库之前；先在进程内缓冲，
+        # ensure_run 建立 runs 外键后立即补写，避免为 Trace 提前创建不完整运行行。
+        self._pending_trace_events: dict[str, list[TraceEvent]] = {}
+        self._trace_lock = RLock()
 
     def ensure_run(self, run_id: str, task_contract: TaskContract) -> None:
         """确保 PEVR 运行已经有可被 Checkpoint 更新的 ``runs`` 行。"""
@@ -100,6 +106,7 @@ class PostgresRuntimeStore(RuntimePersistenceProtocol):
                     run = RunRepository(session).get(run_id, for_update=True)
                     if run is not None:
                         self._assert_run_contract(run, task_contract)
+                        self._flush_pending_trace_events(session, run_id)
                         return
                     status = "waiting_approval" if task_contract.approval.required else "planning"
                     run = RunRecord(
@@ -136,8 +143,86 @@ class PostgresRuntimeStore(RuntimePersistenceProtocol):
                         )
                     )
                     session.flush()
+                    self._flush_pending_trace_events(session, run_id)
         except IntegrityError as exc:
             raise PersistenceConflictError("初始化 Checkpoint 运行时发生并发冲突") from exc
+
+    def append_trace_event(self, event: TraceEvent) -> None:
+        """把 Trace 写入既有 events 表；运行行尚未创建时短暂排队。"""
+
+        with self._trace_lock:
+            with self._session_factory() as session:
+                with session.begin():
+                    run = RunRepository(session).get(event.run_id, for_update=True)
+                    if run is None:
+                        self._pending_trace_events.setdefault(event.run_id, []).append(
+                            event.model_copy(deep=True)
+                        )
+                        return
+                    self._flush_pending_trace_events(session, event.run_id)
+                    self._insert_trace_event(session, event)
+
+    def _flush_pending_trace_events(self, session: Session, run_id: str) -> None:
+        """在 runs 外键可用后按 Trace 序号补写 understand 前缓存的事件。"""
+
+        with self._trace_lock:
+            pending = sorted(
+                self._pending_trace_events.pop(run_id, []),
+                key=lambda item: item.sequence,
+            )
+            for event in pending:
+                self._insert_trace_event(session, event)
+
+    def _insert_trace_event(self, session: Session, event: TraceEvent) -> None:
+        """插入单条 Trace 事件，并以 payload 中的 trace 序号做幂等校验。"""
+
+        event_id = f"trace_{hashlib.sha256(f'{event.run_id}:{event.trace_id}:{event.sequence}'.encode('utf-8')).hexdigest()[:56]}"
+        existing = session.get(EventRecord, event_id)
+        if existing is not None:
+            if existing.payload != event.model_dump(mode="json"):
+                raise PersistenceConflictError("同一 Trace 序号不能覆盖不同事件")
+            return
+        events = EventRepository(session)
+        trace_events = [
+            record
+            for record in events.list_for_run(event.run_id)
+            if isinstance(record.payload, Mapping)
+            and record.payload.get("trace_id") == event.trace_id
+        ]
+        expected = max(
+            [int(record.payload.get("sequence", 0)) for record in trace_events] or [0]
+        ) + 1
+        if event.sequence != expected:
+            raise PersistenceConflictError(
+                f"Trace 序号不连续，期待 {expected}，收到 {event.sequence}"
+            )
+        events.add(
+            EventRecord(
+                event_id=event_id,
+                run_id=event.run_id,
+                sequence_no=events.next_sequence(event.run_id),
+                event_type=f"trace.{event.event_type}"[:64],
+                node_name=event.node,
+                task_id=event.task_id,
+                severity=("error" if event.status in {"failed", "timeout", "denied"} else "info"),
+                payload=event.model_dump(mode="json"),
+                created_at=event.finished_at,
+            )
+        )
+        session.flush()
+
+    def list_trace_events(self, run_id: str) -> list[TraceEvent]:
+        """按 Trace sequence 读取 events 表中的结构化事件，供恢复补齐快照。"""
+
+        with self._session_factory() as session:
+            records = EventRepository(session).list_for_run(run_id)
+            events: list[TraceEvent] = []
+            for record in records:
+                payload = record.payload
+                if not isinstance(payload, Mapping) or not payload.get("trace_id"):
+                    continue
+                events.append(TraceEvent.model_validate(payload))
+            return sorted(events, key=lambda item: item.sequence)
 
     def save_checkpoint(self, checkpoint: CheckpointSnapshot) -> CheckpointSnapshot:
         """原子保存最新状态、计划快照和审计事件。"""

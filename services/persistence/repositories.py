@@ -174,6 +174,19 @@ class ApprovalRepository:
     def add(self, record: ApprovalRecord) -> None:
         self.session.add(record)
 
+    def get(
+        self,
+        approval_id: str,
+        *,
+        for_update: bool = False,
+    ) -> ApprovalRecord | None:
+        """按稳定审批 ID 读取记录；恢复/决定审批时可选行锁。"""
+
+        statement = select(ApprovalRecord).where(ApprovalRecord.approval_id == approval_id)
+        if for_update:
+            statement = statement.with_for_update()
+        return self.session.scalar(statement)
+
     def get_pending(
         self,
         run_id: str,

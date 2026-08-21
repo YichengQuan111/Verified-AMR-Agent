@@ -8,6 +8,7 @@ from pathlib import Path
 
 from sqlalchemy.exc import IntegrityError
 
+from agent.security import AuthorizationError, Principal, authorize_document
 from services.application.contracts import (
     DocumentMetadataInput,
     DocumentView,
@@ -15,6 +16,7 @@ from services.application.contracts import (
 )
 from services.application.exceptions import (
     DocumentTooLargeError,
+    DocumentAccessDeniedError,
     InvalidDocumentError,
     PersistenceConflictError,
     ResourceNotFoundError,
@@ -90,13 +92,25 @@ class DocumentService:
             raise PersistenceConflictError("文档写入冲突，事务已回滚") from exc
         return result
 
-    def get_document(self, document_id: str) -> StoredDocument:
+    def get_document(
+        self,
+        document_id: str,
+        *,
+        principal: Principal | None = None,
+    ) -> StoredDocument:
         """返回元数据和正文；Router 默认只暴露元数据。"""
 
         with self._session_factory() as session:
             record = DocumentRepository(session).get(document_id)
             if record is None:
                 raise ResourceNotFoundError(f"文档不存在: {document_id}")
+            if principal is not None:
+                try:
+                    authorize_document(principal, record.role_scope)
+                except (AuthorizationError, ValueError) as exc:
+                    # 不区分“没有文档”和“无权文档”，避免通过响应时间/错误码
+                    # 枚举受保护文档的存在性。
+                    raise DocumentAccessDeniedError("文档不存在") from exc
             return StoredDocument(
                 metadata=self._to_document_view(record),
                 content=record.content,

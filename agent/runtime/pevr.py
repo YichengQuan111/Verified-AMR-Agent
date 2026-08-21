@@ -14,6 +14,8 @@ from typing import Literal, TypedDict
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, JsonValue, model_validator
 
+from agent.runtime.hitl import ApprovalGrant, HITLInterrupt
+from agent.security.contracts import Principal
 from agent.context.contracts import (
     BudgetUsage,
     ContextEvidence,
@@ -25,6 +27,7 @@ from agent.planning.contracts import TaskContract
 from agent.planning.replanner import TaskResourceProvenance
 from agent.planning.validator import PlanValidationResult
 from agent.runtime.state import Observation, RunState
+from agent.runtime.trace import TraceEvent
 from agent.tools.contracts import ToolName, ToolResult, ToolResultStatus, UserRole
 from services.amr_simulator.contracts import SimulationPlan
 from services.model_gateway.contracts import ModelVersionRecord
@@ -64,14 +67,18 @@ PEVR_STAGE_ORDER: tuple[PEVRStage, ...] = (
 class PEVRRequest(PEVRContract):
     """一次主闭环调用的入口参数。
 
-    ``approval_granted`` 只能由上层可信调用上下文提供，不能由自然语言或 LLM
-    自己设置；P0-16 接入真实 RBAC/HITL 后应替换为审批存储的确定性查询。
+    ``approval_granted`` 仅为 P0-13 离线兼容夹具保留；一旦绑定 Principal，入口会拒绝
+    这个 legacy 布尔开关。安全生产调用必须使用验签 Principal 和由 HITL Store 核验的
+    ApprovalGrant，不能由自然语言或 LLM 自己设置。
     """
 
     schema_version: Literal["1.0"] = "1.0"
     # PostgreSQL runs.run_id 是 String(64)；公共入口先拒绝超长值，避免运行到
     # Checkpoint 才由数据库驱动报错，形成 Pydantic/DB 字段漂移。
     run_id: str = Field(min_length=1, max_length=64)
+    # Trace ID 可由上游链路传入；缺省时由 PEVR runner 在运行开始处生成，恢复时
+    # 则优先复用 Checkpoint 中的既有值，保证同一 run 不会被切成多条不可关联轨迹。
+    trace_id: str | None = Field(default=None, min_length=1, max_length=128)
     raw_request: str = Field(min_length=1, max_length=4000)
     environment_ref: str = Field(default="warehouse_v1@seed-v1", min_length=1, max_length=256)
     principal_role: UserRole = UserRole.OPERATOR
@@ -80,6 +87,10 @@ class PEVRRequest(PEVRContract):
     # 的安全上限，实际请求还会受 Fast 单次 8192 上下文和累计预算约束，避免
     # 把合法 Planner 输出在 JSON 字符串中途截断。更大的需求需由上层显式承担。
     requested_output_tokens: int = Field(default=4096, gt=0)
+    # 真实安全入口使用验签 Principal 和审批票据；legacy bool 只为 P0-13
+    # 本地兼容测试保留，且不能与真实身份同时出现。
+    principal: Principal | None = None
+    approval_grant: ApprovalGrant | None = None
     approval_granted: bool = False
 
     @model_validator(mode="after")
@@ -92,6 +103,10 @@ class PEVRRequest(PEVRContract):
             raise ValueError("P0-13 只允许受控 warehouse_v1 环境快照")
         if self.principal_role is not UserRole.OPERATOR:
             raise ValueError("P0-13 正常执行链必须由 operator 调用")
+        if self.principal is not None and self.principal.role is not self.principal_role:
+            raise ValueError("principal.role 必须与 principal_role 一致")
+        if self.principal is not None and self.approval_granted:
+            raise ValueError("安全身份不能使用 legacy approval_granted")
         if isinstance(self.seed, bool):
             raise ValueError("seed 必须是整数而不是布尔值")
         return self
@@ -125,6 +140,7 @@ class PEVRToolEvidence(PEVRContract):
     status: ToolResultStatus
     tool_version: str | None
     principal_role: UserRole | None
+    principal_subject: str | None = None
     input_digest: str | None
     output_digest: str | None
     evidence_refs: list[str]
@@ -142,6 +158,7 @@ class PEVRToolEvidence(PEVRContract):
             status=result.status,
             tool_version=result.tool_version,
             principal_role=result.principal_role,
+            principal_subject=result.principal_subject,
             input_digest=result.input_digest,
             output_digest=result.output_digest,
             evidence_refs=list(result.evidence_refs),
@@ -172,6 +189,9 @@ class PEVRRunReport(PEVRContract):
 
     schema_version: Literal["1.0"] = "1.0"
     run_id: str = Field(min_length=1, max_length=64)
+    # 报告与 PEVRRunResult/验证报告共享同一 Trace 关联键；旧 Checkpoint 缺少该
+    # 字段时仍允许读取 None，由新运行在入口处补齐。
+    trace_id: str | None = Field(default=None, min_length=1, max_length=128)
     final_status: FinalReportStatus
     state_version: str
     plan_version: int = Field(ge=1)
@@ -210,6 +230,7 @@ class PEVRRunResult(PEVRContract):
     """主图返回值；既给调用方最终报告，也保留可复核的 RunState 和证据。"""
 
     request: PEVRRequest
+    trace_id: str = Field(min_length=1, max_length=128)
     report: PEVRRunReport
     run_state: RunState
     stage_trace: list[PEVRTraceEvent]
@@ -217,12 +238,21 @@ class PEVRRunResult(PEVRContract):
     observations: list[Observation]
     verification: ObservationVerification
     resource_provenance: list[TaskResourceProvenance]
+    trace_events: list[TraceEvent]
+
+    @property
+    def trace(self) -> list[TraceEvent]:
+        """为报告/调用方提供更短的 Trace 读取别名，不复制事件数据。"""
+
+        return self.trace_events
 
 
 class PEVRGraphState(TypedDict, total=False):
     """LangGraph 的受控信封；业务事实始终放在 ``run_state`` 中。"""
 
     request: PEVRRequest
+    trace_id: str
+    trace_events: list[TraceEvent]
     stage: PEVRStage
     stage_trace: list[PEVRTraceEvent]
     run_state: RunState | None
@@ -242,6 +272,8 @@ class PEVRGraphState(TypedDict, total=False):
     model_version: ModelVersionRecord | None
     budget_usage: BudgetUsage
     model_call_count: int
+    hitl_interrupt: HITLInterrupt | None
+    approval_grant: ApprovalGrant | None
 
 
 __all__ = [
@@ -254,4 +286,7 @@ __all__ = [
     "PEVRToolEvidence",
     "PEVRTraceEvent",
     "PEVR_STAGE_ORDER",
+    "TraceEvent",
+    "ApprovalGrant",
+    "HITLInterrupt",
 ]

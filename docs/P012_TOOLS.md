@@ -39,7 +39,7 @@ ToolName
 | `validate_fleet_plan` | `plan`, `environment_ref`, `ruleset_version?` | `ValidationResponse` | viewer/operator | 10s | 是 / 否 | 参数、`unsafe_plan`、C++ 不可用 |
 | `dispatch_simulation` | `plan`, `seed`, `until_time?` | `SimulationResult` | operator | 30s | 是 / 是 | 未验证计划、Validator 超时、仿真故障 |
 | `query_execution_state` | `run_id`, `task_ids?`, `amr_ids?` | `ExecutionStateOutput` | viewer/operator | 5s | 是 / 否 | 状态不存在、筛选 ID 不存在 |
-| `run_verification_suite` | `suite_id`, `run_id?`, `case_ids?` | `VerificationSuiteOutput` | operator | 120s | 是 / 是 | 固定套件/Case 不合法、超时、入口不可用 |
+| `run_verification_suite` | `suite_id`, `run_id?`, `trace_id?`, `case_ids?` | `VerificationSuiteOutput`（逐 case 状态、失败类型、证据位置、JSON/Markdown 报告） | operator | 120s | 是 / 是 | 固定套件/Case 不合法、超时、入口不可用 |
 | `request_approval` | `run_id`, `task_id`, `reason`, `expires_at?` | `ApprovalRequestOutput` | operator | 5s | 是 / 是 | 参数、审批存储冲突/不可用 |
 
 `requires_approval=true` 的 `dispatch_simulation` 是声明性安全元数据：它表达

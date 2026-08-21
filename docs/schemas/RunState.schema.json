@@ -195,9 +195,17 @@
           "type": "integer"
         },
         "max_replans": {
+          "default": 2,
           "maximum": 2,
           "minimum": 0,
           "title": "Max Replans",
+          "type": "integer"
+        },
+        "max_retries": {
+          "default": 2,
+          "maximum": 4,
+          "minimum": 0,
+          "title": "Max Retries",
           "type": "integer"
         }
       },
@@ -205,8 +213,7 @@
         "max_total_seconds",
         "max_input_tokens",
         "max_output_tokens",
-        "max_tool_steps",
-        "max_replans"
+        "max_tool_steps"
       ],
       "title": "ExecutionBudgets",
       "type": "object"
@@ -222,6 +229,93 @@
       ],
       "title": "FallbackStrategy",
       "type": "string"
+    },
+    "FaultRecord": {
+      "additionalProperties": false,
+      "description": "已经处理过的故障审计记录，用于 Checkpoint 恢复时防止状态循环。",
+      "properties": {
+        "fault_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Fault Id",
+          "type": "string"
+        },
+        "category": {
+          "maxLength": 64,
+          "minLength": 1,
+          "title": "Category",
+          "type": "string"
+        },
+        "code": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Code",
+          "type": "string"
+        },
+        "action": {
+          "maxLength": 32,
+          "minLength": 1,
+          "title": "Action",
+          "type": "string"
+        },
+        "task_id": {
+          "anyOf": [
+            {
+              "maxLength": 128,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Task Id"
+        },
+        "tool_name": {
+          "anyOf": [
+            {
+              "maxLength": 64,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Tool Name"
+        },
+        "observed_at": {
+          "format": "date-time",
+          "title": "Observed At",
+          "type": "string"
+        },
+        "retry_count": {
+          "minimum": 0,
+          "title": "Retry Count",
+          "type": "integer"
+        },
+        "replan_count": {
+          "minimum": 0,
+          "title": "Replan Count",
+          "type": "integer"
+        },
+        "terminal": {
+          "title": "Terminal",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "fault_id",
+        "category",
+        "code",
+        "action",
+        "observed_at",
+        "retry_count",
+        "replan_count",
+        "terminal"
+      ],
+      "title": "FaultRecord",
+      "type": "object"
     },
     "GridPosition": {
       "additionalProperties": false,
@@ -878,6 +972,20 @@
           ],
           "default": null
         },
+        "principal_subject": {
+          "anyOf": [
+            {
+              "maxLength": 128,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Principal Subject"
+        },
         "input_digest": {
           "anyOf": [
             {
@@ -1124,6 +1232,19 @@
       "minimum": 0,
       "title": "Replan Count",
       "type": "integer"
+    },
+    "retry_count": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Retry Count",
+      "type": "integer"
+    },
+    "fault_history": {
+      "items": {
+        "$ref": "#/$defs/FaultRecord"
+      },
+      "title": "Fault History",
+      "type": "array"
     }
   },
   "required": [

@@ -194,6 +194,7 @@ class StandalonePromptNode:
             tool_steps=usage.tool_steps,
             elapsed_seconds=usage.elapsed_seconds + elapsed_seconds,
             replans=usage.replans + int(count_replan),
+            retries=usage.retries,
         )
 
     @staticmethod
