@@ -1,0 +1,15 @@
+# P0-20 Compose API 最小锁；版本与根目录 requirements.lock 的直接依赖保持一致。
+# 不包含 sentence-transformers/PyTorch/模型权重，避免 API 容器承担宿主机 Embedding 职责。
+alembic==1.18.4
+fastapi==0.141.1
+httpx==0.28.1
+openai==3.3.0
+psycopg[binary]==3.3.4
+pydantic==2.13.4
+python-multipart==0.0.32
+PyYAML==6.0.3
+PyJWT==2.13.0
+SQLAlchemy==2.0.50
+sse-starlette==3.4.8
+structlog==26.1.0
+uvicorn==0.52.3

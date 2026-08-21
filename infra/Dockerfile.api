@@ -1,0 +1,29 @@
+# P0-20 API 镜像只承载 FastAPI 与持久化边界；本地 Qwen 不复制进镜像。
+FROM python:3.12-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_NO_CACHE_DIR=1
+
+WORKDIR /app
+
+# API 镜像只安装 HTTP/数据库/配置边界的锁定依赖；本地 Embedding 与 Fast 模型仍在宿主机，
+# 因而不会把 sentence-transformers、PyTorch 或任何模型权重带进 Compose。完整 P0 运行环境
+# 仍由仓库根目录 requirements.lock 管理，二者的版本取自同一份锁定结果。
+COPY infra/requirements.api.lock /app/requirements.api.lock
+RUN python -m pip install --upgrade pip \
+    && python -m pip install --no-cache-dir -r /app/requirements.api.lock
+
+COPY . /app
+
+# API 不需要 root 权限；模型、数据库密码和主机路径均通过运行时配置注入。
+RUN addgroup --system amr \
+    && adduser --system --ingroup amr amr \
+    && chown -R amr:amr /app
+USER amr
+
+EXPOSE 8000
+
+# compose.yaml 覆盖此默认命令，以便先执行幂等迁移并再启动 Uvicorn。
+CMD ["python", "-m", "uvicorn", "apps.api.main:app", "--host", "0.0.0.0", "--port", "8000"]

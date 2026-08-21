@@ -134,3 +134,18 @@ Fast 服务已在测试后停止，8080 无监听。该失败不改变 P0-18 离
 `p013-e2e-fast-16k-fresh-20260821` 从头执行 P0-13；结果仍为退出码 `0`、8/8 阶段、4
 次模型调用、5/5 工具成功、Validator error=0、仿真完成、`ORDER-001` 完成，报告位于
 `tmp/p013_e2e_model_test_16k_fresh.json`。该 fresh run 是 16K 在线全链路通过的主要证据。
+
+## P0-20 最终复测记录
+
+为收口部署与交付，实际执行：
+
+```powershell
+.\scripts\run_p018_eval.ps1 -OutputDir .\tmp\p018_eval_p020_final
+```
+
+退出码为 0，60/60 通过；报告为 `tmp/p018_eval_p020_final/p018_eval.json`、
+`report_id=p018-415f0b3f59574772`、`report_digest=415f0b3f59574772ad71df36591628f756a79dd26224d356d5f7fb1afb0f4585`。
+本次 `model_call_count=0`、正确负向观察 16 例，RAG/Agent/AMR/安全/恢复/验证指标与七项
+zero tolerance 结果均保持既有口径：所有通过率为 1.0，七项零容忍均为 0。该报告仍是
+`offline_deterministic_oracle`，不能写成 60 例在线 Fast 模型质量验收；在线 Fast 证据另见
+`docs/TEST_REPORT.md`。

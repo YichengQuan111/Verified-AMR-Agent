@@ -665,3 +665,45 @@ Token/资源未观测的失败关闭语义。JSON 配置、PowerShell 入口、M
 | 修改 | `docs/FILE_PURPOSES.md` | 登记本步全部源码/配置/文档/Schema/测试职责；本步为文档，无核心代码注释需求。 | 唯一文件职责入口。 |
 | 修改 | `docs/HANDOFF_CONTEXT.md` | 记录 P0-19 公共契约、实际命令/结果、服务状态、离线限制、Smart 延期和下一步；本步为文档，无核心代码注释需求。 | 跨任务唯一交接入口。 |
 | 修改 | `docs/LESSONS_LEARNED.md` | 沉淀离线 oracle、源报告原始 hash 与稳定 digest、策略投影不可冒充在线质量等复用经验；本步为文档，无核心代码注释需求。 | 后续在线评测和报告设计。 |
+
+## 2026-08-21：P0-20 部署、文档与演示收口
+
+本步新增的启动脚本和部署配置补充了中文注释，说明服务顺序、宿主机模型边界、健康检查、
+失败行为和安全限制；测试文件补充中文模块/测试 docstring。Markdown、Compose YAML、
+Dockerfile、依赖锁和报告属于配置/文档/数据契约，本步无核心业务代码注释需求；`tmp/`、
+`build/`、`__pycache__/`、`.pytest_cache/` 以及在线 PEVR JSON 是自动生成物，不登记为源码交付。
+
+| 变更 | 文件 | 作用 | 调用方/下游 |
+|---|---|---|---|
+| 修改 | `compose.yaml` | 固化 `postgres`、`qdrant`、`api` 三服务、持久化卷、healthy 依赖、迁移命令、API 健康检查和宿主 Fast 可选地址；不启动模型服务。 | `scripts/start_local.ps1`、Docker 操作者、API 部署；后续 P1 若接入服务必须保持 Fast 宿主边界。 |
+| 新建 | `infra/Dockerfile.api` | 构建非 root FastAPI API 镜像；使用最小 API 锁，不复制 GGUF/Embedding/权重。 | `compose.yaml`；API 健康与迁移验收。 |
+| 新建 | `infra/requirements.api.lock` | 固定容器 HTTP/数据库/配置直接依赖，并以 `psycopg[binary]` 解决 slim 镜像 libpq 边界；不承载本地模型运行时。 | `infra/Dockerfile.api`；后续镜像构建复用。 |
+| 新建 | `.dockerignore` | 排除 Git、构建缓存、运行报告、文档渲染物、GGUF/权重和 Python 缓存，避免泄漏和膨胀构建上下文。 | Docker 构建；模型安全边界。 |
+| 新建 | `scripts/start_local.ps1` | P0-20 Windows 最简启动器；检查 Docker，启动并等待 Compose API/PostgreSQL/Qdrant，可选启动 Fast 并运行网关预检；Smart 不进入路径。 | 操作者、演示脚本、启动手册。 |
+| 新建 | `tests/unit/test_p020_deployment.py` | 静态验证三服务/健康依赖、Fast 宿主边界、镜像最小锁、Smart 禁止启动和交付文档入口；不启动外部服务。 | P0-20 定向测试和全量 smoke。 |
+| 新建 | `docs/ARCHITECTURE.md` | Mermaid 系统架构图、宿主机/容器数据边界、证据流和真实演示入口。 | README、演示人员、后续部署复核；本步无核心代码注释需求。 |
+| 新建 | `docs/API.md` | 已实现健康、运行、计划、SSE、审批、文档和评测登记 HTTP 契约，包含认证/错误/模型门禁边界；不虚构自然语言 HTTP 路由。 | API 使用者、Swagger/OpenAPI 复核；本步无核心代码注释需求。 |
+| 修改 | `docs/SERVICES_STARTUP.md` | 更新 Compose API/数据库/Qdrant/Fast 顺序、健康检查、停止方式、`host.docker.internal` 和故障排查。 | README、`start_local.ps1`、现场演示；本步无核心代码注释需求。 |
+| 修改 | `infra/README.md` | 登记 API 镜像、Compose 三服务、Fast 宿主模型和 Smart 禁用说明。 | Infra 操作者；本步无核心代码注释需求。 |
+| 新建 | `docs/TEST_REPORT.md` | 保存 P0-20 实际 Compose、一键启动、在线三次正式证据、P0-18/P0-19 digest、smoke/regression 数量和限制。 | 用户验收、交接和简历事实复核；本步无核心代码注释需求。 |
+| 新建 | `docs/DEMO_SCRIPT.md` | 固化 3 分钟演示台词、命令、自然语言→RAG→DAG→C++→仿真→验证/恢复→证据报告观察点。 | 现场演示；本步无核心代码注释需求。 |
+| 新建 | `docs/RESUME_FACTS.md` | 只汇总已实现/已实测的简历事实，明确离线 Eval、Trace Replay、Smart 和 P0 Scope 限制。 | 简历/项目介绍审查；本步无核心代码注释需求。 |
+| 修改 | `README.md` | 将项目状态推进到 P0-20，链接架构/API/测试/演示/简历文档，更新快速启动和 Compose/Fast 边界。 | 项目首页和新 Agent；本步无核心代码注释需求。 |
+| 修改 | `docs/LESSONS_LEARNED.md` | 记录 API slim/psycopg、Qdrant healthcheck、Fast 长 Prompt 与 PowerShell 插值等可复用坑。 | 后续部署/在线验收；本步无核心代码注释需求。 |
+| 修改 | `docs/FILE_PURPOSES.md` | 登记本步全部新建/修改文件、职责、公共契约和生成物边界。 | 后续每个工作包的唯一文件职责入口。 |
+| 修改 | `docs/P018_EVAL.md` | 追加 P0-20 输出目录、60/60 结果、report_id/digest 和离线/在线边界；不改写原有评测模式。 | 用户复核最终 Eval，后续 P0-19 源报告复用；本步无核心代码注释需求。 |
+| 修改 | `docs/P019_STRATEGY_COMPARISON.md` | 追加 P0-20 新源报告下的 180 条 Trace Replay、三策略指标、Smart deferred 和限制。 | 用户复核策略结论；后续在线 adapter 不能覆盖本结果；本步无核心代码注释需求。 |
+
+## 2026-08-21：P0-00～P0-20 发布前全仓审查
+
+本步只审查、运行验证并创建发布 Todo，没有修改业务代码、测试、配置、Schema 或数据库迁移，
+因此本步无核心代码注释需求。`tmp/p0_audit_*`、`tmp/p0_audit_schemas/`、pytest/CTest 缓存和
+在线模型日志均为自动生成的审查证据，不登记为源码交付物；外部 Fast 脚本/GGUF 只读取指纹，
+不属于仓库文件。
+
+| 变更 | 文件 | 作用 | 调用方/下游 |
+|---|---|---|---|
+| 新建 | `docs/P0_AUDIT_TODO.md` | 保存 P0-00～P0-20 逐项验收矩阵、4 个 Critical/7 个 High/3 个 Medium 的证据化 Todo、Release Verdict、最小修复集合、实际命令/结果、异常轨迹和未运行原因；明确 Smart 禁用不计 P0 缺陷。 | 发布决策、下一修复任务、复验、报告/简历事实校正的唯一审计入口；不是业务公共契约。 |
+| 修改 | `docs/HANDOFF_CONTEXT.md` | 将顶部状态从历史“已完成”修正为发布审计 FAIL，记录阻断事实、真实命令、服务终态、生成物和下一步修复顺序；本步无公共接口变化。 | 后续 Agent 必须先处理审计 Todo，不能根据旧 P0-20 记录直接宣称发布完成。 |
+| 修改 | `docs/FILE_PURPOSES.md` | 登记本次新建/修改文档及生成物边界；本步无核心代码注释需求。 | 保持仓库唯一文件职责入口与当前审查交付一致。 |
+| 修改 | `docs/LESSONS_LEARNED.md` | 沉淀独立 oracle、外部执行身份、安全入口 fail closed、组件测试与生产接线、数据服务 ACL 等发布审查经验；缺陷仍待 Todo 修复，不伪写为已解决。 | 后续评测、恢复、安全和部署工作包避免重复出现同类假绿/身份冲突。 |

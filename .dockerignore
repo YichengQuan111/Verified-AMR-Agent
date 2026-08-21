@@ -1,0 +1,19 @@
+.git
+.gitignore
+.dockerignore
+build/
+tmp/
+.pytest_cache/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+dist/
+docs/*.pdf
+docs/*.png
+# 本地模型和运行时大文件不属于 API 镜像；Fast 只在 Windows 主机进程中运行。
+*.gguf
+*.safetensors
+*.bin

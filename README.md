@@ -13,9 +13,11 @@
   → 带引用的证据报告
 ```
 
-当前代码范围已完成 **P0-00～P0-19**。P0-16 已把签名身份、两级 RBAC、文档 ACL、
+当前代码范围已完成 **P0-00～P0-20**。P0-16 已把签名身份、两级 RBAC、文档 ACL、
 工具白名单和 HITL/Checkpoint 审批接入安全边界；Smart Profile 因真实 P0-05 在线验收仅通过 2/5，现为硬禁用，
 只有收到用户日后的明确指示并重新完成在线验收后才能启用。
+
+部署、架构、HTTP 契约、最终验证和演示入口见：[启动手册](docs/SERVICES_STARTUP.md)、[架构图](docs/ARCHITECTURE.md)、[API 文档](docs/API.md)、[测试报告](docs/TEST_REPORT.md)、[3 分钟演示脚本](docs/DEMO_SCRIPT.md)。
 
 ## 1. 固定范围
 
@@ -53,6 +55,7 @@
 | P0-17 | 已完成 | 严格 TraceEvent（run/trace/node/task、模型/Prompt/工具版本、Token、延迟、错误、摘要和证据引用）、只允许预注册 CTest/pytest/smoke/仿真入口的受控验证、日志失败结构化解析，以及由真实退出码重算的 JSON/Markdown 验证报告。 |
 | P0-18 | 已完成 | 统一 Eval Harness、固定 25/10/10/5/10 共 60 例、地图/订单/seed/模型/Prompt/工具指纹、Agent/RAG/AMR/安全/恢复/验证指标、负向轨迹和 JSON/Markdown 报告；七项零容忍指标必须为 0。 |
 | P0-19 | 已完成（离线 Trace Replay） | 在同一 P0-18 60 例、工具、Prompt/配置和 `qwen3.6-fast` 身份下对照固定 Workflow、ReAct、PEVR；输出 180 条原始策略轨迹、完成/合法/恢复/工具错误/步数/Trace P95 汇总和公平性指纹。ReAct 不进入生产主链；Smart 对照延期而非完成。 |
+| P0-20 | 已完成 | Docker Compose 编排 API/PostgreSQL/Qdrant，Fast 继续由宿主机 Windows 脚本启动；补齐一键启动、健康检查、故障排查、架构/API/测试/Eval/策略/演示文档，并固化 3 次正式独立真实 Fast 闭环证据及最终 smoke/regression/Eval。 |
 
 明确尚未实现：真实 ROS/底盘接入；P0-15 不注册任意自动补偿工具，副作用未知
 状态仍必须人工核对。单独构造 `ToolRegistry` 时状态/审批仍默认使用进程内适配器；
@@ -120,6 +123,8 @@ BEGIN → INSERT runs → flush → INSERT events → flush → COMMIT
 | `agent/runtime/` | Observation、RunState、Checkpoint/Effect Ledger、Trace 契约、恢复协调和 PEVR 状态图。 |
 | `agent/tools/` | 9 个白名单工具名、ToolSpec/ToolResult、输入/输出 Schema、统一执行器、固定 C++/状态/审批/验证适配器。 |
 | `apps/api/` | FastAPI 应用工厂、请求 Schema、依赖和 Router。 |
+| `compose.yaml` / `infra/Dockerfile.api` | P0-20 Compose 编排与 API 非 root 镜像；不包含本地 Qwen 模型，Fast 通过宿主机脚本提供。 |
+| `scripts/start_local.ps1` | P0-20 Windows 最简启动器；依次启动并等待 Compose API/PostgreSQL/Qdrant，可选启动 Fast 并执行网关预检。 |
 | `services/model_gateway/` | 本地模型统一访问边界。 |
 | `services/application/` | 运行、计划、审批、文档以及 PostgreSQL Checkpoint/Effect Ledger 事务 Service。 |
 | `services/persistence/` | SQLAlchemy ORM、Session 工厂和 Repository。 |
@@ -132,6 +137,11 @@ BEGIN → INSERT runs → flush → INSERT events → flush → COMMIT
 | `evals/p018/` | P0-18 固定 60 例数据、严格契约、离线确定性 Harness、复现指纹、JSON/Markdown 报告和 CLI。 |
 | `evals/p019/` | P0-19 固定策略配置、P0-18 源报告 digest 门禁、三策略 Trace Replay、Token/延迟/资源可观测性标记、原始 JSONL 和汇总报告 CLI。 |
 | `docs/P019_STRATEGY_COMPARISON.md` | P0-19 公平性口径、指标定义、实测汇总、限制、Smart 延期和复核入口。 |
+| `docs/ARCHITECTURE.md` | P0-20 系统边界图、数据流、宿主机/容器职责和真实演示入口。 |
+| `docs/API.md` | P0-20 已实现 HTTP 端点、认证、健康检查、错误结构和不执行评测的边界。 |
+| `docs/TEST_REPORT.md` | P0-20 最终实际验证命令、服务状态、3 次在线闭环、P0-18/P0-19 指标与限制。 |
+| `docs/DEMO_SCRIPT.md` | P0-20 3 分钟演示台词、命令、观察点和失败恢复/证据报告展示顺序。 |
+| `docs/RESUME_FACTS.md` | 仅汇总已经实现且已经实测的可对外表述事实；明确 Smart 与离线评测限制。 |
 | `domains/amr_warehouse/` | 仓储领域契约和种子数据。 |
 | `migrations/` | Alembic 前向迁移。 |
 | `tests/` | 单元、契约、真实 PostgreSQL 集成和 C++ 冒烟测试。 |
@@ -146,6 +156,7 @@ BEGIN → INSERT runs → flush → INSERT events → flush → COMMIT
 | Qdrant | `http://localhost:6333` |
 | Embedding | `E:\Llama.cpp\Embedding`（Qwen3-Embedding-0.6B，维度动态读取） |
 | FastAPI | `http://127.0.0.1:8000` |
+| Compose API | `http://127.0.0.1:8000`（容器内端口 `8000`，默认不把宿主 Fast 作为启动硬依赖） |
 | 模型 API | `http://127.0.0.1:8080/v1` |
 | Fast 模型脚本 | `E:\Llama.cpp\start-qwen3.6-agent.cmd` |
 | Smart 模型脚本 | `E:\Llama.cpp\start-qwen3.8-agent.cmd`（暂时禁用，不得启动） |
@@ -163,14 +174,23 @@ Set-Location 'C:\Users\QYC\Documents\AMR_Agent'
   -r .\requirements-dev.lock
 ```
 
-### 7.2 启动基础设施并迁移
+### 7.2 一键启动 Compose 栈
 
-先启动 Docker Desktop，确认 Engine 可用，再执行：
+先启动 Docker Desktop，确认 Engine 可用，再从仓库根目录执行：
 
 ```powershell
-docker compose up -d postgres qdrant
-docker compose ps
-& 'E:\Anaconda\envs\torch128\python.exe' .\scripts\migrate_database.py upgrade
+.\scripts\start_local.ps1
+```
+
+该命令启动 `api`、`postgres`、`qdrant`，API 容器会在启动时执行幂等前向迁移，并等待数据库/Qdrant 健康。需要真实 Fast 闭环时使用：
+
+```powershell
+.\scripts\start_local.ps1 -StartFast
+```
+
+Fast 仍由 `E:\Llama.cpp\start-qwen3.6-agent.cmd` 在 Windows 宿主机启动；Compose API 不复制模型文件，也不引入远程模型依赖。独立核对数据库迁移时执行：
+
+```powershell
 & 'E:\Anaconda\envs\torch128\python.exe' .\scripts\migrate_database.py check
 ```
 
@@ -188,27 +208,35 @@ docker compose ps
 .\scripts\run_smoke.ps1 -SkipCpp
 ```
 
-最近一次完整验证基线（2026-08-21，P0-16 完成后）：
+最近一次完整验证基线（2026-08-21，P0-20 完成后）：
 
-- pytest：215/215 通过，唯一警告为既有 `jieba/pkg_resources` 弃用警告。
+- pytest：238/238 通过；明确集成回归另跑 18/18 通过；唯一警告为既有 `jieba/pkg_resources` 弃用警告。
 - CTest：34/34 通过；新增反例确认未分配/空闲 AMR 的初始位置仍会阻断冲突路线。
 - Alembic：`0001_p006_core (head)`，8 张核心表缺失数 0。
 - Qdrant：健康检查通过，`amr_warehouse_knowledge` 保留 70 个正式 points。
-- Fast Qwen：alias 门禁通过；三个独立 `run_id` 的真实 PEVR 均 `completed`，每次都是
-  8/8 阶段、5/5 工具、Validator error=0、仿真完成。验收后 8080 已释放。
+- Compose：`amr-api`、`amr-postgres`、`amr-qdrant` 均通过 healthcheck；API 镜像使用最小锁定依赖，
+  Fast/Embedding 不进入镜像。
+- Fast Qwen：alias 门禁、20/20 结构化和 P0-05 五节点 5/5 通过；正式审计的三个独立真实 PEVR
+  `p014-fast-online-1/2/3-20260821` 均 `completed`，每次 8/8 阶段、5/5 工具、Validator
+  error=0、仿真完成。P0-20 追加 fresh 尝试的长上下文超时未计入成功；验收后 8080 已释放。
 - Smart Qwen：未启动；禁用门禁实测返回 `MODEL_PROFILE_DISABLED`。历史在线 P0-05
   节点仅 2/5，因此未把 Smart 记为通过。
 
 ### 7.4 模型与 API
 
-需要真实模型时，只启动 Fast，再运行：
+需要真实模型时，只启动 Fast，再运行宿主机网关预检；Compose API 可以先独立健康：
 
 ```powershell
 & 'E:\Anaconda\envs\torch128\python.exe' .\scripts\check_model_gateway.py
+Invoke-RestMethod 'http://127.0.0.1:8000/health'
+```
+
+Compose 默认 `MODEL_GATEWAY_VALIDATE_ON_STARTUP=false`，只用于把容器健康与宿主机模型生命周期解耦；真实模型链路仍必须通过 `check_model_gateway.py --profile fast`。如需宿主机开发 API，才使用本地 Uvicorn，并先启动 Fast：
+
+```powershell
 & 'E:\Anaconda\envs\torch128\python.exe' -m uvicorn apps.api.main:app --host 127.0.0.1 --port 8000
 ```
 
-隔离测试可以关闭启动期模型门禁；生产/真实联调不得用这个开关掩盖模型未启动或 alias 错误。
 不要启动或选择 Smart；环境变量不能绕过其 `enabled=false` 门禁。
 
 完整启动顺序见 [docs/SERVICES_STARTUP.md](docs/SERVICES_STARTUP.md)。
@@ -460,7 +488,13 @@ P0-19 复用 P0-18 的 60 例和逐例 Trace，在同一 Prompt/ToolSpec/配置�
 & 'E:\Anaconda\envs\torch128\python.exe' -m pytest tests\unit\test_p019_compare.py -q -p no:cacheprovider
 ```
 
-## 21. 协作与交接入口
+## 21. P0-20 部署与演示收口
+
+Compose 服务和宿主机模型的边界、健康检查、服务顺序、停止方式与故障定位见 [docs/SERVICES_STARTUP.md](docs/SERVICES_STARTUP.md)。系统数据流见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)，已实现 HTTP 契约见 [docs/API.md](docs/API.md)。
+
+3 分钟演示按以下顺序覆盖：自然语言订单 → 本地 Fast 理解 → RAG 证据 → DAG → C++ 分配/路径/验证 → 仿真 → Observation 验证与异常恢复 → 带引用证据报告；可复现实测命令、3 次闭环和限制见 [docs/DEMO_SCRIPT.md](docs/DEMO_SCRIPT.md) 与 [docs/TEST_REPORT.md](docs/TEST_REPORT.md)。可写入简历的事实只取 [docs/RESUME_FACTS.md](docs/RESUME_FACTS.md)，其中不把离线 oracle/Trace Replay 当在线模型质量，也不把 Smart 写成完成。
+
+## 22. 协作与交接入口
 
 开始任何新任务前，按顺序阅读：
 

@@ -387,3 +387,99 @@
   artifact 记录，不静默覆盖旧对照结论。
 - 后续避免：在线/离线评测的报告身份至少拆分原始 artifact hash、报告 digest 和去除
   wall-clock 的业务 Trace digest；不要把一次外部验证运行的可变日志摘要误当成永久基线。
+
+## 2026-08-21 · Compose API 镜像不能直接复用包含本地 Embedding 的全量锁
+
+- 现象：直接在 `python:3.12-slim` 中安装根目录 `requirements.lock` 会解析出
+  `sentence-transformers`、PyTorch 和 CUDA 运行时；改成最小依赖后，纯 `psycopg` 又因
+  缺少 libpq/`psycopg_c` 使容器迁移失败。
+- 原因：Windows 宿主机的全量 P0 环境与 Compose API 的 HTTP/数据库边界不是同一个运行时；
+  slim 镜像也不自带 PostgreSQL 客户端库。
+- 最终解决：新增 `infra/requirements.api.lock`，保留 API 实际导入所需的固定版本并使用
+  `psycopg[binary]`；Embedding、Fast 模型和权重继续留在宿主机，容器构建和真实迁移/健康检查均通过。
+- 后续避免：部署镜像应按进程职责拆分锁文件；每个新镜像至少实测“构建→迁移→健康→导入”，
+  不能只依赖开发环境已安装的包。
+
+## 2026-08-21 · Compose 健康检查要以目标镜像实际工具为准
+
+- 现象：Qdrant 镜像不保证提供 `curl` 或 `wget`，用常见 HTTP 命令写健康检查会在服务正常时误报 unhealthy。
+- 原因：健康检查脚本运行在容器内部，不是宿主 PowerShell；镜像内置工具集合和宿主不同。
+- 最终解决：对固定 Qdrant 镜像用 Bash `/dev/tcp` 请求 `/readyz` 并匹配 HTTP 200；宿主启动器另行调用真实 URL 和 `check_qdrant.py`。
+- 后续避免：新增 Compose healthcheck 前先在目标镜像中手工执行同一命令，并同时保留客户端层检查。
+
+## 2026-08-21 · 本地 Fast 长 Prompt 冷启动必须与成功 E2E 证据分开
+
+- 现象：本次用全新 `p020-*` run_id 重测时，Fast alias/20 例短结构化/5 个 P0-05 节点均通过，
+  但较长 PEVR `plan_tasks` 请求受宿主机 GPU/CPU/MoE 吞吐影响，在固定 300 秒累计预算内超时。
+- 原因：健康接口只证明服务进程可访问；短 Prompt 不代表 6K～9K token 上下文的生成耗时，且复用旧
+  `run_id` 还可能把恢复结果误当从头运行。
+- 最终解决：不放宽 PEVR 预算、不把失败重测算通过；正式连续成功证据继续绑定三个独立的已完成
+  run_id，并在 P0-20 报告单列 fresh 尝试的失败原因。Smart 仍未启动。
+- 后续避免：在线验收必须记录实际服务器命令行、上下文窗口、输入/输出 token 和冷启动/热启动
+  状态；三次成功必须使用新 run_id，并把失败尝试与通过样本分开统计。
+
+## 2026-08-21 · PowerShell 冒号插值会让一键启动器在执行前失败
+
+- 现象：`Write-Host "[ok] $Name: $Uri"` 在启动脚本解析阶段报变量引用错误，Compose 实际还未执行。
+- 原因：PowerShell 将紧邻冒号的 `$Name:` 解析成变量名的一部分。
+- 最终解决：改用 `"[ok] ${Name}: $Uri"`，随后一键启动和 `-StartFast` 两条路径均通过真实健康检查。
+- 后续避免：启动脚本中变量后紧接冒号、点号或路径分隔符时显式使用 `${variable}`，并在交付前直接执行脚本而不是只做文本审查。
+
+## 2026-08-21 · 发布 Eval 必须用独立 oracle 判真实观察，不能由 scenario 分支自证
+
+- 现象：P0-18 报告稳定 60/60，但把首例 `oracle` 改成“必须失败、重复副作用 999”后仍通过；
+  prompt-injection 样例的攻击文本没有进入 Prompt，runner 仍能通过捕获自己抛出的异常记为阻断。
+- 原因：`run_case` 只比较 runner 根据 scenario 自己产生的 outcome/code，不消费 `case.oracle`；正常、
+  RAG、恢复和安全分支又有自生成路径，期望与观察没有独立来源。
+- 当前处置：发布审查将 P0-18 标为 FAIL，并在 `docs/P0_AUDIT_TODO.md` 登记 `AUDIT-H01`；本轮按
+  用户要求不修改 runner，旧 60/60 只可称为 fixture 回归，不能作为发布验收。
+- 后续避免：为每个 oracle 字段做消费覆盖和 mutation test；发布 Harness 必须从真实
+  PEVR/ToolRegistry/C++/Simulator/HITL/Checkpoint 取得观察，再由独立 predicate 判定。故意破坏
+  oracle 或生产 adapter 时报告必须变红。
+
+## 2026-08-21 · 外部执行 ID 不能只由业务 payload 摘要充当全局身份
+
+- 现象：相同计划/seed 的 6 个不同 run 都生成
+  `simulation-b7551b825b817593d1e700fe`；按该 ID 查询恢复快照得到多条 Effect 并抛
+  `PersistenceConflictError`，已完成 run 无法重放核对。
+- 原因：payload digest 适合证明“输入是否相同”，不等于“哪一次外部执行”；外部状态查询却把它
+  当成全局唯一执行 ID，缺少 run/effect namespace 和数据库唯一性约束。
+- 当前处置：发布审查将其列为 `AUDIT-C02` Critical；未迁移数据、未重放副作用，也没有用删除冲突
+  行掩盖问题。
+- 后续避免：执行身份至少绑定 `run_id + plan_version + task/effect id`，payload digest 作为另一个
+  不可变校验字段；恢复测试必须包含相同 payload 的跨 run、并发恢复和 handler/ledger 事务窗口强杀。
+
+## 2026-08-21 · 安全兼容开关必须在发布装配层 fail closed
+
+- 现象：P0-16 的 JWT/HITL 单测全部通过，但真实演示 CLI 以 `principal=null`、
+  `approval_grant=null` 和 legacy `approval_granted=true` 完成 dispatch；数据库正式 run 有 Effect
+  而无 Approval。
+- 原因：底层支持安全模式不等于发布入口启用了安全模式；Runner 默认 `security_required=false`，
+  测试兼容布尔值仍被正式脚本调用。
+- 当前处置：发布审查列为 `AUDIT-C01` Critical，相关历史在线 run 只证明正常功能链，不再证明
+  HITL 安全链；本轮未删除兼容字段或伪造 Approval 记录。
+- 后续避免：安全属性必须从 release composition root 强制注入并用真实入口反例验收；test-only
+  开关应在类型、模块或构建 profile 上与发布入口隔离。验收至少核对 Principal、Approval、Checkpoint、
+  Effect 四类数据库事实，而不是只看工具返回 success。
+
+## 2026-08-21 · 组件恢复测试通过不代表生产状态图已经接线
+
+- 现象：`FaultRecoveryController`/LocalReplanner 集成测试通过，但生产 PEVR timeout、infeasible 和
+  blocked 仍直接抛错；三个模型超时 run 的最后 Trace 已 failed，数据库状态却长期为 `planning`。
+- 原因：分类器/控制器与固定八阶段图分别实现，非测试生产代码没有调用 Controller，也没有
+  failure→retry/replan/human/fatal 条件边或受信任外层循环。
+- 当前处置：发布审查列为 `AUDIT-C03` Critical；组件测试结果继续保留，但文档不得再把它描述成
+  已完成的生产异常闭环。
+- 后续避免：工作包验收矩阵必须包含“定义→调用点→状态转移→持久化终态→真实故障轨迹”五层证据；
+  `rg` 调用图和生产入口失败注入应成为恢复能力的固定发布检查。
+
+## 2026-08-21 · 应用层 ACL 不能保护可匿名直连的底层数据服务
+
+- 现象：应用 RAG ACL 评测为 0 leak，但匿名 Qdrant scroll 可读取全部 70 个 chunk，包括 25 个
+  operator-only；Compose 还公开 PostgreSQL/Qdrant 端口和已知默认 JWT/数据库 secret。
+- 原因：只测试经过 FastAPI/Retriever 的授权路径，没有把容器端口、服务认证和默认 secret 纳入
+  同一威胁模型；调用方可绕过应用层直接访问存储。
+- 当前处置：发布审查列为 `AUDIT-C04` Critical；当前 Compose 保持运行供用户环境使用，但明确记录
+  实际端口绑定和风险，没有把 localhost 文档描述当作网络隔离证据。
+- 后续避免：数据服务默认只加入内部 network，缺强 secret 时 fail startup；部署反例必须从应用外
+  直接探测数据库/Qdrant，并验证匿名、旧 secret、viewer 和 operator 四种路径。

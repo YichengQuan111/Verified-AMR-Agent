@@ -1,19 +1,28 @@
+name: amr_agent
+
 services:
   postgres:
     image: postgres:17
     container_name: amr-postgres
     restart: unless-stopped
     environment:
-      POSTGRES_USER: amr
-      POSTGRES_PASSWORD: 123456
-      POSTGRES_DB: amr_agent
+      POSTGRES_USER: ${POSTGRES_USER:-amr}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-123456}
+      POSTGRES_DB: ${POSTGRES_DB:-amr_agent}
     ports:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    # API 只在数据库接受连接后启动；pg_isready 不执行写操作。
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 5s
 
   qdrant:
-    image: qdrant/qdrant
+    image: qdrant/qdrant:v1.19.0
     container_name: amr-qdrant
     restart: unless-stopped
     ports:
@@ -21,6 +30,66 @@ services:
       - "6334:6334"
     volumes:
       - qdrant_data:/qdrant/storage
+    # Qdrant 镜像不内置 curl；使用 bash 的 TCP 流读取 /readyz HTTP 状态。
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          bash -ec 'exec 3<>/dev/tcp/127.0.0.1/6333;
+          printf "GET /readyz HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n" >&3;
+          grep -q "200" <&3'
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 5s
+
+  api:
+    build:
+      context: .
+      dockerfile: infra/Dockerfile.api
+    image: amr-agent-api:local
+    container_name: amr-api
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+    environment:
+      AMR_ENV: compose
+      LOG_JSON: "true"
+      POSTGRES_DSN: postgresql://${POSTGRES_USER:-amr}:${POSTGRES_PASSWORD:-123456}@postgres:5432/${POSTGRES_DB:-amr_agent}
+      QDRANT_URL: http://qdrant:6333
+      # Fast 模型仍由 Windows 脚本启动；该地址只用于 API 的主动模型检查。
+      OPENAI_BASE_URL: http://host.docker.internal:8080/v1
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-dummy}
+      LLM_PROFILE: fast
+      LLM_MODEL: qwen3.6-fast
+      # 当前 Fast 脚本绑定 Windows 127.0.0.1，API 容器默认先做自身健康检查。
+      # 真正模型联调仍必须在主机执行 check_model_gateway.py；可显式改为 true 做严格门禁。
+      MODEL_GATEWAY_VALIDATE_ON_STARTUP: ${MODEL_GATEWAY_VALIDATE_ON_STARTUP:-false}
+      AMR_JWT_SECRET: ${AMR_JWT_SECRET:-p016-development-only-change-this-jwt-secret-2026}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "8000:8000"
+    # 容器启动时只执行幂等前向迁移；迁移失败会阻止 API 接受请求。
+    command:
+      - sh
+      - -c
+      - >-
+        python scripts/migrate_database.py upgrade &&
+        exec python -m uvicorn apps.api.main:app --host 0.0.0.0 --port 8000
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          python -c "import urllib.request;
+          urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2).read()"
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
 
 volumes:
   postgres_data:

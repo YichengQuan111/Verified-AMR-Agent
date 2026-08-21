@@ -75,3 +75,21 @@ P0-18 的源模式没有在线模型调用、Token usage 或资源采样；报�
 
 Qwen3.8 Smart 的 15 例对照已延期而非完成：当前因速度问题硬禁用，本步未启动、未测试，
 延期项为 `P0-19-SMART-COMPARISON`，已写入 Backlog。
+
+## P0-20 最终复测记录
+
+本次部署收口使用新的 P0-18 源报告执行：
+
+```powershell
+.\scripts\run_p019_compare.ps1 `
+  -SourceReport .\tmp\p018_eval_p020_final\p018_eval.json `
+  -OutputDir .\tmp\p019_strategy_compare_p020_final
+```
+
+退出码为 0，输出 180 条逐例策略结果；报告为
+`tmp/p019_strategy_compare_p020_final/p019_strategy_comparison.json`、
+`report_id=p019-26947b55d9054d8d`、
+`report_digest=26947b55d9054d8de3f5e204b203b24fb54c3e4b57b519df3c265afd0eace8e6`。
+fixed Workflow、ReAct、PEVR 仍各为 60/60 预期符合；Smart 仍为
+`started=false/completed=false/status=deferred`。本次仍是 `offline_trace_replay`，不能改写
+为在线三策略模型/Token/资源对照。

@@ -1,8 +1,8 @@
 # AMR Agent 项目交接上下文
 
 最后更新：2026-08-21
-当前已完成：P0-00、P0-01、P0-02、P0-03、P0-04、P0-05、P0-06、P0-07、P0-08、P0-09、P0-10、P0-11、P0-12、P0-13、P0-14、P0-15、P0-16、P0-17、P0-18、P0-19
-当前下一步：P0-19 三策略同源 Trace Replay 已完成；继续沿用离线源报告边界，不把本结果扩写成在线模型质量对照。Qwen3.8 Smart 速度问题仍硬禁用，15 例双模型对照延期到 Backlog；如需在线 Fast 三策略对照，另立 `online_fast` 适配器、采样器和验收门槛。
+当前实现里程碑记录：仓库文档曾登记 P0-00～P0-20 已实现；2026-08-21 发布前全仓审查结论为 **FAIL**，该历史登记不再等同于发布验收完成。
+当前下一步：先按 `docs/P0_AUDIT_TODO.md` 修复 4 个 P0-Critical（审批旁路、外部执行 ID/恢复、生产故障路由、Compose 安全默认值）及发布最小 High 集合，再重跑真实 HITL 三连、强杀恢复、七类异常、可信 P0-18/P0-19 和全量回归。Smart 继续硬禁用且不计本次 P0 缺陷。
 
 ## 1. 文档用途与维护要求
 
@@ -45,9 +45,10 @@
 - 2026-08-20 P0-07 最终检查时 Docker Desktop 4.87 / Engine 29.7.2 可连接；PostgreSQL 17 与 Qdrant 1.19.0 容器正在运行，5432/6333 有监听。PostgreSQL 当前 revision 为 `0001_p006_core (head)`，8 张核心表完整，辅助表只有 `alembic_version`。
 - Qdrant collection `amr_warehouse_knowledge` 当前存在 70 个 points；6 份 frozen 文档已在 PostgreSQL 中标为 `indexed` 并带 `indexed_at`。新会话仍必须重查服务，不能把本条当作永久在线保证。
 - 本地 `E:\Llama.cpp\Embedding` 已实际离线加载；权重约 1.19 GB，SentenceTransformers 6.0.0 动态读得 dimension=1024，文档/query 编码均成功。模型、维度和 chunk 数没有写死在运行代码中。
-- 2026-08-21 最终 smoke 实测 PostgreSQL 8 张核心表缺失 0，Qdrant collection
-  `amr_warehouse_knowledge` 健康。Fast 在线验收后已按精确 PID 停止，8080 已确认无监听；
-  Smart 和 FastAPI 均未启动/常驻。
+- 2026-08-21 P0-20 最终状态：`docker compose ps` 显示 `amr-api`、`amr-postgres`、`amr-qdrant`
+  均 healthy，API 8000、PostgreSQL 5432、Qdrant 6333/6334 保持运行；Fast 已按精确 PID 停止，
+  8080 无监听；Smart launcher 未运行。API 重启后 `/health` 为 `model_validated=false`，无 Fast 时
+  `/health/model` 实测 HTTP 503 `MODEL_CONNECTION_FAILED`。
 - Git 仍在 `main`，基线提交为 `e6a4f07 Initial commit: AMR Agent P0-06`；工作树包含
   P0-07～P0-14 与本次审计修复的既有未提交/未跟踪文件。本次没有 stage、commit、reset、
   删除或移动用户变更。
@@ -74,7 +75,8 @@
 
 ### 4.3 P0-02：本地模型配置
 
-- Fast alias：`qwen3.6-fast`，上下文 8192，并发 1。
+- Fast Profile 配置：`qwen3.6-fast`，离线/配置契约 `context_window=8192`，并发 1；外部 Windows
+  Fast 脚本本次实际命令行为 `--ctx-size 16384`，两者必须在报告中分开记录。
 - Smart 保留 alias：`qwen3.8-smart`，上下文 12288，并发 1；当前 `enabled=false`，原因是
   最近一次真实 P0-05 五节点在线验收仅 2/5。
 - 两个脚本共用 8080；当前只允许启动 Fast。Smart 必须等待用户明确指示并重新验收。
@@ -1038,3 +1040,141 @@ DAG 使用 `agent.planning.dag.topological_sort()` 中的 Kahn 算法：计算�
 - 下一工作包直接复用：保留本报告和源 artifact，不覆盖其 `report_digest`/文件 SHA；若新增在线 Fast
   对照，必须保持同一 60 例、工具、Prompt、配置并补齐真实模型调用、Token、墙钟 P95、CPU/RSS/GPU
   采样和失败路径；Smart 双模型 15 例仍等待 Backlog 决策。
+
+### 2026-08-21 · P0-20 部署、文档与演示收口（当前有效）
+
+#### 完成内容与公共边界
+
+- 根目录 `compose.yaml` 现在编排 `postgres`、`qdrant`、`api` 三个服务；PostgreSQL/Qdrant 使用
+  命名卷，两个依赖先通过 healthcheck，API 再执行幂等 Alembic upgrade 并启动 Uvicorn。
+- `api` 镜像由 `infra/Dockerfile.api` 构建，使用 `infra/requirements.api.lock` 和
+  `psycopg[binary]`；镜像不复制 GGUF、Embedding 或权重，也没有模型服务容器。完整 P0 Python
+  环境仍由根目录 `requirements.lock` 管理。
+- Compose API 环境变量固定 `LLM_PROFILE=fast`、`LLM_MODEL=qwen3.6-fast`、
+  `OPENAI_BASE_URL=http://host.docker.internal:8080/v1`；`MODEL_GATEWAY_VALIDATE_ON_STARTUP`
+  默认 false，只解耦容器健康与 Windows 宿主 Fast 生命周期。`/health` 是轻量进程检查，
+  `/health/model` 才主动访问网关；本次 Fast 在场时后者实测通过，Fast 停止并重启 API 后实测
+  HTTP 503 `MODEL_CONNECTION_FAILED`。
+- `scripts/start_local.ps1` 是 Windows 最简入口：默认启动 Compose API/PostgreSQL/Qdrant；
+  `-StartFast` 只调用现有 `E:\Llama.cpp\start-qwen3.6-agent.cmd` 并运行 Fast alias 门禁，
+  绝不启动 Smart。新增 `tests/unit/test_p020_deployment.py` 只做静态部署契约检查。
+- 新增/更新交付文档：`docs/ARCHITECTURE.md`、`docs/API.md`、`docs/SERVICES_STARTUP.md`、
+  `docs/TEST_REPORT.md`、`docs/DEMO_SCRIPT.md`、`docs/RESUME_FACTS.md`、`README.md` 和
+  `infra/README.md`。本步没有新增 Pydantic Schema、ToolName、数据库字段、迁移、HTTP 自然语言
+  规划路由或 P1/P2 功能；API `/evals/runs` 仍只登记请求，不执行 Eval。
+
+#### 实际验证命令与结果
+
+- `docker compose -f .\compose.yaml config`：通过。
+- `docker compose -f .\compose.yaml build api`：最终通过；首次全量依赖构建未作为交付构建，因
+  会引入不必要的 PyTorch/CUDA；改用最小 API 锁后构建通过。
+- `docker compose -f .\compose.yaml up -d --build`：通过；三服务最终 healthy，API 迁移日志成功。
+- `.\scripts\start_local.ps1`：通过；Qdrant `/readyz`、API `/health`、PostgreSQL `(1,)`、
+  Qdrant client collection 检查通过。
+- `.\scripts\start_local.ps1 -StartFast`：通过；Fast `/health`、`qwen3.6-fast` alias 网关门禁通过。
+  `scripts/smoke_llm_structured.py` 为 20/20，`scripts/smoke_p005_prompts.py --profile fast`
+  为 5/5。
+- `E:\Anaconda\envs\torch128\python.exe -m pytest tests\unit\test_p020_deployment.py -q -p no:cacheprovider`：3 passed。
+- `.\scripts\run_smoke.ps1`：依赖/迁移/数据库/Qdrant/工具链通过；pytest 238 passed、1 个既有
+  `jieba/pkg_resources` DeprecationWarning；CTest 34/34 passed。
+- `E:\Anaconda\envs\torch128\python.exe -m pytest tests\integration -q -p no:cacheprovider`：18 passed、
+  1 个同源弃用警告。
+- `.\scripts\run_p018_eval.ps1 -OutputDir .\tmp\p018_eval_p020_final`：退出码 0，60/60；
+  report_id=`p018-415f0b3f59574772`，digest=`415f0b3f59574772ad71df36591628f756a79dd26224d356d5f7fb1afb0f4585`，
+  model_call_count=0，observed_negative_count=16，zero tolerance 七项均为 0。
+- `.\scripts\run_p019_compare.ps1 -SourceReport .\tmp\p018_eval_p020_final\p018_eval.json -OutputDir .\tmp\p019_strategy_compare_p020_final`：退出码 0，180 条；
+  report_id=`p019-26947b55d9054d8d`，digest=`26947b55d9054d8de3f5e204b203b24fb54c3e4b57b519df3c265afd0eace8e6`，
+  fixed Workflow/ReAct/PEVR 均 60/60，Smart deferred。
+
+#### 连续闭环证据与失败记录
+
+- 正式连续成功的真实 Fast P0-13 证据为 PostgreSQL 中三个独立、非恢复复用的 run：
+  `p014-fast-online-1-20260821-1037`、`p014-fast-online-2-20260821-1038`、
+  `p014-fast-online-3-20260821-1039`。三次均 `completed`、8/8 阶段、4 次模型调用、5/5 工具、
+  Validator error=0、仿真 completed、`ORDER-001` 完成；本次 P0-20 不修改 P0-13 工具/DAG/恢复逻辑，
+  这组三次作为正式连续验收证据保留在 `docs/TEST_REPORT.md` 和 `docs/DEMO_SCRIPT.md`。
+- 为验证新部署后 fresh run，本次追加的 `p020-demo-1-20260821` 和
+  `p020-demo-success-1-20260821` 在 `plan_tasks` 长上下文请求达到 P0-13 固定 300 秒累计预算，
+  退出码非 0；`p020-demo-success-2-20260821` 在同一诊断期间被中止，均未计入成功。模型 alias、
+  短结构化与 P0-05 节点仍通过；不能把这些失败 fresh 尝试写成闭环通过，也不临时放宽预算。
+- Fast 实际外部命令行含 `--ctx-size 16384`；P0-18 离线 config 仍是 `context_window=8192`，两者
+  不可混写。Smart 从未启动，`P0-19-SMART-COMPARISON` 仍 deferred。
+
+#### 当前服务状态、限制与下一步
+
+- 当前 Compose 栈保持运行：API `127.0.0.1:8000`、PostgreSQL `localhost:5432`、Qdrant
+  `localhost:6333`/dashboard；Fast 8080 已释放，Smart 未运行。停止时执行
+  `docker compose stop api postgres qdrant`，不要 `down -v`。
+- 本地 Fast 长上下文吞吐会随 GPU/CPU/MoE 负载变化；固定预算耗尽时 fail closed。若要重新获得
+  fresh 在线 P0-13 三连，必须先记录新的机器状态和外部脚本命令行、使用新 run_id，再独立复测，
+  不能复用旧 Checkpoint 或用离线 Eval 代替。
+- 下一步不自动扩大 Scope；若用户后续要求在线三策略或 Smart 对照，需先获得明确范围/启用指示，
+  新建独立在线执行模式、采样器和验收报告，并继续保持当前安全边界。
+
+### 2026-08-21 · P0-00～P0-20 发布前全仓审查（当前有效）
+
+#### 本步完成与未完成
+
+- 本步只做发布前审查、真实验证和 Todo 固化，没有修改 Python/C++ 业务代码、测试、配置、
+  Schema、数据库迁移或既有报告结论。审查正文和逐项证据见 `docs/P0_AUDIT_TODO.md`。
+- 审查结论为 **P0 Release Verdict: FAIL**。共登记 4 个 P0-Critical、7 个 P1-High、
+  3 个 P2-Medium；没有为了凑数量列无证据的 P3 项。
+- 已确认可工作的部分包括：全量 pytest/CTest、公共 Schema 同源导出、真实 RAG 20 例基线、
+  Hungarian/Validator、Python 仿真安全停机、C++/Python 37 个路径时间戳一致、在线 Fast 正常
+  8 阶段闭环和 Trace/报告独立重算。
+- 未完成的是修复和发布复验。按用户要求，本轮没有顺手修改任何缺陷，也没有把审查发现写成
+  已修复；历史 P0-20“已完成”记录仅作为实现历史保留。
+
+#### 阻断事实与设计边界
+
+- `scripts/run_p013_e2e.py --approve-dispatch` 仍以 `principal=null`、`approval_grant=null`、
+  legacy `approval_granted=true` 放行 dispatch。三个历史正式 run 和本轮 audit run 均 Effect=1、
+  Approval=0，因此 P0-16/HITL 发布验收未通过。
+- `dispatch_simulation` 的外部 ID 只由相同计划/seed 摘要生成。当前 PostgreSQL 有 6 个 run 共享
+  `simulation-b7551b825b817593d1e700fe`；`PostgresRuntimeStore.get` 因多条 Effect 抛
+  `PersistenceConflictError`，同一完成 run 的真实重跑也无法恢复。
+- `FaultRecoveryController` 在非测试代码中的唯一调用位于 P0-18 离线 runner；生产 PEVR 图是固定
+  八阶段线性边，timeout/infeasible/blocked 直接抛 `PEVRExecutionError`。三个 P0-20 超时 run 的
+  Trace 已 failed，但数据库状态仍为 `planning`。
+- Compose 默认 JWT secret/数据库密码已公开，API/PostgreSQL/Qdrant 端口绑定全部 IPv4/IPv6
+  接口。用默认 secret 伪造 operator JWT 请求真实 run 返回 HTTP 200；匿名 Qdrant scroll 可读取
+  70 个 chunk，其中 25 个是 operator-only。
+- P0-18 runner 不消费 `case.oracle`，修改 oracle 为必须失败/重复 999 后仍通过；注入样例没有消费
+  `input_data.text` 也被记为 blocked。P0-19 仅投影同一源 Trace，不运行三个独立策略。旧 60/60、
+  恢复/安全 1.0 和三策略 60/60 不能继续作为发布验收指标。
+- 真实 RAG 20 例本轮为 Recall@K=1、MRR=0.970588、citation=1、answerability=1、ACL=0；强制两个
+  阈值为 1 后 citation=0、answerability=0.15，CLI 仍退出 0。简历中的“RAG 20 例 MRR=1.0”与
+  真实独立评测不一致。
+- Fast 外部脚本实际使用 16K、temperature 0.1、IQ4_NL；P0-18 config 仍记录 8K、temperature 0、
+  泛化 GGUF。实际 GGUF SHA-256 为
+  `B228C988C624DFFE0B57235A395FA79562D4362FED545820F9B7D78908F337E6`，当前运行版本契约未保存它。
+- A* 在 release_time 前只允许 wait。本轮空地图可行样例（t=0..5 到 pickup、t=6 到 dropoff）被
+  返回 `infeasible/no_safe_path_to_pickup`；Planner 与 Validator 的 release 语义不一致。
+- Smart 按用户明确要求继续禁用，不启动、不测试、不作为 P0 bug，也不纳入最小修复集合。
+
+#### 本轮实际验证摘要
+
+- `.\scripts\run_smoke.ps1`：退出码 0，pytest 238 passed、1 warning，CTest 34/34 passed。
+- `E:\Anaconda\envs\torch128\python.exe -m pytest tests\integration -q -p no:cacheprovider`：
+  18 passed、1 warning；P0-13 失败路径 + P0-15 组件专项为 10 passed。
+- `.\scripts\run_p018_eval.ps1 -OutputDir .\tmp\p0_audit_p018`：退出码 0、60/60，但因 oracle
+  假通过证据不计发布通过。
+- `.\scripts\run_p019_compare.ps1 ... -OutputDir .\tmp\p0_audit_p019`：退出码 0、180 条，仅
+  `offline_trace_replay`，不计真实策略对照。
+- 真实 Fast audit run `p0-audit-online-normal-20260821-1659`：退出码 0、8/8 stage、5/5 tool、
+  4 次模型调用、Validator 0、订单/仿真完成；同 run 第二次执行退出码 1，恢复核对失败。
+- `.\scripts\start_local.ps1 -TimeoutSeconds 30`、`docker compose config --quiet`：通过；
+  Compose 三服务保持 healthy。宿主和 API 容器访问 Fast 均通过，随后 Fast 已停止，8080 无监听。
+- 完整命令、失败命令、异常轨迹和未运行原因均记录在 `docs/P0_AUDIT_TODO.md` 第 8～9 节；
+  不得只引用本摘要推断未执行项目通过。
+
+#### 环境、生成物与下一步
+
+- 当前 Compose API/PostgreSQL/Qdrant 仍保持运行且 healthy；实际发布端口映射是 `0.0.0.0`/`[::]`
+  的 8000、5432、6333/6334，而不仅是文档中的 localhost。Fast 和 Smart 均未运行，8080 已释放。
+- `tmp/p0_audit_*`、`tmp/p0_audit_schemas` 是审查生成物，不是源码/公共契约；可在证据归档后删除。
+- 工作树在审查开始前已有 P0-20 未提交修改/新文件。本步只新增
+  `docs/P0_AUDIT_TODO.md`，并按仓库规则更新本文件、`docs/FILE_PURPOSES.md` 和
+  `docs/LESSONS_LEARNED.md`，没有覆盖或回退用户既有修改。
+- 下一任务必须先读 `docs/P0_AUDIT_TODO.md`，按 Critical 顺序修复并采用“实现→失败路径测试→
+  回归→真实在线复验→文档事实校正”闭环；未经复验不得把顶部状态改回完成。
