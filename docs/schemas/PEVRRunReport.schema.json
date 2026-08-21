@@ -1,0 +1,470 @@
+{
+  "$defs": {
+    "BudgetUsage": {
+      "additionalProperties": false,
+      "description": "调用节点前已经实际消耗的五类预算。",
+      "properties": {
+        "input_tokens": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Input Tokens",
+          "type": "integer"
+        },
+        "output_tokens": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Output Tokens",
+          "type": "integer"
+        },
+        "tool_steps": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Tool Steps",
+          "type": "integer"
+        },
+        "elapsed_seconds": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Elapsed Seconds",
+          "type": "number"
+        },
+        "replans": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Replans",
+          "type": "integer"
+        }
+      },
+      "title": "BudgetUsage",
+      "type": "object"
+    },
+    "FinalReportStatus": {
+      "description": "compose_report 可以声明的最终报告状态。",
+      "enum": [
+        "completed",
+        "failed",
+        "cancelled",
+        "needs_human"
+      ],
+      "title": "FinalReportStatus",
+      "type": "string"
+    },
+    "ModelVersionRecord": {
+      "additionalProperties": false,
+      "description": "启动门禁确认过的模型身份快照。",
+      "properties": {
+        "provider": {
+          "const": "llama.cpp-openai-compatible",
+          "default": "llama.cpp-openai-compatible",
+          "title": "Provider",
+          "type": "string"
+        },
+        "profile": {
+          "title": "Profile",
+          "type": "string"
+        },
+        "configured_alias": {
+          "title": "Configured Alias",
+          "type": "string"
+        },
+        "served_alias": {
+          "title": "Served Alias",
+          "type": "string"
+        },
+        "base_url": {
+          "title": "Base Url",
+          "type": "string"
+        },
+        "model_created": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Model Created"
+        },
+        "model_owned_by": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Model Owned By"
+        },
+        "openai_sdk_version": {
+          "title": "Openai Sdk Version",
+          "type": "string"
+        },
+        "observed_at": {
+          "format": "date-time",
+          "title": "Observed At",
+          "type": "string"
+        }
+      },
+      "required": [
+        "profile",
+        "configured_alias",
+        "served_alias",
+        "base_url",
+        "openai_sdk_version",
+        "observed_at"
+      ],
+      "title": "ModelVersionRecord",
+      "type": "object"
+    },
+    "PEVRMetrics": {
+      "additionalProperties": false,
+      "description": "正常闭环可由实际轨迹重算的关键指标。",
+      "properties": {
+        "graph_stage_count": {
+          "minimum": 0,
+          "title": "Graph Stage Count",
+          "type": "integer"
+        },
+        "model_call_count": {
+          "minimum": 0,
+          "title": "Model Call Count",
+          "type": "integer"
+        },
+        "tool_call_count": {
+          "minimum": 0,
+          "title": "Tool Call Count",
+          "type": "integer"
+        },
+        "successful_tool_call_count": {
+          "minimum": 0,
+          "title": "Successful Tool Call Count",
+          "type": "integer"
+        },
+        "plan_task_count": {
+          "minimum": 0,
+          "title": "Plan Task Count",
+          "type": "integer"
+        },
+        "validator_error_count": {
+          "minimum": 0,
+          "title": "Validator Error Count",
+          "type": "integer"
+        },
+        "retrieval_result_count": {
+          "minimum": 0,
+          "title": "Retrieval Result Count",
+          "type": "integer"
+        },
+        "completed_order_count": {
+          "minimum": 0,
+          "title": "Completed Order Count",
+          "type": "integer"
+        },
+        "route_count": {
+          "minimum": 0,
+          "title": "Route Count",
+          "type": "integer"
+        },
+        "simulation_status": {
+          "title": "Simulation Status",
+          "type": "string"
+        },
+        "simulation_end_time": {
+          "minimum": 0,
+          "title": "Simulation End Time",
+          "type": "integer"
+        },
+        "total_tool_duration_ms": {
+          "minimum": 0,
+          "title": "Total Tool Duration Ms",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "graph_stage_count",
+        "model_call_count",
+        "tool_call_count",
+        "successful_tool_call_count",
+        "plan_task_count",
+        "validator_error_count",
+        "retrieval_result_count",
+        "completed_order_count",
+        "route_count",
+        "simulation_status",
+        "simulation_end_time",
+        "total_tool_duration_ms"
+      ],
+      "title": "PEVRMetrics",
+      "type": "object"
+    },
+    "PEVRToolEvidence": {
+      "additionalProperties": false,
+      "description": "报告中的单次工具证据索引；正文仍由 ToolResult 的 output_digest 追溯。",
+      "properties": {
+        "task_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Task Id"
+        },
+        "tool_name": {
+          "$ref": "#/$defs/ToolName"
+        },
+        "call_id": {
+          "title": "Call Id",
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/ToolResultStatus"
+        },
+        "tool_version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Tool Version"
+        },
+        "principal_role": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UserRole"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "input_digest": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Input Digest"
+        },
+        "output_digest": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Output Digest"
+        },
+        "evidence_refs": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Evidence Refs",
+          "type": "array"
+        },
+        "effect_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Effect Id"
+        },
+        "error_code": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Error Code"
+        }
+      },
+      "required": [
+        "task_id",
+        "tool_name",
+        "call_id",
+        "status",
+        "tool_version",
+        "principal_role",
+        "input_digest",
+        "output_digest",
+        "evidence_refs",
+        "effect_id",
+        "error_code"
+      ],
+      "title": "PEVRToolEvidence",
+      "type": "object"
+    },
+    "ToolName": {
+      "description": "P0-12 计划实现的九个工具名称；P0-04 仅定义白名单。",
+      "enum": [
+        "retrieve_knowledge",
+        "get_fleet_state",
+        "allocate_tasks",
+        "plan_multi_amr_routes",
+        "validate_fleet_plan",
+        "dispatch_simulation",
+        "query_execution_state",
+        "run_verification_suite",
+        "request_approval"
+      ],
+      "title": "ToolName",
+      "type": "string"
+    },
+    "ToolResultStatus": {
+      "description": "一次工具调用的终态。",
+      "enum": [
+        "success",
+        "failed",
+        "timeout",
+        "denied"
+      ],
+      "title": "ToolResultStatus",
+      "type": "string"
+    },
+    "UserRole": {
+      "description": "P0 固定的两级工具访问角色。",
+      "enum": [
+        "viewer",
+        "operator"
+      ],
+      "title": "UserRole",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "P0-13 最终运行报告，包含引用、计划、工具证据、指标和风险。",
+  "properties": {
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "run_id": {
+      "maxLength": 64,
+      "minLength": 1,
+      "title": "Run Id",
+      "type": "string"
+    },
+    "final_status": {
+      "$ref": "#/$defs/FinalReportStatus"
+    },
+    "state_version": {
+      "title": "State Version",
+      "type": "string"
+    },
+    "plan_version": {
+      "minimum": 1,
+      "title": "Plan Version",
+      "type": "integer"
+    },
+    "generated_at": {
+      "format": "date-time",
+      "title": "Generated At",
+      "type": "string"
+    },
+    "summary": {
+      "minLength": 1,
+      "title": "Summary",
+      "type": "string"
+    },
+    "completed_order_ids": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Completed Order Ids",
+      "type": "array"
+    },
+    "incomplete_order_ids": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Incomplete Order Ids",
+      "type": "array"
+    },
+    "evidence_refs": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Evidence Refs",
+      "type": "array"
+    },
+    "citations": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Citations",
+      "type": "array"
+    },
+    "tool_evidence": {
+      "items": {
+        "$ref": "#/$defs/PEVRToolEvidence"
+      },
+      "title": "Tool Evidence",
+      "type": "array"
+    },
+    "metrics": {
+      "$ref": "#/$defs/PEVRMetrics"
+    },
+    "unresolved_risks": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Unresolved Risks",
+      "type": "array"
+    },
+    "budget_usage": {
+      "$ref": "#/$defs/BudgetUsage"
+    },
+    "model": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ModelVersionRecord"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "run_id",
+    "final_status",
+    "state_version",
+    "plan_version",
+    "generated_at",
+    "summary",
+    "completed_order_ids",
+    "incomplete_order_ids",
+    "evidence_refs",
+    "citations",
+    "tool_evidence",
+    "metrics",
+    "unresolved_risks",
+    "budget_usage",
+    "model"
+  ],
+  "title": "PEVRRunReport",
+  "type": "object"
+}

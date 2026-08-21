@@ -8,6 +8,7 @@ from services.config.settings import ModelGatewaySettings
 from services.model_gateway import ChatMessage, ModelProvider
 from services.model_gateway.exceptions import (
     ModelAliasMismatchError,
+    ModelProfileDisabledError,
     MultipleModelsServedError,
     StructuredOutputError,
 )
@@ -79,6 +80,35 @@ def test_startup_rejects_more_than_one_loaded_model() -> None:
 
     with pytest.raises(MultipleModelsServedError):
         provider.startup()
+
+
+def test_smart_profile_is_rejected_before_network_access() -> None:
+    """临时禁用必须发生在模型列表探测前，不能依赖服务是否在线。"""
+
+    settings = make_settings(
+        profile="smart",
+        profiles={
+            "fast": make_settings().profiles["fast"],
+            "smart": {
+                "alias": "qwen3.8-smart",
+                "context_window": 12288,
+                "temperature": 0.0,
+                "reasoning_enabled": True,
+                "reasoning_budget_tokens": 512,
+                "enabled": False,
+                "disabled_reason": "等待用户明确指示后再启用",
+            },
+        },
+    )
+    client = FakeOpenAIClient(["qwen3.8-smart"])
+    provider = ModelProvider(settings, client=client)
+
+    with pytest.raises(ModelProfileDisabledError) as error:
+        provider.startup()
+
+    assert error.value.code == "MODEL_PROFILE_DISABLED"
+    assert client.models.calls == []
+    assert client.completions.calls == []
 
 
 def test_structured_output_is_validated_without_exposing_tools() -> None:

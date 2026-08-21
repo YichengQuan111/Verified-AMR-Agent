@@ -1,0 +1,1750 @@
+"""P0-13 LangGraph PEVR 正常闭环与 P0-14 可恢复执行。
+
+状态图只负责受控编排，不重写 P0-08～P0-12 的算法。``understand_goal``、
+``plan_tasks``、``verify_observation`` 和 ``compose_report`` 直接复用 P0-05
+具名节点；RAG、Hungarian、A*、P0-10 Validator 和仿真全部通过 P0-12
+``ToolRegistry`` 进入。计划门禁在 ``validate`` 节点完成，因而 Planner 产生的
+任何未授权 DAG 都不能到达 Executor。
+
+传入 P0-14 ``checkpoint_store`` 后，固定图仍不允许动态添加节点，但每个完成阶段
+和任务会保存 JSON Checkpoint；带副作用任务先写 Effect Ledger，再按真实仿真/工具
+状态核对恢复。这样重启只能继续安全未开始的任务、复用已核对结果或停在补偿/重规划
+边界，不能把旧快照当成外部事实。
+"""
+
+from __future__ import annotations
+
+from collections.abc import Mapping
+from datetime import datetime, timezone
+import hashlib
+import inspect
+import json
+from typing import Any, Callable, cast
+from uuid import uuid4
+
+from langgraph.graph import END, START, StateGraph
+from pydantic import BaseModel, ValidationError
+
+from agent.context import (
+    BudgetUsage,
+    ContextEvidence,
+    EvidenceSourceType,
+    FinalReport,
+    NodeRoute,
+    PlanTasksOutput,
+    PromptNodeName,
+    build_node_context,
+    compose_report,
+    plan_tasks,
+    understand_goal,
+    verify_observation,
+)
+from agent.context.contracts import FinalReportStatus, ObservationVerification, VerificationDecision
+from agent.planning import PlanTask, PlanTaskStatus, TaskContract
+from agent.planning.replanner import (
+    TaskResourceProvenance,
+    build_task_resource_provenance,
+)
+from agent.planning.validator import (
+    NORMAL_PEVR_TOOL_CHAIN,
+    PlanValidationResult,
+    canonicalize_normal_pevr_plan,
+    validate_normal_pevr_plan,
+)
+from agent.runtime.pevr import (
+    PEVRGraphState,
+    PEVRMetrics,
+    PEVRRequest,
+    PEVRRunReport,
+    PEVRRunResult,
+    PEVRStage,
+    PEVRToolEvidence,
+    PEVRTraceEvent,
+    PEVR_STAGE_ORDER,
+)
+from agent.runtime.checkpoint import (
+    CheckpointSnapshot,
+    EffectLedgerStatus,
+    ExternalExecutionSnapshot,
+    ExternalExecutionStatus,
+    RecoveryCoordinator,
+    RecoveryDecision,
+    RuntimePersistenceProtocol,
+    canonical_json_digest,
+    make_effect_idempotency_key,
+    to_jsonable,
+)
+from agent.runtime.state import (
+    Observation,
+    ObservationSource,
+    ObservationStatus,
+    RunState,
+    RunStatus,
+)
+from agent.tools import (
+    ToolName,
+    ToolRegistry,
+    ToolResult,
+    ToolResultStatus,
+    UserRole,
+    build_tool_registry,
+)
+from agent.tools.contracts import TOOL_ARGUMENT_POLICIES
+from agent.tools.schemas import (
+    AllocationResponse,
+    RoutePlanResponse,
+    ValidationResponse,
+)
+from agent.tools.snapshots import (
+    DefaultWarehouseSnapshotProvider,
+    EnvironmentSnapshot,
+    SnapshotProviderProtocol,
+)
+from domains.amr_warehouse import AMRState, TransportOrder
+from services.amr_simulator.contracts import (
+    FleetPlanRoute,
+    SimulationPlan,
+    SimulationResult,
+    ValidatorConfig,
+)
+from services.retrieval.contracts import RetrievalResponse, RetrievalStatus
+from services.model_gateway.contracts import ModelVersionRecord
+from services.model_gateway.protocols import ModelProviderProtocol
+
+
+Clock = Callable[[], datetime]
+
+
+def _utc_now() -> datetime:
+    """提供带时区时间；时钟集中后，状态图单测可以稳定注入时间。"""
+
+    return datetime.now(timezone.utc)
+
+
+class _RegistryExternalStateReconciler:
+    """通过只读 ``query_execution_state`` 查询 P0-12 仿真真实快照。"""
+
+    def __init__(self, registry: Any, clock: Clock) -> None:
+        self._registry = registry
+        self._clock = clock
+
+    def inspect(self, *, entry: Any) -> ExternalExecutionSnapshot:
+        """只把可核验的 SimulationResult 转成 completed，否则返回 unknown。"""
+
+        if entry.tool_name is not ToolName.DISPATCH_SIMULATION:
+            return ExternalExecutionSnapshot(
+                status=ExternalExecutionStatus.UNKNOWN,
+                source="registry_query_unsupported",
+                observed_at=self._clock(),
+            )
+        simulation_id = entry.external_effect_id or self._simulation_id(entry.arguments)
+        if not simulation_id:
+            return ExternalExecutionSnapshot(
+                status=ExternalExecutionStatus.UNKNOWN,
+                source="registry_query_missing_reference",
+                observed_at=self._clock(),
+            )
+        try:
+            parameters: dict[str, Any] = {
+                "run_id": simulation_id,
+            }
+            query_call_id = f"recovery:{entry.idempotency_key}"
+            kwargs: dict[str, Any] = {"role": UserRole.OPERATOR, "call_id": query_call_id}
+            if "idempotency_key" in inspect.signature(self._registry.execute).parameters:
+                kwargs["idempotency_key"] = f"recovery:{entry.idempotency_key}"
+            query_result = self._registry.execute(
+                ToolName.QUERY_EXECUTION_STATE,
+                parameters,
+                **kwargs,
+            )
+        except Exception:
+            return ExternalExecutionSnapshot(
+                status=ExternalExecutionStatus.UNKNOWN,
+                source="registry_query_failed",
+                observed_at=self._clock(),
+            )
+        if query_result.status is not ToolResultStatus.SUCCESS or not isinstance(query_result.output, Mapping):
+            return ExternalExecutionSnapshot(
+                status=ExternalExecutionStatus.UNKNOWN,
+                source="registry_query_unavailable",
+                observed_at=self._clock(),
+            )
+        output = query_result.output
+        snapshot = output.get("snapshot")
+        if not isinstance(snapshot, Mapping):
+            return ExternalExecutionSnapshot(
+                status=ExternalExecutionStatus.UNKNOWN,
+                source="registry_query_invalid_snapshot",
+                observed_at=self._clock(),
+            )
+        raw_status = str(snapshot.get("status", output.get("status", "unknown")))
+        if raw_status == "completed":
+            now = self._clock()
+            result = ToolResult(
+                tool_name=ToolName.DISPATCH_SIMULATION,
+                call_id=entry.call_id,
+                status=ToolResultStatus.SUCCESS,
+                output=to_jsonable(dict(snapshot)),
+                error=None,
+                started_at=now,
+                finished_at=now,
+                duration_ms=0,
+                evidence_refs=[f"simulation://{simulation_id}", f"simulation://{simulation_id}/events"],
+                effect_id=simulation_id,
+                tool_version=self._registry.get(ToolName.DISPATCH_SIMULATION).spec.version,
+                principal_role=UserRole.OPERATOR,
+                input_digest=entry.input_digest,
+                output_digest=canonical_json_digest(snapshot),
+                idempotency_key=entry.idempotency_key,
+                audit_metadata={"reconciled": True, "source": "query_execution_state"},
+            )
+            return ExternalExecutionSnapshot(
+                status=ExternalExecutionStatus.COMPLETED,
+                source="query_execution_state",
+                observed_at=now,
+                external_effect_id=simulation_id,
+                result=result,
+                evidence_refs=list(result.evidence_refs),
+            )
+        if raw_status in {"blocked", "timeout", "failed"}:
+            status = ExternalExecutionStatus.FAILED
+        elif raw_status in {"running", "in_progress"}:
+            status = ExternalExecutionStatus.IN_PROGRESS
+        else:
+            status = ExternalExecutionStatus.UNKNOWN
+        return ExternalExecutionSnapshot(
+            status=status,
+            source="query_execution_state",
+            observed_at=self._clock(),
+            external_effect_id=simulation_id,
+            details={"status": raw_status},
+        )
+
+    @staticmethod
+    def _simulation_id(arguments: Mapping[str, Any]) -> str | None:
+        """按 P0-12 dispatch handler 的固定输入摘要推导仿真查询 ID。"""
+
+        plan = arguments.get("plan")
+        if not isinstance(plan, Mapping) or "seed" not in arguments:
+            return None
+        digest = canonical_json_digest(
+            {
+                "plan": plan,
+                "seed": arguments.get("seed"),
+                "until_time": arguments.get("until_time"),
+            }
+        )
+        return f"simulation-{digest[:24]}"
+
+
+class PEVRExecutionError(RuntimeError):
+    """主图在任一确定性门禁失败时抛出的可定位错误。"""
+
+    def __init__(self, stage: PEVRStage, code: str, message: str) -> None:
+        super().__init__(message)
+        self.stage = stage
+        self.code = code
+
+
+class PEVRGraphRunner:
+    """构造并运行固定八节点 PEVR 图。
+
+    默认构造仍保持 P0-13 的纯内存行为；传入 P0-14 ``checkpoint_store`` 后，图节点
+    完成和每个任务完成都会写 PostgreSQL/测试适配器。恢复时图会跳过已完成节点，
+    但带副作用任务必须先经过 Effect Ledger 和外部状态核对，不能因为旧快照标记
+    completed 就直接再次派发。
+    """
+
+    ENTRY_BUDGETS = {
+        # P0-13 会调用 understand、plan、verify、compose_report 四个独立
+        # Prompt；预算是整次运行的累计上限，而不是单次 llama.cpp 上下文窗口。
+        # Fast 的单次 context_window 仍由网关限制为 8192，这里只避免把多个
+        # 合法节点的输入相加后误判为 fallback。
+        "max_total_seconds": 300,
+        "max_input_tokens": 30000,
+        "max_output_tokens": 5000,
+        "max_tool_steps": 8,
+        "max_replans": 0,
+    }
+    DEFAULT_PAYLOAD_KG = 1.0
+
+    def __init__(
+        self,
+        provider: ModelProviderProtocol,
+        *,
+        registry: ToolRegistry | None = None,
+        snapshot_provider: SnapshotProviderProtocol | None = None,
+        checkpoint_store: RuntimePersistenceProtocol | None = None,
+        external_state_reconciler: Any | None = None,
+        clock: Clock = _utc_now,
+    ) -> None:
+        self.provider = provider
+        self.registry = registry or build_tool_registry()
+        self.snapshot_provider = snapshot_provider or DefaultWarehouseSnapshotProvider()
+        self.checkpoint_store = checkpoint_store
+        # 默认使用当前注册表的只读状态查询；若调用方提供真实仿真/工具适配器，
+        # RecoveryCoordinator 会优先使用它。没有适配器时仍返回 unknown 并转安全
+        # 分支，绝不把旧 Checkpoint 当作外部真相。
+        self._recovery = RecoveryCoordinator(
+            external_state_reconciler or _RegistryExternalStateReconciler(self.registry, clock)
+        )
+        self._clock = clock
+        self.graph = self._build_graph()
+
+    def _build_graph(self):
+        """编译只含固定节点和固定边的状态图，不允许模型动态添加节点。"""
+
+        builder = StateGraph(PEVRGraphState)
+        builder.add_node(PEVRStage.GUARD.value, self._checkpointed_node(PEVRStage.GUARD, self._guard_node))
+        builder.add_node(
+            PEVRStage.UNDERSTAND.value,
+            self._checkpointed_node(PEVRStage.UNDERSTAND, self._understand_node),
+        )
+        builder.add_node(PEVRStage.RETRIEVE.value, self._checkpointed_node(PEVRStage.RETRIEVE, self._retrieve_node))
+        builder.add_node(PEVRStage.PLAN.value, self._checkpointed_node(PEVRStage.PLAN, self._plan_node))
+        builder.add_node(PEVRStage.VALIDATE.value, self._checkpointed_node(PEVRStage.VALIDATE, self._validate_node))
+        builder.add_node(PEVRStage.EXECUTE.value, self._checkpointed_node(PEVRStage.EXECUTE, self._execute_node))
+        builder.add_node(PEVRStage.VERIFY.value, self._checkpointed_node(PEVRStage.VERIFY, self._verify_node))
+        builder.add_node(PEVRStage.FINISH.value, self._checkpointed_node(PEVRStage.FINISH, self._finish_node))
+        builder.add_edge(START, PEVRStage.GUARD.value)
+        for previous, following in zip(PEVR_STAGE_ORDER, PEVR_STAGE_ORDER[1:]):
+            builder.add_edge(previous.value, following.value)
+        builder.add_edge(PEVRStage.FINISH.value, END)
+        return builder.compile()
+
+    def run(self, request: PEVRRequest | Mapping[str, Any]) -> PEVRRunResult:
+        """执行或恢复一次本地模型驱动闭环，并返回完整可审计结果。"""
+
+        resolved_request = PEVRRequest.model_validate(request)
+        checkpoint = self._load_checkpoint(resolved_request.run_id)
+        if checkpoint is not None:
+            self._validate_resume_request(checkpoint, resolved_request)
+            self._reconcile_checkpoint(checkpoint)
+            try:
+                restored = self._restore_graph_state(checkpoint.graph_state)
+            except (TypeError, ValueError, ValidationError) as exc:
+                # 损坏 JSONB 不允许通过过滤坏项“自愈”；恢复必须停在确定性边界，
+                # 同时不给调用方泄漏整份持久化载荷。
+                raise PEVRExecutionError(
+                    PEVRStage.GUARD,
+                    "checkpoint_corrupt",
+                    f"Checkpoint 无法通过当前图状态契约: {type(exc).__name__}",
+                ) from exc
+            if self._is_terminal_graph_state(restored):
+                return self._result_from_graph_state(restored, resolved_request)
+        else:
+            restored = None
+        # 运行前先确认 alias；若 Fast 服务不在或暴露了错误模型，图不会开始执行。
+        model_version = self.provider.startup()
+        initial: PEVRGraphState = restored or {
+            "request": resolved_request,
+            "stage_trace": [],
+            "run_state": None,
+            "contract": None,
+            "retrieval_result": None,
+            "rag_evidence": [],
+            "plan": None,
+            "plan_normalization_notes": [],
+            "plan_validation": None,
+            "derived_plan": None,
+            "tool_results": [],
+            "tool_task_ids": [],
+            "resource_provenance": [],
+            "observations": [],
+            "verification": None,
+            "final_report": None,
+            "model_version": model_version,
+            "budget_usage": BudgetUsage(),
+            "model_call_count": 0,
+        }
+        # 当前进程仍需重新确认模型身份；这不会覆盖已持久化的工具/状态事实。
+        initial["request"] = resolved_request
+        initial["model_version"] = model_version
+        state = self.graph.invoke(initial, config={"recursion_limit": 32})
+        report = state.get("final_report")
+        run_state = state.get("run_state")
+        verification = state.get("verification")
+        if not isinstance(report, PEVRRunReport) or not isinstance(run_state, RunState):
+            raise PEVRExecutionError(PEVRStage.FINISH, "report_missing", "PEVR 图未产生完整报告")
+        if not isinstance(verification, ObservationVerification):
+            raise PEVRExecutionError(PEVRStage.VERIFY, "verification_missing", "PEVR 图未产生 Observation 验证结果")
+        return PEVRRunResult(
+            request=resolved_request,
+            report=report,
+            run_state=run_state,
+            stage_trace=list(state.get("stage_trace", [])),
+            tool_results=list(state.get("tool_results", [])),
+            observations=list(state.get("observations", [])),
+            verification=verification,
+            resource_provenance=list(state.get("resource_provenance", [])),
+        )
+
+    def _checkpointed_node(
+        self,
+        stage: PEVRStage,
+        handler: Callable[[PEVRGraphState], dict[str, Any]],
+    ) -> Callable[[PEVRGraphState], dict[str, Any]]:
+        """为固定图节点加恢复跳过和完成后 Checkpoint。"""
+
+        def wrapped(state: PEVRGraphState) -> dict[str, Any]:
+            if self._stage_completed(state, stage):
+                return {}
+            result = handler(state)
+            merged = dict(state)
+            merged.update(result)
+            self._persist_checkpoint(merged, stage=stage)
+            return result
+
+        return wrapped
+
+    @staticmethod
+    def _stage_completed(state: PEVRGraphState, stage: PEVRStage) -> bool:
+        """只按已持久化完成轨迹跳过节点；当前执行中的 stage 不算完成。"""
+
+        return any(item.stage is stage for item in state.get("stage_trace", []))
+
+    def _persist_checkpoint(self, state: Mapping[str, Any], *, stage: PEVRStage) -> None:
+        """将图状态 JSON 化并交给持久化适配器，失败即停止而不继续执行。"""
+
+        if self.checkpoint_store is None:
+            return
+        request = state.get("request")
+        run_state = state.get("run_state")
+        if not isinstance(request, PEVRRequest) or not isinstance(run_state, RunState):
+            # guard 尚未生成合同/RunState 时没有足够事实创建 Checkpoint；后续
+            # understand 节点会第一次持久化，避免保存一个不可恢复的半信封。
+            return
+        graph_state = cast(dict[str, Any], to_jsonable(dict(state)))
+        snapshot = CheckpointSnapshot(
+            checkpoint_id=f"cp_{uuid4().hex}",
+            run_id=request.run_id,
+            stage=stage.value,
+            status=run_state.status.value,
+            plan_version=run_state.plan_version,
+            current_task_id=run_state.current_task_id,
+            graph_state=graph_state,
+            saved_at=self._clock(),
+        )
+        self.checkpoint_store.save_checkpoint(snapshot)
+
+    def _load_checkpoint(self, run_id: str) -> CheckpointSnapshot | None:
+        """读取恢复点；新运行没有 PostgreSQL 行时仍允许先走 understand。"""
+
+        if self.checkpoint_store is None:
+            return None
+        try:
+            return self.checkpoint_store.load_checkpoint(run_id)
+        except Exception as exc:
+            # P0-06 的 ResourceNotFoundError 代表还未调用 ensure_run，不是损坏快照；
+            # 其他异常继续抛出，不能把数据库不可用伪装成新运行。
+            if type(exc).__name__ == "ResourceNotFoundError":
+                return None
+            raise
+
+    @staticmethod
+    def _validate_resume_request(checkpoint: CheckpointSnapshot, request: PEVRRequest) -> None:
+        """同一 run_id 恢复时只接受同一环境和原始请求，避免串用 Checkpoint。"""
+
+        payload = checkpoint.graph_state.get("request")
+        if not isinstance(payload, Mapping):
+            raise PEVRExecutionError(PEVRStage.GUARD, "checkpoint_request_missing", "Checkpoint 缺少原始请求")
+        if (
+            payload.get("raw_request") != request.raw_request
+            or payload.get("environment_ref") != request.environment_ref
+            or payload.get("seed") != request.seed
+        ):
+            raise PEVRExecutionError(
+                PEVRStage.GUARD,
+                "checkpoint_request_mismatch",
+                "恢复请求与持久化 run_id 的原始请求、环境或 seed 不一致",
+            )
+
+    def _reconcile_checkpoint(self, checkpoint: CheckpointSnapshot) -> None:
+        """恢复前逐条核对未完成/已完成副作用，未知状态不自动重放。"""
+
+        if self.checkpoint_store is None:
+            return
+        list_effects = getattr(self.checkpoint_store, "list_effects", None)
+        if not callable(list_effects):
+            return
+        for entry in list_effects(checkpoint.run_id):
+            if entry.status not in {
+                EffectLedgerStatus.RESERVED,
+                EffectLedgerStatus.COMPLETED,
+                EffectLedgerStatus.RECONCILED,
+            }:
+                continue
+            assessment = self._recovery.assess(entry)
+            if assessment.decision is RecoveryDecision.SKIP_COMPLETED:
+                if entry.result is None and assessment.external.result is not None:
+                    self.checkpoint_store.complete_effect(
+                        entry.idempotency_key,
+                        assessment.external.result,
+                        external_effect_id=assessment.external.external_effect_id,
+                        reconciled=True,
+                        recovery_note=assessment.reason,
+                    )
+                continue
+            if assessment.decision is RecoveryDecision.CONTINUE:
+                continue
+            if assessment.decision is RecoveryDecision.COMPENSATE:
+                fail_effect = getattr(self.checkpoint_store, "fail_effect", None)
+                if callable(fail_effect):
+                    # P0-14 没有擅自创造补偿工具；先把“必须补偿”的事实落账，
+                    # 由 P0-15/人工流程执行受控补偿，防止下次恢复误当成可重放。
+                    fail_effect(
+                        entry.idempotency_key,
+                        note=assessment.reason,
+                        compensation_required=True,
+                    )
+            raise PEVRExecutionError(
+                PEVRStage.EXECUTE,
+                f"recovery_{assessment.decision.value}",
+                assessment.reason,
+            )
+
+    @staticmethod
+    def _restore_graph_state(payload: Mapping[str, Any]) -> PEVRGraphState:
+        """把 JSONB 快照重新验证为 PEVR 各层 Pydantic 契约。"""
+
+        allowed_keys = set(PEVRGraphState.__annotations__)
+        unknown_keys = set(payload) - allowed_keys
+        if unknown_keys:
+            raise ValueError(f"Checkpoint graph_state 包含未知字段: {', '.join(sorted(unknown_keys))}")
+        restored: PEVRGraphState = dict(payload)
+        request_payload = payload.get("request")
+        if not isinstance(request_payload, Mapping):
+            raise ValueError("Checkpoint request 必须是对象")
+        restored["request"] = PEVRRequest.model_validate(request_payload)
+        if isinstance(payload.get("stage"), str):
+            restored["stage"] = PEVRStage(payload["stage"])
+        elif payload.get("stage") is not None:
+            raise ValueError("Checkpoint stage 必须是字符串或 null")
+
+        def require_list(key: str) -> list[Any]:
+            """严格读取列表字段；字符串或坏项不能被 list()/过滤静默改写。"""
+
+            value = payload.get(key)
+            if not isinstance(value, list):
+                raise ValueError(f"Checkpoint {key} 必须是数组")
+            return value
+
+        trace_payload = require_list("stage_trace")
+        if not all(isinstance(item, Mapping) for item in trace_payload):
+            raise ValueError("Checkpoint stage_trace 包含非对象项")
+        restored["stage_trace"] = [PEVRTraceEvent.model_validate(item) for item in trace_payload]
+        trace_stages = [item.stage for item in restored["stage_trace"]]
+        if len(trace_stages) != len(set(trace_stages)):
+            raise ValueError("Checkpoint stage_trace 包含重复阶段")
+        trace_positions = [PEVR_STAGE_ORDER.index(stage) for stage in trace_stages]
+        if trace_positions != sorted(trace_positions):
+            raise ValueError("Checkpoint stage_trace 顺序非法")
+        model_types: dict[str, type[BaseModel]] = {
+            "contract": TaskContract,
+            "retrieval_result": ToolResult,
+            "plan": PlanTasksOutput,
+            "plan_validation": PlanValidationResult,
+            "derived_plan": SimulationPlan,
+            "verification": ObservationVerification,
+            "final_report": PEVRRunReport,
+            "model_version": ModelVersionRecord,
+        }
+        for key, model_type in model_types.items():
+            value = payload.get(key)
+            if isinstance(value, Mapping):
+                restored[key] = model_type.model_validate(value)
+            elif value is None:
+                restored[key] = None
+            else:
+                raise ValueError(f"Checkpoint {key} 必须是对象或 null")
+
+        rag_payload = require_list("rag_evidence")
+        result_payload = require_list("tool_results")
+        task_id_payload = require_list("tool_task_ids")
+        observation_payload = require_list("observations")
+        provenance_payload = require_list("resource_provenance")
+        for key, values in (
+            ("rag_evidence", rag_payload),
+            ("tool_results", result_payload),
+            ("observations", observation_payload),
+            ("resource_provenance", provenance_payload),
+        ):
+            if not all(isinstance(item, Mapping) for item in values):
+                raise ValueError(f"Checkpoint {key} 包含非对象项")
+        if not all(item is None or isinstance(item, str) for item in task_id_payload):
+            raise ValueError("Checkpoint tool_task_ids 只能包含字符串或 null")
+        if len(result_payload) != len(task_id_payload):
+            raise ValueError("Checkpoint tool_results 与 tool_task_ids 数量不一致")
+        restored["rag_evidence"] = [ContextEvidence.model_validate(item) for item in rag_payload]
+        restored["tool_results"] = [ToolResult.model_validate(item) for item in result_payload]
+        restored["tool_task_ids"] = list(task_id_payload)
+        restored["observations"] = [Observation.model_validate(item) for item in observation_payload]
+        restored["resource_provenance"] = [
+            TaskResourceProvenance.model_validate(item) for item in provenance_payload
+        ]
+        notes = require_list("plan_normalization_notes")
+        if not all(isinstance(item, str) for item in notes):
+            raise ValueError("Checkpoint plan_normalization_notes 只能包含字符串")
+        restored["plan_normalization_notes"] = list(notes)
+        run_state_payload = payload.get("run_state")
+        if not isinstance(run_state_payload, Mapping):
+            raise ValueError("Checkpoint run_state 必须是对象")
+        restored["run_state"] = RunState.model_validate(run_state_payload)
+        budget_payload = payload.get("budget_usage")
+        if not isinstance(budget_payload, Mapping):
+            raise ValueError("Checkpoint budget_usage 必须是对象")
+        restored["budget_usage"] = BudgetUsage.model_validate(budget_payload)
+        model_call_count = payload.get("model_call_count")
+        if (
+            isinstance(model_call_count, bool)
+            or not isinstance(model_call_count, int)
+            or model_call_count < 0
+        ):
+            raise ValueError("Checkpoint model_call_count 必须是非负整数")
+        restored["model_call_count"] = model_call_count
+        return restored
+
+    @staticmethod
+    def _is_terminal_graph_state(state: PEVRGraphState) -> bool:
+        """仅当最终报告和验证都已保存时才可无模型/无工具直接返回。"""
+
+        return (
+            isinstance(state.get("final_report"), PEVRRunReport)
+            and isinstance(state.get("run_state"), RunState)
+            and state["run_state"].status is RunStatus.COMPLETED
+            and isinstance(state.get("verification"), ObservationVerification)
+        )
+
+    @staticmethod
+    def _result_from_graph_state(state: PEVRGraphState, request: PEVRRequest) -> PEVRRunResult:
+        """从终态快照恢复完整结果，重复调用不重新派发副作用。"""
+
+        run_state = state.get("run_state")
+        report = state.get("final_report")
+        verification = state.get("verification")
+        if not isinstance(run_state, RunState) or not isinstance(report, PEVRRunReport) or not isinstance(verification, ObservationVerification):
+            raise PEVRExecutionError(PEVRStage.FINISH, "checkpoint_terminal_state_invalid", "终态 Checkpoint 不完整")
+        return PEVRRunResult(
+            request=request,
+            report=report,
+            run_state=run_state,
+            stage_trace=list(state.get("stage_trace", [])),
+            tool_results=list(state.get("tool_results", [])),
+            observations=list(state.get("observations", [])),
+            verification=verification,
+            resource_provenance=list(state.get("resource_provenance", [])),
+        )
+
+    def _mark_stage(self, state: PEVRGraphState, stage: PEVRStage) -> list[PEVRTraceEvent]:
+        """追加节点完成事件；节点顺序由图边保证，序号只用于报告审计。"""
+
+        now = self._clock()
+        trace = list(state.get("stage_trace", []))
+        trace.append(
+            PEVRTraceEvent(
+                sequence=len(trace) + 1,
+                stage=stage,
+                started_at=now,
+                finished_at=now,
+            )
+        )
+        return trace
+
+    @staticmethod
+    def _budget_limits(contract: TaskContract | None):
+        """在理解节点前使用入口预算，之后严格使用 LLM 输出的合同预算。"""
+
+        from agent.planning import ExecutionBudgets
+
+        return contract.budgets if contract is not None else ExecutionBudgets(**PEVRGraphRunner.ENTRY_BUDGETS)
+
+    @staticmethod
+    def _requested_output_tokens(
+        request: PEVRRequest,
+        limits: Any,
+        usage: BudgetUsage,
+    ) -> int:
+        """把单节点输出上限收紧到累计预算剩余值，避免最后一个节点自拒绝。"""
+
+        remaining = max(1, limits.max_output_tokens - usage.output_tokens)
+        return min(request.requested_output_tokens, limits.max_output_tokens, remaining)
+
+    @staticmethod
+    def _node_output_or_fail(result: Any, stage: PEVRStage, label: str) -> Any:
+        """把 P0-05 节点的 route 统一收口，禁止继续使用空输出。"""
+
+        if result.route is not NodeRoute.SUCCESS or result.output is None:
+            raise PEVRExecutionError(
+                stage,
+                result.reason_code or f"{label}_failed",
+                result.reason or f"{label} 节点没有成功输出",
+            )
+        return result.output
+
+    def _guard_node(self, state: PEVRGraphState) -> dict[str, Any]:
+        """执行入口长度、角色、环境和工具审批声明检查。"""
+
+        request = state["request"]
+        if request.principal_role is not UserRole.OPERATOR:
+            raise PEVRExecutionError(PEVRStage.GUARD, "role_not_allowed", "正常执行必须使用 operator")
+        dispatch_spec = self.registry.get(ToolName.DISPATCH_SIMULATION).spec
+        if not dispatch_spec.requires_approval:
+            raise PEVRExecutionError(
+                PEVRStage.GUARD,
+                "dispatch_approval_contract_missing",
+                "dispatch_simulation 的 requires_approval 声明缺失",
+            )
+        # 这里不自动批准；只验证调用上下文能否表达可信审批。真正的拒绝在
+        # Executor 即将调用副作用工具前再次检查，避免 Planner 改写审批事实。
+        return {"stage": PEVRStage.GUARD, "stage_trace": self._mark_stage(state, PEVRStage.GUARD)}
+
+    def _understand_node(self, state: PEVRGraphState) -> dict[str, Any]:
+        """用 Fast/Smart 网关把自然语言订单冻结为 TaskContract。"""
+
+        request = state["request"]
+        snapshot = self.snapshot_provider.get_snapshot(request.environment_ref)
+        context = build_node_context(
+            node_name=PromptNodeName.UNDERSTAND_GOAL,
+            request_id=f"{request.run_id}:understand",
+            node_input={
+                "raw_request": request.raw_request,
+                "environment_ref": snapshot.environment_ref,
+                "environment_snapshot": {
+                    "state_version": snapshot.state_version,
+                    "map_width": snapshot.map_width,
+                    "map_height": snapshot.map_height,
+                    "location_ids": sorted(snapshot.location_positions),
+                    "blocked_cells": [item.model_dump(mode="json") for item in snapshot.blocked_cells],
+                },
+                "available_orders": [item.model_dump(mode="json") for item in snapshot.orders],
+                "fixed_execution_defaults": {
+                    "max_total_seconds": self.ENTRY_BUDGETS["max_total_seconds"],
+                    "max_input_tokens": self.ENTRY_BUDGETS["max_input_tokens"],
+                    "max_output_tokens": self.ENTRY_BUDGETS["max_output_tokens"],
+                    "minimum_battery_percent": 20,
+                    "maximum_load_kg": 100,
+                    "enforce_time_windows": True,
+                    "max_tool_steps": 8,
+                    "max_replans": 0,
+                },
+            },
+            budget_limits=self._budget_limits(None),
+            budget_usage=state["budget_usage"],
+            requested_output_tokens=self._requested_output_tokens(
+                request,
+                self._budget_limits(None),
+                state["budget_usage"],
+            ),
+            generated_at=self._clock(),
+        )
+        result = understand_goal(self.provider, context)
+        contract = cast(TaskContract, self._node_output_or_fail(result, PEVRStage.UNDERSTAND, "understand_goal"))
+        self._validate_contract_against_snapshot(contract, snapshot)
+        now = self._clock()
+        run_state = RunState(
+            run_id=request.run_id,
+            status=RunStatus.PLANNING,
+            plan_version=1,
+            task_contract=contract,
+            plan_tasks=[],
+            amr_states=[item.model_copy(deep=True) for item in snapshot.amrs],
+            orders=[item.model_copy(deep=True) for item in contract.orders],
+            observations=[],
+            current_task_id=None,
+            completed_task_ids=[],
+            failed_task_ids=[],
+            created_at=now,
+            updated_at=now,
+            replan_count=0,
+        )
+        ensure_run = getattr(self.checkpoint_store, "ensure_run", None)
+        if callable(ensure_run):
+            # 只有合同和初始 RunState 都通过 Pydantic 后才创建/绑定 PostgreSQL
+            # 运行行，避免数据库留下无法恢复的自然语言半成品。
+            ensure_run(request.run_id, contract)
+        return {
+            "stage": PEVRStage.UNDERSTAND,
+            "stage_trace": self._mark_stage(state, PEVRStage.UNDERSTAND),
+            "contract": contract,
+            "run_state": run_state,
+            "budget_usage": result.usage_after,
+            "model_call_count": state.get("model_call_count", 0) + 1,
+        }
+
+    @staticmethod
+    def _validate_contract_against_snapshot(contract: TaskContract, snapshot: EnvironmentSnapshot) -> None:
+        """确认 LLM 没有篡改固定 seed 的订单、地点和环境身份。"""
+
+        if contract.environment_ref != snapshot.environment_ref:
+            raise PEVRExecutionError(PEVRStage.UNDERSTAND, "environment_ref_mismatch", "合同环境与固定快照不一致")
+        snapshot_orders = {item.order_id: item for item in snapshot.orders}
+        for order in contract.orders:
+            if order.order_id not in snapshot_orders or order != snapshot_orders[order.order_id]:
+                raise PEVRExecutionError(
+                    PEVRStage.UNDERSTAND,
+                    "order_snapshot_mismatch",
+                    f"合同订单不是固定快照中的原始订单: {order.order_id}",
+                )
+            for location_id in (order.pickup, order.dropoff):
+                if location_id not in snapshot.location_positions:
+                    raise PEVRExecutionError(
+                        PEVRStage.UNDERSTAND,
+                        "location_not_found",
+                        f"订单 {order.order_id} 引用了未知工位: {location_id}",
+                    )
+        if contract.constraints.map_width != snapshot.map_width or contract.constraints.map_height != snapshot.map_height:
+            raise PEVRExecutionError(PEVRStage.UNDERSTAND, "map_size_mismatch", "合同地图尺寸与固定快照不一致")
+        if contract.constraints.blocked_cells != snapshot.blocked_cells:
+            raise PEVRExecutionError(PEVRStage.UNDERSTAND, "blocked_cells_mismatch", "合同封路与固定环境快照不一致")
+        if contract.missing_information:
+            raise PEVRExecutionError(PEVRStage.UNDERSTAND, "missing_information", "正常闭环不能带未解决的执行必需信息")
+
+    def _retrieve_node(self, state: PEVRGraphState) -> dict[str, Any]:
+        """通过真实 P0-12 RAG 工具取得 ACL 过滤后的冻结证据。"""
+
+        request = state["request"]
+        contract = cast(TaskContract, state["contract"])
+        run_state = cast(RunState, state["run_state"])
+        query = (
+            f"{contract.goal}；请参考仓储运输 SOP、交通冲突、电量安全余量、"
+            "Validator 和运输完成条件。"
+        )
+        result = self.registry.execute(
+            ToolName.RETRIEVE_KNOWLEDGE,
+            {"query": query, "top_k": 5, "role_scope": request.principal_role},
+            role=request.principal_role,
+            call_id=f"{request.run_id}:retrieve",
+        )
+        if result.status is not ToolResultStatus.SUCCESS:
+            raise PEVRExecutionError(
+                PEVRStage.RETRIEVE,
+                result.error.code if result.error is not None else "retrieve_failed",
+                result.error.message if result.error is not None else "RAG 检索失败",
+            )
+        response = RetrievalResponse.model_validate(result.output)
+        if response.status is not RetrievalStatus.ANSWERABLE:
+            raise PEVRExecutionError(PEVRStage.RETRIEVE, "insufficient_evidence", response.reason)
+        rag_evidence = response.to_context_evidence(collected_at=result.finished_at)
+        observation = self._observation_from_tool(result, task_id=None)
+        observations = [*state.get("observations", []), observation]
+        updated_state = self._replace_run_state(run_state, observations=observations, status=RunStatus.PLANNING)
+        tool_results = [*state.get("tool_results", []), result]
+        return {
+            "stage": PEVRStage.RETRIEVE,
+            "stage_trace": self._mark_stage(state, PEVRStage.RETRIEVE),
+            "retrieval_result": result,
+            "rag_evidence": rag_evidence,
+            "run_state": updated_state,
+            "observations": observations,
+            "tool_results": tool_results,
+            "tool_task_ids": [*state.get("tool_task_ids", []), None],
+            "budget_usage": self._add_tool_usage(state["budget_usage"], result),
+        }
+
+    def _plan_node(self, state: PEVRGraphState) -> dict[str, Any]:
+        """让模型只生成 DAG；执行权仍留在下一节点的确定性门禁之后。"""
+
+        request = state["request"]
+        contract = cast(TaskContract, state["contract"])
+        run_state = cast(RunState, state["run_state"])
+        specs = [
+            {
+                "tool_name": spec.tool_name.value,
+                "requires_approval": spec.requires_approval,
+                "allowed_roles": [role.value for role in spec.allowed_roles],
+                # Planner 已经收到实时 PlanTasksOutput Schema；这里不重复嵌入
+                # 巨大的嵌套 JSON Schema，只提供封闭参数名和跨任务数据流规则，
+                # 以免在 8K Fast 上下文中把确定性预算门禁推入 fallback。
+                "required_parameters": sorted(TOOL_ARGUMENT_POLICIES[spec.tool_name].required),
+                "optional_parameters": sorted(TOOL_ARGUMENT_POLICIES[spec.tool_name].optional),
+            }
+            for spec in self.registry.specs()
+            if spec.tool_name in {*NORMAL_PEVR_TOOL_CHAIN}
+        ]
+        plan_input: dict[str, Any] = {
+            "run_id": request.run_id,
+            "simulation_seed": request.seed,
+            "task_contract": contract.model_dump(mode="json"),
+            "order_ids": [order.order_id for order in contract.orders],
+            "fixed_execution_facts": {
+                "environment_ref": contract.environment_ref,
+                "order_ids": [order.order_id for order in contract.orders],
+                "blocked_cells": [
+                    cell.model_dump(mode="json")
+                    for cell in contract.constraints.blocked_cells
+                ],
+                "latest_deadline": max(order.deadline for order in contract.orders),
+                "ruleset_version": "p0-10.v1",
+                "simulation_seed": request.seed,
+            },
+            "available_tool_contracts": specs,
+            "required_normal_chain": [tool.value for tool in NORMAL_PEVR_TOOL_CHAIN],
+            "dataflow_rules": {
+                "route_assignments": "{\"$ref\": \"task:<allocate_task_id>/output/assignments\"}",
+                "validate_plan": "{\"$ref\": \"derived:simulation_plan\"}",
+                "dispatch_plan": "{\"$ref\": \"derived:simulation_plan\"}",
+            },
+            "normal_path_rule": "只生成四个工具任务；retrieve 已在本节点之前完成；不要生成 approval、query 或任何额外工具任务。",
+        }
+        context = build_node_context(
+            node_name=PromptNodeName.PLAN_TASKS,
+            request_id=f"{request.run_id}:plan",
+            node_input=plan_input,
+            budget_limits=contract.budgets,
+            budget_usage=state["budget_usage"],
+            requested_output_tokens=self._requested_output_tokens(
+                request,
+                contract.budgets,
+                state["budget_usage"],
+            ),
+            run_state=run_state,
+            rag_evidence=state.get("rag_evidence", []),
+            tool_evidence=[self._tool_context_evidence(cast(ToolResult, state["retrieval_result"]))],
+            generated_at=self._clock(),
+        )
+        result = plan_tasks(self.provider, context)
+        raw_plan = cast(PlanTasksOutput, self._node_output_or_fail(result, PEVRStage.PLAN, "plan_tasks"))
+        plan, normalization_notes = canonicalize_normal_pevr_plan(
+            raw_plan,
+            contract=contract,
+            expected_seed=request.seed,
+        )
+        usage_after = result.usage_after
+        plan_call_count = 1
+        first_validation = validate_normal_pevr_plan(
+            contract,
+            plan,
+            tool_specs=self.registry.specs(),
+            expected_seed=request.seed,
+        )
+        if not first_validation.valid:
+            # Fast 实测会偶发把固定 seed/环境或链式参数写错。这里只允许一次
+            # “模型语义修复”，并把确定性错误逐条反馈；修复结果仍必须进入下一
+            # validate 节点，绝不把 Python 自动改值当作通过 Validator。
+            repair_context = build_node_context(
+                node_name=PromptNodeName.PLAN_TASKS,
+                request_id=f"{request.run_id}:plan:semantic-repair:1",
+                node_input={
+                    **plan_input,
+                    "semantic_repair": {
+                        "attempt": 1,
+                        "rejected_plan": plan.model_dump(mode="json"),
+                        "deterministic_errors": [
+                            item.model_dump(mode="json")
+                            for item in first_validation.errors
+                        ],
+                        "instruction": "只修复列出的确定性错误并返回完整四任务计划，不得省略 Validator 或 dispatch。",
+                    },
+                },
+                budget_limits=contract.budgets,
+                budget_usage=usage_after,
+                requested_output_tokens=self._requested_output_tokens(
+                    request,
+                    contract.budgets,
+                    usage_after,
+                ),
+                run_state=run_state,
+                rag_evidence=state.get("rag_evidence", []),
+                tool_evidence=[self._tool_context_evidence(cast(ToolResult, state["retrieval_result"]))],
+                generated_at=self._clock(),
+            )
+            repair_result = plan_tasks(self.provider, repair_context)
+            repaired_raw = cast(
+                PlanTasksOutput,
+                self._node_output_or_fail(
+                    repair_result,
+                    PEVRStage.PLAN,
+                    "plan_tasks semantic repair",
+                ),
+            )
+            plan, repair_notes = canonicalize_normal_pevr_plan(
+                repaired_raw,
+                contract=contract,
+                expected_seed=request.seed,
+            )
+            normalization_notes = [
+                *normalization_notes,
+                "semantic_repair:1",
+                *repair_notes,
+            ]
+            usage_after = repair_result.usage_after
+            plan_call_count = 2
+        planned_state = self._replace_run_state(
+            run_state,
+            plan_version=plan.plan_version,
+            plan_tasks=list(plan.tasks),
+            status=RunStatus.VALIDATING,
+            current_task_id=None,
+        )
+        return {
+            "stage": PEVRStage.PLAN,
+            "stage_trace": self._mark_stage(state, PEVRStage.PLAN),
+            "plan": plan,
+            "plan_normalization_notes": normalization_notes,
+            "run_state": planned_state,
+            "budget_usage": usage_after,
+            "model_call_count": state.get("model_call_count", 0) + plan_call_count,
+        }
+
+    def _validate_node(self, state: PEVRGraphState) -> dict[str, Any]:
+        """在 Executor 前执行唯一的 Planner DAG 硬门禁。"""
+
+        request = state["request"]
+        contract = cast(TaskContract, state["contract"])
+        plan = cast(PlanTasksOutput, state["plan"])
+        validation = validate_normal_pevr_plan(
+            contract,
+            plan,
+            tool_specs=self.registry.specs(),
+            expected_seed=request.seed,
+        )
+        if not validation.valid:
+            detail = "; ".join(f"{item.code}: {item.message}" for item in validation.errors)
+            raise PEVRExecutionError(PEVRStage.VALIDATE, "plan_validation_failed", detail)
+        run_state = self._replace_run_state(cast(RunState, state["run_state"]), status=RunStatus.VALIDATING)
+        return {
+            "stage": PEVRStage.VALIDATE,
+            "stage_trace": self._mark_stage(state, PEVRStage.VALIDATE),
+            "plan_validation": validation,
+            "run_state": run_state,
+        }
+
+    def _registry_execute(
+        self,
+        tool_name: ToolName,
+        arguments: Mapping[str, Any],
+        *,
+        role: UserRole,
+        call_id: str,
+        idempotency_key: str | None = None,
+    ) -> ToolResult:
+        """调用真实或旧版 fake Registry，并在支持时传入业务幂等键。"""
+
+        kwargs: dict[str, Any] = {"role": role, "call_id": call_id}
+        try:
+            accepts_key = "idempotency_key" in inspect.signature(self.registry.execute).parameters
+        except (TypeError, ValueError):
+            accepts_key = False
+        if accepts_key and idempotency_key is not None:
+            kwargs["idempotency_key"] = idempotency_key
+        result = self.registry.execute(tool_name, arguments, **kwargs)
+        if idempotency_key is not None and not accepts_key and result.idempotency_key != idempotency_key:
+            # P0-13 的 fake 仍返回 call_id；进入 P0-14 持久化边界后统一修正为
+            # 三元组键，避免兼容测试造出第二套副作用身份。
+            result = result.model_copy(update={"idempotency_key": idempotency_key})
+        return result
+
+    def _task_input_digest(
+        self,
+        task: PlanTask,
+        arguments: Mapping[str, Any],
+        *,
+        role: UserRole,
+    ) -> str:
+        """计算与 ToolExecutor 相同语义的输入指纹，写入预留账本。"""
+
+        del role  # ToolResult.input_digest 只覆盖规范化参数；角色另有 principal_role。
+
+        parsed_arguments: Any = dict(arguments)
+        definition = self.registry.get(task.tool_name)
+        input_model = getattr(definition, "input_model", None)
+        if input_model is not None:
+            try:
+                parsed_arguments = input_model.model_validate(arguments)
+            except (TypeError, ValueError, ValidationError):
+                # 真正的输入失败仍交给 Registry 返回 ToolResult；这里只需有一条
+                # 稳定指纹，不能因为预检失败而绕过 Effect Ledger 约束。
+                parsed_arguments = dict(arguments)
+        return canonical_json_digest(parsed_arguments)
+
+    def _prepare_side_effect(
+        self,
+        *,
+        request: PEVRRequest,
+        task: PlanTask,
+        plan_version: int,
+        arguments: Mapping[str, Any],
+    ) -> tuple[str, ToolResult | None]:
+        """预留/恢复一个副作用；返回业务 key 及可直接复用的结果。"""
+
+        key = make_effect_idempotency_key(request.run_id, plan_version, task.task_id)
+        if self.checkpoint_store is None:
+            return key, None
+        definition = self.registry.get(task.tool_name)
+        if not definition.spec.has_side_effects:
+            return key, None
+        input_digest = self._task_input_digest(task, arguments, role=request.principal_role)
+        reservation = self.checkpoint_store.reserve_effect(
+            run_id=request.run_id,
+            plan_version=plan_version,
+            task_id=task.task_id,
+            tool_name=task.tool_name,
+            call_id=f"{request.run_id}:plan:{plan_version}:task:{task.task_id}",
+            input_digest=input_digest,
+            arguments=arguments,
+            now=self._clock(),
+        )
+        if reservation.owner:
+            return key, None
+        assessment = self._recovery.assess(reservation.entry)
+        if assessment.decision is RecoveryDecision.SKIP_COMPLETED:
+            result = reservation.entry.result or assessment.external.result
+            if result is None:
+                raise PEVRExecutionError(
+                    PEVRStage.EXECUTE,
+                    "recovery_result_missing",
+                    assessment.reason,
+                )
+            if reservation.entry.result is None:
+                self.checkpoint_store.complete_effect(
+                    key,
+                    result,
+                    external_effect_id=assessment.external.external_effect_id,
+                    reconciled=True,
+                    recovery_note=assessment.reason,
+                )
+            return key, result
+        if assessment.decision is not RecoveryDecision.CONTINUE:
+            if assessment.decision is RecoveryDecision.COMPENSATE:
+                fail_effect = getattr(self.checkpoint_store, "fail_effect", None)
+                if callable(fail_effect):
+                    fail_effect(
+                        key,
+                        note=assessment.reason,
+                        compensation_required=True,
+                    )
+            raise PEVRExecutionError(
+                PEVRStage.EXECUTE,
+                f"recovery_{assessment.decision.value}",
+                assessment.reason,
+            )
+        # 外部明确 not_found 时沿用原唯一键继续；新结果仍覆盖同一 reserved 行。
+        return key, None
+
+    def _execute_node(self, state: PEVRGraphState) -> dict[str, Any]:
+        """按拓扑顺序执行或恢复任务，并在每个任务后落 Checkpoint。"""
+
+        request = state["request"]
+        contract = cast(TaskContract, state["contract"])
+        plan = cast(PlanTasksOutput, state["plan"])
+        validation = cast(PlanValidationResult, state["plan_validation"])
+        run_state = cast(RunState, state["run_state"])
+        results = list(state.get("tool_results", []))
+        task_ids = list(state.get("tool_task_ids", []))
+        observations = list(state.get("observations", []))
+        resource_provenance = list(state.get("resource_provenance", []))
+        usage = state["budget_usage"]
+        results_by_task: dict[str, ToolResult] = {
+            task_id: result
+            for task_id, result in zip(task_ids, results)
+            if task_id is not None
+        }
+        derived_plan = state.get("derived_plan")
+        task_by_id = {task.task_id: task for task in plan.tasks}
+        completed_ids = set(run_state.completed_task_ids)
+
+        # 如果进程在“外部完成 → Checkpoint 尚未更新”窗口退出，账本结果可能比图
+        # 快照更完整；先把它加入本次恢复上下文，仍由下方任务状态机决定是否复用。
+        if self.checkpoint_store is not None:
+            for task in plan.tasks:
+                if task.task_id not in completed_ids or task.task_id in results_by_task:
+                    continue
+                key = make_effect_idempotency_key(request.run_id, plan.plan_version, task.task_id)
+                entry = self.checkpoint_store.get_effect(key)
+                if entry is not None and entry.result is not None:
+                    results_by_task[task.task_id] = entry.result
+                    if task.task_id not in task_ids:
+                        task_ids.append(task.task_id)
+                        results.append(entry.result)
+
+        for task_id in validation.topological_order:
+            task = task_by_id[task_id]
+            if any(dependency not in completed_ids for dependency in task.dependencies):
+                raise PEVRExecutionError(PEVRStage.EXECUTE, "dependency_not_completed", task.task_id)
+
+            # 已完成节点是恢复锚点：结果必须来自 Checkpoint 或 Effect Ledger，缺失
+            # 时宁可停止也不猜测，更不能为了补齐列表重新执行副作用。
+            if task_id in completed_ids:
+                existing = results_by_task.get(task_id)
+                if existing is None:
+                    raise PEVRExecutionError(
+                        PEVRStage.EXECUTE,
+                        "completed_task_result_missing",
+                        f"已完成任务 {task_id} 缺少持久化 ToolResult",
+                    )
+                if task.tool_name is ToolName.PLAN_MULTI_AMR_ROUTES and derived_plan is None:
+                    route_arguments = self._materialize_arguments(
+                        task,
+                        results_by_task=results_by_task,
+                        derived_plan=derived_plan,
+                        contract=contract,
+                    )
+                    derived_plan = self._build_simulation_plan(
+                        contract,
+                        RoutePlanResponse.model_validate(existing.output),
+                        route_arguments,
+                    )
+                continue
+
+            spec = self.registry.get(task.tool_name).spec
+            if spec.requires_approval and not request.approval_granted:
+                # 这是副作用工具的最后一道 guard；Planner、Prompt 和自然语言都
+                # 不能把 requires_approval 变成批准事实。
+                raise PEVRExecutionError(
+                    PEVRStage.EXECUTE,
+                    "approval_required",
+                    f"工具 {task.tool_name.value} 需要可信审批上下文",
+                )
+            run_state = self._replace_task_state(
+                run_state,
+                task_id=task_id,
+                status=PlanTaskStatus.RUNNING,
+                current_task_id=task_id,
+                run_status=RunStatus.EXECUTING,
+            )
+            arguments = self._materialize_arguments(
+                task,
+                results_by_task=results_by_task,
+                derived_plan=derived_plan,
+                contract=contract,
+            )
+            idempotency_key, recovered_result = self._prepare_side_effect(
+                request=request,
+                task=task,
+                plan_version=plan.plan_version,
+                arguments=arguments,
+            )
+            result = recovered_result or self._registry_execute(
+                task.tool_name,
+                arguments,
+                role=request.principal_role,
+                call_id=f"{request.run_id}:plan:{plan.plan_version}:task:{task.task_id}",
+                idempotency_key=idempotency_key,
+            )
+            if result.status is not ToolResultStatus.SUCCESS:
+                if self.checkpoint_store is not None and spec.has_side_effects:
+                    self.checkpoint_store.fail_effect(
+                        idempotency_key,
+                        note=result.error.message if result.error is not None else "工具失败",
+                        compensation_required=result.effect_id is not None,
+                    )
+                raise PEVRExecutionError(
+                    PEVRStage.EXECUTE,
+                    result.error.code if result.error is not None else "tool_failed",
+                    result.error.message if result.error is not None else f"工具 {task.tool_name.value} 失败",
+                )
+            if self.checkpoint_store is not None and spec.has_side_effects and recovered_result is None:
+                self.checkpoint_store.complete_effect(
+                    idempotency_key,
+                    result,
+                    external_effect_id=result.effect_id,
+                )
+            results.append(result)
+            task_ids.append(task.task_id)
+            results_by_task[task.task_id] = result
+            if task.tool_name is ToolName.PLAN_MULTI_AMR_ROUTES:
+                derived_plan = self._build_simulation_plan(
+                    contract,
+                    RoutePlanResponse.model_validate(result.output),
+                    arguments,
+                )
+            elif task.tool_name is ToolName.VALIDATE_FLEET_PLAN:
+                validation_output = ValidationResponse.model_validate(result.output)
+                if not validation_output.valid or validation_output.status != "valid" or validation_output.errors:
+                    raise PEVRExecutionError(
+                        PEVRStage.EXECUTE,
+                        "validator_postcondition_failed",
+                        "工具返回的 Validator 结果不是 valid=true",
+                    )
+            elif task.tool_name is ToolName.DISPATCH_SIMULATION:
+                simulation = SimulationResult.model_validate(result.output)
+                if simulation.status.value != "completed" or any(item.status.value != "completed" for item in simulation.orders):
+                    raise PEVRExecutionError(
+                        PEVRStage.EXECUTE,
+                        "simulation_not_completed",
+                        "正常闭环要求仿真完成全部订单",
+                    )
+            observation = self._observation_from_tool(result, task_id=task.task_id)
+            observations.append(observation)
+            completed_ids.add(task_id)
+            run_state = self._replace_task_state(
+                run_state,
+                task_id=task_id,
+                status=PlanTaskStatus.COMPLETED,
+                current_task_id=None,
+                run_status=RunStatus.EXECUTING,
+                evidence_refs=result.evidence_refs,
+                effect_id=result.effect_id,
+                completed_task_ids=sorted(completed_ids),
+                observations=observations,
+            )
+            usage = self._add_tool_usage(usage, result)
+            resource_provenance = build_task_resource_provenance(
+                plan,
+                tool_results=results,
+                tool_task_ids=task_ids,
+                contract=contract,
+                snapshot=self.snapshot_provider.get_snapshot(contract.environment_ref),
+            )
+            self._persist_checkpoint(
+                {
+                    **state,
+                    "stage": PEVRStage.EXECUTE,
+                    "run_state": run_state,
+                    "derived_plan": derived_plan,
+                    "tool_results": results,
+                    "tool_task_ids": task_ids,
+                    "resource_provenance": resource_provenance,
+                    "observations": observations,
+                    "budget_usage": usage,
+                },
+                stage=PEVRStage.EXECUTE,
+            )
+
+        if derived_plan is None:
+            raise PEVRExecutionError(PEVRStage.EXECUTE, "simulation_plan_missing", "路线任务未产生 SimulationPlan")
+        return {
+            "stage": PEVRStage.EXECUTE,
+            "stage_trace": self._mark_stage(state, PEVRStage.EXECUTE),
+            "run_state": run_state,
+            "derived_plan": derived_plan,
+            "tool_results": results,
+            "tool_task_ids": task_ids,
+            "resource_provenance": resource_provenance,
+            "observations": observations,
+            "budget_usage": usage,
+        }
+
+    def _verify_node(self, state: PEVRGraphState) -> dict[str, Any]:
+        """让 P0-05 Verifier 对照真实仿真 Observation 判断订单完成。"""
+
+        request = state["request"]
+        contract = cast(TaskContract, state["contract"])
+        run_state = cast(RunState, state["run_state"])
+        plan = cast(PlanTasksOutput, state["plan"])
+        dispatch_task = next(task for task in plan.tasks if task.tool_name is ToolName.DISPATCH_SIMULATION)
+        dispatch_index = next(
+            index for index, task_id in enumerate(state.get("tool_task_ids", [])) if task_id == dispatch_task.task_id
+        )
+        dispatch_result = cast(ToolResult, state["tool_results"][dispatch_index])
+        dispatch_observation = next(
+            observation for observation in state["observations"] if observation.task_id == dispatch_task.task_id
+        )
+        simulation = SimulationResult.model_validate(dispatch_result.output)
+        context = build_node_context(
+            node_name=PromptNodeName.VERIFY_OBSERVATION,
+            request_id=f"{request.run_id}:verify",
+            node_input={
+                "task_id": dispatch_task.task_id,
+                "completion_criteria": dispatch_task.completion_criteria,
+                "observation_id": dispatch_observation.observation_id,
+                "observation": {
+                    "status": dispatch_observation.status.value,
+                    "summary": dispatch_observation.summary,
+                    "evidence_refs": dispatch_observation.evidence_refs,
+                    "simulation_status": simulation.status.value,
+                    "end_time": simulation.end_time,
+                    "orders": [item.model_dump(mode="json") for item in simulation.orders],
+                    "event_count": len(simulation.events),
+                },
+                "all_plan_tasks_completed": set(run_state.completed_task_ids) == {task.task_id for task in plan.tasks},
+                "expected_decision": "finish",
+            },
+            budget_limits=contract.budgets,
+            budget_usage=state["budget_usage"],
+            requested_output_tokens=self._requested_output_tokens(
+                request,
+                contract.budgets,
+                state["budget_usage"],
+            ),
+            run_state=run_state,
+            rag_evidence=state.get("rag_evidence", []),
+            tool_evidence=[self._tool_context_evidence(dispatch_result, include_output=True)],
+            generated_at=self._clock(),
+        )
+        result = verify_observation(self.provider, context)
+        verification = cast(ObservationVerification, self._node_output_or_fail(result, PEVRStage.VERIFY, "verify_observation"))
+        expected_orders = {order.order_id for order in contract.orders}
+        actual_completed = {
+            item.order_id for item in simulation.orders if item.status.value == "completed"
+        }
+        if not verification.verified or actual_completed != expected_orders:
+            raise PEVRExecutionError(PEVRStage.VERIFY, "observation_not_verified", verification.reason)
+        if verification.decision not in {VerificationDecision.FINISH, VerificationDecision.CONTINUE}:
+            raise PEVRExecutionError(PEVRStage.VERIFY, "verification_decision_not_finish", verification.reason)
+        completed_state = self._replace_run_state(
+            run_state,
+            status=RunStatus.COMPLETED,
+            current_task_id=None,
+            observations=state["observations"],
+        )
+        return {
+            "stage": PEVRStage.VERIFY,
+            "stage_trace": self._mark_stage(state, PEVRStage.VERIFY),
+            "run_state": completed_state,
+            "verification": verification,
+            "budget_usage": result.usage_after,
+            "model_call_count": state.get("model_call_count", 0) + 1,
+        }
+
+    def _finish_node(self, state: PEVRGraphState) -> dict[str, Any]:
+        """生成 LLM 报告，再用确定性事实补齐指标和工具证据索引。"""
+
+        request = state["request"]
+        contract = cast(TaskContract, state["contract"])
+        run_state = cast(RunState, state["run_state"])
+        plan = cast(PlanTasksOutput, state["plan"])
+        validation = cast(PlanValidationResult, state["plan_validation"])
+        simulation = SimulationResult.model_validate(
+            next(
+                result.output
+                for result in reversed(state["tool_results"])
+                if result.tool_name is ToolName.DISPATCH_SIMULATION
+            )
+        )
+        retrieval_response = RetrievalResponse.model_validate(state["retrieval_result"].output)
+        all_evidence_refs = self._all_evidence_refs(state["tool_results"])
+        citations = list(dict.fromkeys(item.citation for item in retrieval_response.results))
+        deterministic_risks = [
+            "P0-04 TransportOrder 尚未包含重量字段，本次执行期 payload_kg 按 P0-13 正常链路固定为 1.0kg。"
+        ]
+        context = build_node_context(
+            node_name=PromptNodeName.COMPOSE_REPORT,
+            request_id=f"{request.run_id}:finish",
+            node_input={
+                "run_id": request.run_id,
+                "run_status": run_state.status.value,
+                "state_version": f"run:{request.run_id}/plan:{run_state.plan_version}",
+                "plan_version": run_state.plan_version,
+                "verified_completed_order_ids": sorted(item.order_id for item in simulation.orders if item.status.value == "completed"),
+                "incomplete_order_ids": sorted(item.order_id for item in simulation.orders if item.status.value != "completed"),
+                "evidence_refs": all_evidence_refs,
+                "citations": citations,
+                "metrics": {
+                    "route_count": len(simulation.orders),
+                    "simulation_status": simulation.status.value,
+                    "simulation_end_time": simulation.end_time,
+                    "validator_error_count": 0,
+                },
+                "unresolved_risks": deterministic_risks,
+            },
+            budget_limits=contract.budgets,
+            budget_usage=state["budget_usage"],
+            requested_output_tokens=self._requested_output_tokens(
+                request,
+                contract.budgets,
+                state["budget_usage"],
+            ),
+            run_state=run_state,
+            # 报告节点的 citations/evidence_refs 已在 node_input 中由真实
+            # RetrievalResponse 冻结；不再重复注入五段 RAG 正文，避免报告
+            # Prompt 超过 Fast 8192 上下文窗口。检索和 Planner 节点仍保留原文。
+            rag_evidence=[],
+            tool_evidence=[self._tool_context_evidence(result) for result in state["tool_results"]],
+            generated_at=self._clock(),
+        )
+        result = compose_report(self.provider, context)
+        llm_report = cast(FinalReport, self._node_output_or_fail(result, PEVRStage.FINISH, "compose_report"))
+        expected_orders = {order.order_id for order in contract.orders}
+        if (
+            llm_report.run_id != request.run_id
+            or llm_report.plan_version != run_state.plan_version
+            or llm_report.final_status is not FinalReportStatus.COMPLETED
+            or set(llm_report.completed_order_ids) != expected_orders
+            or llm_report.incomplete_order_ids
+            or not set(llm_report.evidence_refs).intersection(all_evidence_refs)
+        ):
+            raise PEVRExecutionError(PEVRStage.FINISH, "report_fact_mismatch", "LLM 报告与真实闭环事实不一致")
+        actual_usage = result.usage_after
+        normalized_report = FinalReport.model_validate(
+            {
+                **llm_report.model_dump(mode="json"),
+                "budget_usage": actual_usage.model_dump(mode="json"),
+                "evidence_refs": list(dict.fromkeys([*llm_report.evidence_refs, *all_evidence_refs])),
+                "unresolved_risks": list(dict.fromkeys([*llm_report.unresolved_risks, *deterministic_risks])),
+            }
+        )
+        tool_evidence = [
+            PEVRToolEvidence.from_result(result, task_id=task_id)
+            for result, task_id in zip(state["tool_results"], state.get("tool_task_ids", []))
+        ]
+        metrics = self._build_metrics(state, validation, retrieval_response, simulation)
+        report = PEVRRunReport(
+            run_id=request.run_id,
+            final_status=normalized_report.final_status,
+            state_version=normalized_report.state_version,
+            plan_version=normalized_report.plan_version,
+            generated_at=self._clock(),
+            summary=normalized_report.summary,
+            completed_order_ids=list(normalized_report.completed_order_ids),
+            incomplete_order_ids=list(normalized_report.incomplete_order_ids),
+            evidence_refs=list(normalized_report.evidence_refs),
+            citations=citations,
+            tool_evidence=tool_evidence,
+            metrics=metrics,
+            unresolved_risks=list(normalized_report.unresolved_risks),
+            budget_usage=actual_usage,
+            model=state.get("model_version"),
+        )
+        return {
+            "stage": PEVRStage.FINISH,
+            "stage_trace": self._mark_stage(state, PEVRStage.FINISH),
+            "final_report": report,
+            "budget_usage": actual_usage,
+            "model_call_count": state.get("model_call_count", 0) + 1,
+        }
+
+    @staticmethod
+    def _add_tool_usage(usage: BudgetUsage, result: ToolResult) -> BudgetUsage:
+        """把真实工具步数和耗时加入 P0-05 预算快照。"""
+
+        return BudgetUsage(
+            input_tokens=usage.input_tokens,
+            output_tokens=usage.output_tokens,
+            tool_steps=usage.tool_steps + 1,
+            elapsed_seconds=usage.elapsed_seconds + result.duration_ms / 1000.0,
+            replans=usage.replans,
+        )
+
+    @staticmethod
+    def _all_evidence_refs(results: list[ToolResult]) -> list[str]:
+        """按工具发生顺序合并 call/evidence 引用，保留首次出现顺序。"""
+
+        refs: list[str] = []
+        for result in results:
+            refs.extend([f"tool://{result.call_id}", *result.evidence_refs])
+        return list(dict.fromkeys(refs))
+
+    @staticmethod
+    def _observation_from_tool(result: ToolResult, *, task_id: str | None) -> Observation:
+        """将 ToolResult 映射为 P0-04 Observation，而不把完整输出复制进 state_delta。"""
+
+        status = ObservationStatus.OK if result.status is ToolResultStatus.SUCCESS else ObservationStatus.ERROR
+        return Observation(
+            observation_id=f"observation://{result.call_id}",
+            run_id=result.call_id.split(":", 1)[0],
+            task_id=task_id,
+            source=ObservationSource.TOOL,
+            observed_at=result.finished_at,
+            status=status,
+            summary=PEVRGraphRunner._tool_summary(result),
+            state_delta={
+                "tool_name": result.tool_name.value,
+                "status": result.status.value,
+                "output_digest": result.output_digest,
+                "effect_id": result.effect_id,
+            },
+            evidence_refs=[f"tool://{result.call_id}", *result.evidence_refs],
+            tool_result=result,
+            violations=[],
+            requires_replan=result.status is not ToolResultStatus.SUCCESS,
+            requires_human=(
+                result.error is not None
+                and result.error.category.value in {"permission_denied", "unsafe_plan"}
+            ),
+        )
+
+    @staticmethod
+    def _tool_summary(result: ToolResult) -> str:
+        """生成短摘要供 StateSummary 使用；正文和完整事件留在 ToolResult 证据中。"""
+
+        if result.status is not ToolResultStatus.SUCCESS:
+            return f"工具 {result.tool_name.value} 失败: {result.error.code if result.error else 'unknown'}"
+        output = result.output if isinstance(result.output, dict) else {}
+        if result.tool_name is ToolName.RETRIEVE_KNOWLEDGE:
+            return f"RAG 检索成功，返回 {len(output.get('results', []))} 条引用"
+        if result.tool_name is ToolName.ALLOCATE_TASKS:
+            return f"Hungarian 分配成功，分配 {len(output.get('assignments', []))} 个订单"
+        if result.tool_name is ToolName.PLAN_MULTI_AMR_ROUTES:
+            return f"A* 路线规划成功，生成 {len(output.get('routes', []))} 条路线"
+        if result.tool_name is ToolName.VALIDATE_FLEET_PLAN:
+            return f"P0-10 Validator 返回 {output.get('status', 'unknown')}"
+        if result.tool_name is ToolName.DISPATCH_SIMULATION:
+            completed = sum(item.get("status") == "completed" for item in output.get("orders", []))
+            return f"仿真 {output.get('status', 'unknown')}，完成 {completed} 个订单"
+        return f"工具 {result.tool_name.value} 成功"
+
+    @staticmethod
+    def _tool_context_evidence(result: ToolResult, *, include_output: bool = False) -> ContextEvidence:
+        """把工具结果压缩成允许进入 Prompt 的 tool evidence。"""
+
+        output: dict[str, Any] = {
+            "tool_name": result.tool_name.value,
+            "status": result.status.value,
+            "output_digest": result.output_digest,
+            "evidence_refs": result.evidence_refs,
+        }
+        if include_output and isinstance(result.output, dict):
+            raw = result.output
+            output["simulation_id"] = raw.get("simulation_id")
+            output["simulation_status"] = raw.get("status")
+            output["orders"] = raw.get("orders", [])
+            output["end_time"] = raw.get("end_time")
+            output["event_count"] = len(raw.get("events", []))
+        timestamp = result.finished_at
+        return ContextEvidence(
+            source_type=EvidenceSourceType.TOOL,
+            source_id=result.call_id,
+            source_version=result.tool_version or "unknown",
+            observed_at=timestamp,
+            collected_at=timestamp,
+            citation=f"tool://{result.call_id}",
+            content=output,
+        )
+
+    def _materialize_arguments(
+        self,
+        task: PlanTask,
+        *,
+        results_by_task: Mapping[str, ToolResult],
+        derived_plan: SimulationPlan | None,
+        contract: TaskContract,
+    ) -> dict[str, Any]:
+        """解析两个固定 dataflow 引用，并组装跨工具所需的严格 envelope。"""
+
+        arguments = json.loads(json.dumps(task.tool_arguments, ensure_ascii=False))
+        if task.tool_name is ToolName.ALLOCATE_TASKS:
+            return arguments
+        if task.tool_name is ToolName.PLAN_MULTI_AMR_ROUTES:
+            reference = arguments.get("assignments", {})
+            if not isinstance(reference, dict) or not str(reference.get("$ref", "")).startswith("task:"):
+                raise PEVRExecutionError(PEVRStage.EXECUTE, "assignment_ref_invalid", task.task_id)
+            source_task = str(reference["$ref"])[len("task:") :].split("/output/", 1)[0]
+            source = results_by_task.get(source_task)
+            if source is None or source.output is None:
+                raise PEVRExecutionError(PEVRStage.EXECUTE, "assignment_source_missing", source_task)
+            allocation = AllocationResponse.model_validate(source.output)
+            arguments["assignments"] = [item.model_dump(mode="json") for item in allocation.assignments]
+            arguments["blocked_cells"] = [item.model_dump(mode="json") for item in contract.constraints.blocked_cells]
+            return arguments
+        if task.tool_name in {ToolName.VALIDATE_FLEET_PLAN, ToolName.DISPATCH_SIMULATION}:
+            if derived_plan is None:
+                raise PEVRExecutionError(PEVRStage.EXECUTE, "simulation_plan_missing", task.task_id)
+            arguments["plan"] = derived_plan.model_dump(mode="json", by_alias=True)
+            if task.tool_name is ToolName.VALIDATE_FLEET_PLAN:
+                arguments["environment_ref"] = contract.environment_ref
+            if task.tool_name is ToolName.DISPATCH_SIMULATION:
+                arguments.setdefault("seed", 7)
+            return arguments
+        return arguments
+
+    def _build_simulation_plan(
+        self,
+        contract: TaskContract,
+        route: RoutePlanResponse,
+        route_arguments: Mapping[str, Any],
+    ) -> SimulationPlan:
+        """把 A* 输出包装成 P0-10/P0-11 共同的完整计划 envelope。"""
+
+        snapshot = self.snapshot_provider.get_snapshot(contract.environment_ref)
+        max_time = int(route_arguments.get("max_time", snapshot.max_time))
+        routes = [
+            FleetPlanRoute(
+                **item.model_dump(mode="python"),
+                payload_kg=self.DEFAULT_PAYLOAD_KG,
+            )
+            for item in route.routes
+        ]
+        return SimulationPlan(
+            schema_version="1.0",
+            environment_ref=snapshot.environment_ref,
+            map_width=snapshot.map_width,
+            map_height=snapshot.map_height,
+            blocked_cells=[item.model_copy(deep=True) for item in snapshot.blocked_cells],
+            blocked_edges=[{"from": edge["from"], "to": edge["to"]} for edge in snapshot.blocked_edges],
+            one_way_edges=[{"from": edge["from"], "to": edge["to"]} for edge in snapshot.one_way_edges],
+            amrs=[item.model_copy(deep=True) for item in snapshot.amrs],
+            orders=[item.model_copy(deep=True) for item in contract.orders],
+            location_positions={key: value.model_copy(deep=True) for key, value in snapshot.location_positions.items()},
+            completed_order_ids=[],
+            routes=routes,
+            start_time=snapshot.start_time,
+            max_time=max_time,
+            config=ValidatorConfig(
+                maximum_load_kg=contract.constraints.maximum_load_kg,
+                energy_per_cell_percent=1.0,
+                battery_safety_reserve_percent=15.0,
+                new_task_battery_threshold_percent=20.0,
+                critical_battery_threshold_percent=10.0,
+                minimum_safety_distance_cells=1,
+                default_workstation_capacity=1,
+            ),
+            workstation_capacities=dict(snapshot.workstation_capacities),
+            ruleset_version="p0-10.v1",
+        )
+
+    def _replace_run_state(self, state: RunState, **updates: Any) -> RunState:
+        """用完整 Pydantic 重建 RunState，确保每个节点后都重新走跨对象校验。"""
+
+        payload = state.model_dump(mode="python")
+        payload.update(updates)
+        payload["updated_at"] = self._clock()
+        return RunState.model_validate(payload)
+
+    def _replace_task_state(
+        self,
+        state: RunState,
+        *,
+        task_id: str,
+        status: PlanTaskStatus,
+        current_task_id: str | None,
+        run_status: RunStatus,
+        evidence_refs: list[str] | None = None,
+        effect_id: str | None = None,
+        completed_task_ids: list[str] | None = None,
+        observations: list[Observation] | None = None,
+    ) -> RunState:
+        """只修改一个计划任务，并同步 RunState 的冗余完成列表。"""
+
+        tasks: list[PlanTask] = []
+        for task in state.plan_tasks:
+            if task.task_id != task_id:
+                tasks.append(task)
+                continue
+            task_payload = task.model_dump(mode="python")
+            task_payload["status"] = status
+            if evidence_refs is not None:
+                task_payload["evidence_refs"] = list(dict.fromkeys([*task.evidence_refs, *evidence_refs]))
+            if effect_id is not None:
+                task_payload["effect_id"] = effect_id
+            tasks.append(PlanTask.model_validate(task_payload))
+        payload: dict[str, Any] = {
+            "plan_tasks": tasks,
+            "current_task_id": current_task_id,
+            "status": run_status,
+        }
+        if completed_task_ids is not None:
+            payload["completed_task_ids"] = completed_task_ids
+        if observations is not None:
+            payload["observations"] = observations
+        return self._replace_run_state(state, **payload)
+
+    def _build_metrics(
+        self,
+        state: PEVRGraphState,
+        validation: PlanValidationResult,
+        retrieval: RetrievalResponse,
+        simulation: SimulationResult,
+    ) -> PEVRMetrics:
+        """从真实工具和模型节点结果计算报告指标，不接受 LLM 自报数字。"""
+
+        results = state["tool_results"]
+        return PEVRMetrics(
+            graph_stage_count=len(PEVR_STAGE_ORDER),
+            # finish 的模型调用已经发生，但当前 state 是进入 finish 前的信封，
+            # 因此在持久化返回值前把本次调用计入指标。
+            model_call_count=state.get("model_call_count", 0) + 1,
+            tool_call_count=len(results),
+            successful_tool_call_count=sum(item.status is ToolResultStatus.SUCCESS for item in results),
+            plan_task_count=len(cast(PlanTasksOutput, state["plan"]).tasks),
+            validator_error_count=validation.error_count,
+            retrieval_result_count=len(retrieval.results),
+            completed_order_count=sum(item.status.value == "completed" for item in simulation.orders),
+            route_count=len(simulation.orders),
+            simulation_status=simulation.status.value,
+            simulation_end_time=simulation.end_time,
+            total_tool_duration_ms=sum(item.duration_ms for item in results),
+        )
+
+
+__all__ = ["PEVRExecutionError", "PEVRGraphRunner"]

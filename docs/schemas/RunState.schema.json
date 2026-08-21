@@ -6,6 +6,7 @@
       "properties": {
         "amr_id": {
           "description": "AMR 的稳定唯一标识",
+          "maxLength": 128,
           "minLength": 1,
           "title": "Amr Id",
           "type": "string"
@@ -280,6 +281,7 @@
           "type": "string"
         },
         "run_id": {
+          "maxLength": 64,
           "minLength": 1,
           "title": "Run Id",
           "type": "string"
@@ -287,6 +289,7 @@
         "task_id": {
           "anyOf": [
             {
+              "maxLength": 128,
               "type": "string"
             },
             {
@@ -397,6 +400,7 @@
       "description": "计划 DAG 中一个可独立校验、执行和追踪的原子步骤。",
       "properties": {
         "task_id": {
+          "maxLength": 128,
           "minLength": 1,
           "title": "Task Id",
           "type": "string"
@@ -639,6 +643,7 @@
       "description": "把自然语言目标冻结为可验证、带预算的业务合同。",
       "properties": {
         "contract_id": {
+          "maxLength": 128,
           "minLength": 1,
           "title": "Contract Id",
           "type": "string"
@@ -663,6 +668,7 @@
           "type": "array"
         },
         "environment_ref": {
+          "maxLength": 256,
           "minLength": 1,
           "title": "Environment Ref",
           "type": "string"
@@ -951,24 +957,28 @@
       "properties": {
         "order_id": {
           "description": "订单唯一标识",
+          "maxLength": 128,
           "minLength": 1,
           "title": "Order Id",
           "type": "string"
         },
         "material_id": {
           "description": "待运输物料标识",
+          "maxLength": 128,
           "minLength": 1,
           "title": "Material Id",
           "type": "string"
         },
         "pickup": {
           "description": "取货点标识",
+          "maxLength": 128,
           "minLength": 1,
           "title": "Pickup",
           "type": "string"
         },
         "dropoff": {
           "description": "交付点标识",
+          "maxLength": 128,
           "minLength": 1,
           "title": "Dropoff",
           "type": "string"
@@ -1028,6 +1038,7 @@
   "description": "一次 Agent 运行可检查点化的完整聚合状态。",
   "properties": {
     "run_id": {
+      "maxLength": 64,
       "minLength": 1,
       "title": "Run Id",
       "type": "string"
@@ -1076,6 +1087,7 @@
     "current_task_id": {
       "anyOf": [
         {
+          "maxLength": 128,
           "type": "string"
         },
         {

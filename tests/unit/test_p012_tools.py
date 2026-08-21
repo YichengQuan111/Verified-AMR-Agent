@@ -35,6 +35,7 @@ from agent.tools.schemas import (
 )
 from agent.tools.snapshots import DefaultWarehouseSnapshotProvider, InMemoryExecutionStateStore
 from agent.tools.verification import FixedVerificationRunner, VerificationRunnerError
+from domains.amr_warehouse import GridPosition
 from services.retrieval.contracts import RetrievalResponse, RetrievalResult, RetrievalStatus
 
 
@@ -447,10 +448,8 @@ def test_snapshot_combines_static_and_temporary_blocked_cells() -> None:
     """固定 Provider 不能在地图加入 obstacles 后静默漏传给 A*/Validator。"""
 
     cells = DefaultWarehouseSnapshotProvider._blocked_cells(
-        {
-            "obstacles": [{"x": 1, "y": 2}],
-            "temporary_blocked_cells": [{"x": 3, "y": 4}],
-        }
+        [GridPosition(x=1, y=2)],
+        [GridPosition(x=3, y=4)],
     )
     assert [(item.x, item.y) for item in cells] == [(1, 2), (3, 4)]
 

@@ -1,16 +1,37 @@
 [CmdletBinding()]
 param(
-    [string]$Python = 'E:\Anaconda\envs\torch128\python.exe',
+    [string]$Python = '',
+    [string]$VsDevCmdPath = '',
+    [string]$CMakePath = '',
+    [string]$NinjaPath = '',
+    [string]$CTestPath = '',
+    [string]$MsvcRootPath = '',
     [switch]$SkipCpp
 )
 
 # 任意 PowerShell 错误立即终止；外部程序的退出码则在每一步显式检查。
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path -Parent $PSScriptRoot
-$vsDevCmd = 'E:\BuildingTools\Common7\Tools\VsDevCmd.bat'
-$cmake = 'E:\BuildingTools\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe'
-$ninja = 'E:\BuildingTools\Common7\IDE\CommonExtensions\Microsoft\CMake\Ninja\ninja.exe'
-$ctest = 'E:\BuildingTools\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\ctest.exe'
+# 当前机器路径只是兼容默认值；CI/其他开发机可用参数或 AMR_* 环境变量覆盖，
+# 不再需要修改仓库脚本。参数优先于环境变量，环境变量优先于本机默认值。
+if ([string]::IsNullOrWhiteSpace($Python)) {
+    $Python = if ($env:AMR_PYTHON_EXE) { $env:AMR_PYTHON_EXE } else { 'E:\Anaconda\envs\torch128\python.exe' }
+}
+if ([string]::IsNullOrWhiteSpace($VsDevCmdPath)) {
+    $VsDevCmdPath = if ($env:AMR_VSDEVCMD) { $env:AMR_VSDEVCMD } else { 'E:\BuildingTools\Common7\Tools\VsDevCmd.bat' }
+}
+if ([string]::IsNullOrWhiteSpace($CMakePath)) {
+    $CMakePath = if ($env:AMR_CMAKE) { $env:AMR_CMAKE } else { 'E:\BuildingTools\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe' }
+}
+if ([string]::IsNullOrWhiteSpace($NinjaPath)) {
+    $NinjaPath = if ($env:AMR_NINJA) { $env:AMR_NINJA } else { 'E:\BuildingTools\Common7\IDE\CommonExtensions\Microsoft\CMake\Ninja\ninja.exe' }
+}
+if ([string]::IsNullOrWhiteSpace($CTestPath)) {
+    $CTestPath = if ($env:AMR_CTEST) { $env:AMR_CTEST } else { 'E:\BuildingTools\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\ctest.exe' }
+}
+if ([string]::IsNullOrWhiteSpace($MsvcRootPath)) {
+    $MsvcRootPath = if ($env:AMR_MSVC_ROOT) { $env:AMR_MSVC_ROOT } else { 'E:\BuildingTools\VC\Tools\MSVC' }
+}
 $buildDir = Join-Path $projectRoot 'build\cpp'
 $runtimeTemp = Join-Path $projectRoot 'tmp\smoke-runtime'
 $pytestTempRoot = Join-Path $projectRoot 'tmp\pytest-runs'
@@ -33,7 +54,18 @@ $env:TMP = $runtimeTemp
 Push-Location $projectRoot
 try {
     # 第 1 步：检查 Python、锁定包以及（默认情况下）C++ 工具是否匹配。
-    & $Python '.\scripts\check_environment.py' $(if ($SkipCpp) { '--no-native' })
+    $environmentArguments = @()
+    if ($SkipCpp) {
+        $environmentArguments += '--no-native'
+    }
+    else {
+        $environmentArguments += @(
+            '--cmake', $CMakePath,
+            '--ninja', $NinjaPath,
+            '--msvc-root', $MsvcRootPath
+        )
+    }
+    & $Python '.\scripts\check_environment.py' @environmentArguments
     if ($LASTEXITCODE -ne 0) { throw 'Environment check failed.' }
 
     # 第 2 步：执行只向前的 P0-06 迁移并确认八张核心表齐全。
@@ -51,7 +83,7 @@ try {
 
     if (-not $SkipCpp) {
         # 第 5 步：先验证所有固定工具路径，避免后面得到难以理解的命令错误。
-        foreach ($requiredPath in @($vsDevCmd, $cmake, $ninja, $ctest)) {
+        foreach ($requiredPath in @($VsDevCmdPath, $CMakePath, $NinjaPath, $CTestPath)) {
             if (-not (Test-Path -LiteralPath $requiredPath -PathType Leaf)) {
                 throw "C++ tool not found: $requiredPath"
             }
@@ -59,7 +91,7 @@ try {
 
         # VsDevCmd.bat 只能在 cmd.exe 中初始化环境。读取它生成的环境变量后，
         # 再写回当前 PowerShell 进程，后面的 CMake/Ninja 就能找到 cl.exe 和 SDK。
-        $developerEnvironment = & cmd.exe /d /s /c "`"call `"$vsDevCmd`" -arch=x64 -host_arch=x64 >nul && set`""
+        $developerEnvironment = & cmd.exe /d /s /c "`"call `"$VsDevCmdPath`" -arch=x64 -host_arch=x64 >nul && set`""
         if ($LASTEXITCODE -ne 0) { throw 'MSVC environment initialization failed.' }
         foreach ($entry in $developerEnvironment) {
             $separator = $entry.IndexOf('=')
@@ -71,18 +103,18 @@ try {
         }
 
         # 第 6 步：源码与构建产物分离，所有生成文件写入 build/cpp。
-        & $cmake -S $projectRoot -B $buildDir -G Ninja `
+        & $CMakePath -S $projectRoot -B $buildDir -G Ninja `
             -DCMAKE_BUILD_TYPE=Release `
-            "-DCMAKE_MAKE_PROGRAM=$ninja" `
+            "-DCMAKE_MAKE_PROGRAM=$NinjaPath" `
             -DBUILD_TESTING=ON
         if ($LASTEXITCODE -ne 0) { throw 'CMake configuration failed.' }
 
         # 第 7 步：编译 C++17 冒烟程序。
-        & $cmake --build $buildDir
+        & $CMakePath --build $buildDir
         if ($LASTEXITCODE -ne 0) { throw 'C++ build failed.' }
 
         # 第 8 步：运行 CTest；失败时显示被测程序的完整输出。
-        & $ctest --test-dir $buildDir --output-on-failure
+        & $CTestPath --test-dir $buildDir --output-on-failure
         if ($LASTEXITCODE -ne 0) { throw 'C++ smoke tests failed.' }
     }
 }

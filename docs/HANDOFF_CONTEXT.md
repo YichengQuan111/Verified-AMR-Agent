@@ -1,8 +1,8 @@
 # AMR Agent 项目交接上下文
 
-最后更新：2026-08-20
-当前已完成：P0-00、P0-01、P0-02、P0-03、P0-04、P0-05、P0-06、P0-07、P0-08、P0-09、P0-10、P0-11、P0-12
-当前下一步：P0-13 PEVR 主闭环
+最后更新：2026-08-21
+当前已完成：P0-00、P0-01、P0-02、P0-03、P0-04、P0-05、P0-06、P0-07、P0-08、P0-09、P0-10、P0-11、P0-12、P0-13、P0-14
+当前下一步：冻结在 P0-14，先由用户审阅本次阶段审计修复；不要推进 P0-15。Smart 暂时硬禁用，等待用户日后明确指示。
 
 ## 1. 文档用途与维护要求
 
@@ -33,7 +33,7 @@
 | Ninja | `E:\BuildingTools\Common7\IDE\CommonExtensions\Microsoft\CMake\Ninja\ninja.exe` |
 | MSVC 初始化 | `E:\BuildingTools\Common7\Tools\VsDevCmd.bat` |
 | Fast 模型脚本 | `E:\Llama.cpp\start-qwen3.6-agent.cmd` |
-| Smart 模型脚本 | `E:\Llama.cpp\start-qwen3.8-agent.cmd` |
+| Smart 模型脚本 | `E:\Llama.cpp\start-qwen3.8-agent.cmd`（暂时禁用，不得启动） |
 | 模型 API | `http://127.0.0.1:8080/v1` |
 | FastAPI | `http://127.0.0.1:8000` |
 | PostgreSQL | `localhost:5432` / database `amr_agent` |
@@ -45,8 +45,12 @@
 - 2026-08-20 P0-07 最终检查时 Docker Desktop 4.87 / Engine 29.7.2 可连接；PostgreSQL 17 与 Qdrant 1.19.0 容器正在运行，5432/6333 有监听。PostgreSQL 当前 revision 为 `0001_p006_core (head)`，8 张核心表完整，辅助表只有 `alembic_version`。
 - Qdrant collection `amr_warehouse_knowledge` 当前存在 70 个 points；6 份 frozen 文档已在 PostgreSQL 中标为 `indexed` 并带 `indexed_at`。新会话仍必须重查服务，不能把本条当作永久在线保证。
 - 本地 `E:\Llama.cpp\Embedding` 已实际离线加载；权重约 1.19 GB，SentenceTransformers 6.0.0 动态读得 dimension=1024，文档/query 编码均成功。模型、维度和 chunk 数没有写死在运行代码中。
-- 8000/8080 当前无监听；FastAPI 和 Fast/Smart 文本 Qwen 均未运行。P0-07 Embedding 直接加载本地模型，不需要启动 8080 文本模型。
-- Git 仍在 `main`，基线提交为 `e6a4f07 Initial commit: AMR Agent P0-06`；P0-07 变更尚未提交。`git status` 仍警告无法读取历史遗留目录 `UsersQYCDocumentsAMR_Agenttmppytest_runsrun_20260819_210302`，本步未对该不明权限目录执行删除或移动。
+- 2026-08-21 最终 smoke 实测 PostgreSQL 8 张核心表缺失 0，Qdrant collection
+  `amr_warehouse_knowledge` 健康。Fast 在线验收后已按精确 PID 停止，8080 已确认无监听；
+  Smart 和 FastAPI 均未启动/常驻。
+- Git 仍在 `main`，基线提交为 `e6a4f07 Initial commit: AMR Agent P0-06`；工作树包含
+  P0-07～P0-14 与本次审计修复的既有未提交/未跟踪文件。本次没有 stage、commit、reset、
+  删除或移动用户变更。
 
 ## 4. 已完成能力与关键决策
 
@@ -54,7 +58,9 @@
 
 - `docs/scope.md`、`docs/scope_changes.md`、`docs/backlog.md` 已存在。
 - 地图、AMR 和订单种子位于 `domains/amr_warehouse/data/`。
-- 当前地图 JSON 中障碍、窄通道、单向边和临时封路数组为空；P0-04 通过 `environment_ref` 引用完整地图快照，只在 `TaskConstraints.blocked_cells` 内嵌本次任务的临时封闭坐标。
+- 当前地图 JSON 含不干扰 ORDER-001 正常主链的非空障碍、窄通道、禁行/单向边和临时
+  封路 fixture；`DefaultWarehouseSnapshotProvider` 必须先通过严格 `WarehouseMap` 公共契约
+  解析。`environment_ref` 只标识快照，不参与路径拼接。
 
 ### 4.2 P0-01：工程骨架
 
@@ -69,8 +75,9 @@
 ### 4.3 P0-02：本地模型配置
 
 - Fast alias：`qwen3.6-fast`，上下文 8192，并发 1。
-- Smart alias：`qwen3.8-smart`，上下文 12288，并发 1。
-- 两个模型共用 8080，一次只能启动一个。
+- Smart 保留 alias：`qwen3.8-smart`，上下文 12288，并发 1；当前 `enabled=false`，原因是
+  最近一次真实 P0-05 五节点在线验收仅 2/5。
+- 两个脚本共用 8080；当前只允许启动 Fast。Smart 必须等待用户明确指示并重新验收。
 - 模型服务保留在 Windows 主机，不进入 Docker Compose。
 
 ### 4.4 P0-03：统一模型网关
@@ -80,10 +87,12 @@
 稳定边界：
 
 - 业务层依赖 `ModelProviderProtocol`，不接触 GGUF、llama.cpp 启动参数或 OpenAI SDK 客户端。
-- `startup()` 请求 `/v1/models`，要求只暴露一个模型且 alias 精确匹配。
+- `startup()` 先检查 Profile `enabled`；Smart 会在任何网络调用前返回
+  `MODEL_PROFILE_DISABLED`。启用的 Fast 才请求 `/v1/models` 并要求单模型 alias 精确匹配。
 - OpenAI SDK 隐式重试关闭；连接超时和生成超时分开配置。
 - `ChatMessage` 只允许 `system`、`user`、`assistant`，请求接口不接受 tools、文件、Shell 或任意透传参数。
-- Fast 固定关闭思考、预算 0；Smart 开启思考、预算 512 Token。
+- Fast 固定关闭思考、预算 0；Smart 的开启思考/预算 512 Token 参数仅为以后复验保留，
+  当前不能进入生成调用。
 - `generate_structured()` 从 Pydantic 模型导出 JSON Schema，并用同一模型验证结果。
 - 首次 Schema 失败时最多修复一次；第二次失败抛出 `StructuredOutputError`，禁止无限循环。
 - FastAPI 默认在 lifespan 启动阶段执行模型门禁；模型不可达或 alias 错误会阻止 Uvicorn 接受请求。
@@ -416,21 +425,21 @@ DAG 使用 `agent.planning.dag.topological_sort()` 中的 Kahn 算法：计算�
 
 ## 8. 已知限制与注意事项
 
-- P0-06 API/Service 已实际消费 `TaskContract`、`PlanTasksOutput` 和 `PlanTask` 并把快照写入 PostgreSQL；P0-12 已用固定 JSON 边界完成 C++、仿真器和工具注册表的集成回归。工具默认状态/审批适配器仍是进程内实现，持久化接入留给 P0-14/P0-16。
-- 完整 `warehouse_v1.json` 通过 `environment_ref` 标识，不属于本次要求的八个核心 Schema；P0-09 的 C++ CLI 使用 `docs/ROUTE_PLANNER.md` 定义的独立严格地图 envelope，并要求调用方把已获取的地图快照显式传入，不能让 C++ 按 ref 自行读文件。
+- P0-06 API/Service 已实际消费 `TaskContract`、`PlanTasksOutput` 和 `PlanTask` 并把快照写入 PostgreSQL；P0-12 已用固定 JSON 边界完成 C++、仿真器和工具注册表的集成回归。单独构造 ToolRegistry 时状态/审批仍默认进程内；真实 PEVR CLI 已将同一 `PostgresRuntimeStore` 注入 Checkpoint、Effect Ledger 和 dispatch 外部状态。外部身份真实性仍留给 P0-16。
+- 完整 `warehouse_v1.json` 通过 `environment_ref` 标识，并由新增 `WarehouseMap` 支持契约严格校验；P0-09 的 C++ CLI 仍使用 `docs/ROUTE_PLANNER.md` 定义的跨语言严格地图 envelope，并要求调用方把已获取的地图快照显式传入，不能让 C++ 按 ref 自行读文件。
 - 九个工具已经由 `build_tool_registry()` 实现，并具有 Pydantic/JSON Schema、角色门禁、超时、错误、审计和幂等执行器；外部身份认证与角色真实性仍属于 P0-16，不能让调用方自行声明 operator。
 - P0-08 Hungarian、P0-09 A*、P0-10 独立 Validator 和 P0-11 Python 仿真均已通过 P0-12 固定适配器串联；baseline 算法与 Eval `FaultInjection` 没有进入正常工具表。
-- P0-09 采用按优先级的 prioritized planning，不实现 Scope 明确排除的 CBS/ECBS；在固定顺序下若后续车辆无安全解会返回 infeasible，不会回溯重排或忽略冲突。route_planner 当前没有独立 Pydantic 地图 Schema，跨语言调用应先按 `docs/ROUTE_PLANNER.md` 的严格 JSON envelope 适配。
+- P0-09 采用按优先级的 prioritized planning，不实现 Scope 明确排除的 CBS/ECBS；在固定顺序下若后续车辆无安全解会返回 infeasible，不会回溯重排或忽略冲突。Python seed 先经 `WarehouseMap` 校验，再按 `docs/ROUTE_PLANNER.md` 的严格 JSON envelope 适配给 C++；未分配 AMR 也会在完整时域占用初始 cell。
 - P0-09 不直接控制底盘、不从 `environment_ref` 读取地图、不做最终业务验收；P0-10 负责静态计划安全门禁，P0-11 负责执行期状态推进/观测一致性，P0-12 负责受控工具接入。
 - API 已有第 4.7 节的 8 个业务接口，但没有身份认证/授权中间件。P0-07 检索器会执行给定 `UserRole` 的 ACL，然而角色真实性仍由未来 P0-16 认证/授权层保证；外部调用方不能被允许自行声称 operator。
 - PostgreSQL 已接入业务仓储层，Qdrant 已由 P0-07 正式使用；BM25 按 P0 Scope 保持进程内，重启时从同一 frozen 语料重建。
 - `requirements.lock` 锁定的是直接依赖，不是完整传递依赖快照。
 - `docs/P001_P003_FILE_GUIDE.md` 是 P0-01/P0-03 历史基线；后续文件职责统一登记在 `docs/FILE_PURPOSES.md`。
-- P0-05 的 2-shot Prompt 已在 Fast Qwen 上完成一轮五节点真实冒烟，并覆盖结构与关键业务事实；每节点目前只有一个固定在线样例，不能把 5/5 外推为复杂场景成功率。Smart Profile 的版本 `1.1.0` 五节点测试也尚未执行。
+- P0-05 的 2-shot Prompt 已在 Fast Qwen 上完成五节点真实冒烟，并覆盖结构与关键业务事实；每节点目前只有一个固定在线样例，不能把 5/5 外推为复杂场景成功率。Smart Profile 版本 `1.1.0` 曾真实执行但只通过 2/5，现已硬禁用，不能写成“未测”或“已通过”。
 - P0-07 的 20 例阈值只覆盖当前 6 份冻结语料和 Qwen3-Embedding-0.6B；开放域泛化尚未验证。语料、模型、prompt、chunking、权重或归一化改变后必须重新观察可答/不可答完整分布。
 - P0-07 已注册为真实 `retrieve_knowledge` 工具，候选阶段 ACL 外还具有工具返回侧 role/document/top_k 熔断和 ToolResult 审计；调用者身份绑定仍属于 P0-16。
 - P0 按正式 Scope 不实现 Reranker；当前 Citation Correctness 验证引用逐字段回指源 chunk，语义相关性由 Recall/MRR/section recall 分开衡量。
-- `tool_calls/effects` 已有表和 Repository，P0-12 也已有真实工具、副作用与进程内幂等逻辑，但二者尚未接成可恢复持久化执行账本；LangGraph 主闭环仍属于 P0-13。
+- `tool_calls/effects` 现在由 P0-14 `PostgresRuntimeStore` 在 Checkpoint 运行路径写入；副作用身份由 `run_id + plan_version + task_id` 三元组决定，字符串键为规范三元组 SHA-256，而非分隔符拼接。LangGraph 主闭环仍属于 P0-13，恢复/账本边界由 P0-14 扩展。
 
 ## 9. 交接更新模板
 
@@ -606,3 +615,113 @@ DAG 使用 `agent.planning.dag.topological_sort()` 中的 Kahn 算法：计算�
 - 外部服务当前状态：最终 smoke 实测 PostgreSQL 核心表缺失 0、Qdrant collection `amr_warehouse_knowledge` 可用；没有启动或调用 Fast/Smart Qwen，也没有启动新的常驻服务。三个 C++ CLI 仍从仓库 `build\cpp\services\planner_cpp\` 固定位置调用。
 - 已知限制/风险：Python 线程不能被解释器强杀，协作取消只能保证本仓库副作用 handler 不在超时后落账；未来新增 handler 必须响应同一取消门禁。默认执行状态和审批存储仍不可跨进程恢复；身份真实性仍依赖 P0-16。仓库既有 smoke/toolchain 脚本包含当前 Windows 构建环境路径，这是 P0-01 已登记的环境契约，P0-12 运行时适配器与受控验证器均未新增本机硬编码。
 - P0-13 前阻塞项：无。P0-13 必须直接复用注册表和 ToolResult，在调度 `requires_approval` 工具前接入 guard，按 Validator evidence 判定业务合法性，并保持 FaultInjection、baseline 算法和任意命令参数不可达；不可把进程内幂等误称为重启恢复。
+
+### 2026-08-20 · P0-13 PEVR 正常闭环
+
+- 完成：新增固定八阶段 LangGraph 主图 `guard → understand → retrieve → plan → validate → execute → verify → finish`。`understand_goal`、`plan_tasks`、`verify_observation`、`compose_report` 复用 P0-05 命名节点；RAG、Hungarian、A*、P0-10 Validator、Python 仿真全部通过 P0-12 `ToolRegistry` 进入。
+- 完成：Planner 只允许四任务链 `allocate_tasks → plan_multi_amr_routes → validate_fleet_plan → dispatch_simulation`；`validate_normal_pevr_plan` 在任何 Planner 工具执行前确定性检查拓扑、白名单参数、合同环境/订单、封路、deadline、`p0-10.v1`、请求 seed、审批声明、运行期证据和两个受控 `$ref`。
+- 完成：`dispatch_simulation` 的 `ToolSpec.requires_approval=true` 在 guard 声明检查和 execute 调用前再次检查；只有 `PEVRRequest.approval_granted` 这一可信上层字段能放行，Planner/自然语言不能自行批准。当前 CLI 用 `--approve-dispatch` 显式提供该上下文。
+- 完成：新增 `PEVRRequest`、`PEVRStage`、`PEVRTraceEvent`、`PEVRToolEvidence`、`PEVRMetrics`、`PEVRRunReport`、`PEVRRunResult` 和 `PEVRGraphState`。报告契约包含 `citations`、`plan_version`、`tool_evidence`、`metrics`、`budget_usage` 和 `unresolved_risks`；新增 `docs/schemas/PEVRRunReport.schema.json`。没有新增数据库字段、Alembic revision、ToolName 或 P0-12 输入/输出字段。
+- 关键设计决策：继续复用 `RunState` 作为业务事实，LangGraph 只保存受控引用；P0-13 不启用 Checkpoint，P0-14 才接 PostgreSQL 恢复。Fast 本地多节点累计预算固定为 300 秒/30000 输入/5000 输出/8 工具步/0 重规划；本地网关输出上限为 4096，单次 context window 仍为 8192。为兼容本地模型对 `JsonValue` 的 `{type,value}` 和固定事实引用偏差，规范化层只解析原语、正式 `$ref` 和合同/请求白名单事实，未知形状不求值并交由 Validator 拒绝。
+- 实际验证命令与结果：
+  - `E:\Anaconda\envs\torch128\python.exe scripts\smoke_p005_prompts.py --profile fast`：5/5 通过，alias=`qwen3.6-fast`，Prompt version=`1.1.0`。
+  - `E:\Anaconda\envs\torch128\python.exe scripts\run_p013_e2e.py --approve-dispatch --output tmp\p013_e2e_result.json`：真实 Fast E2E completed；8/8 阶段、5/5 工具成功、4 次模型调用、4 个计划任务、5 条 RAG 结果、Validator error=0、仿真 completed、ORDER-001 完成、结束时间 120；报告 run_id=`p013-e2e-b22ad4723f9e51bb9034`。
+  - 同一命令用 run_id=`p013-e2e-repeat-2`、`p013-e2e-repeat-3` 连续复跑：两次均 completed，工具 5/5、仿真 completed、ORDER-001 完成，报告分别为 `tmp\p013_e2e_repeat2.json`、`tmp\p013_e2e_repeat3.json`。
+  - `E:\Anaconda\envs\torch128\python.exe -m pytest tests\unit\test_p013_pevr.py -q -p no:cacheprovider`：5 passed、1 warning；`E:\Anaconda\envs\torch128\python.exe -m pytest -q -p no:cacheprovider`：143 passed、1 warning。
+  - `E:\Anaconda\envs\torch128\python.exe scripts\export_schemas.py`：成功导出含 PEVR 报告的 35 份 Schema；`.\scripts\run_smoke.ps1`：退出码 0，Python 143 passed、1 warning，CTest 33/33。
+  - `E:\Anaconda\envs\torch128\python.exe -m compileall -q agent\planning agent\runtime services\config scripts\run_p013_e2e.py tests\unit\test_p013_pevr.py` 与 `git diff --check`：均退出码 0。
+- 真实报告关键指标：输入 Token `20602`、输出 Token `2699`、工具步 `5`、重规划 `0`、累计模型/工具耗时预算 `62.181s`/工具耗时 `7103ms`；citation 5 条，工具证据 5 条。唯一报告风险是 P0-04 `TransportOrder` 没有重量字段，执行期 `payload_kg` 固定为 `1.0kg`。
+- 外部服务当前状态（本步结束实际核验）：`amr-postgres`、`amr-qdrant` 均 running；5432、6333/6334 正常监听，Qdrant collection=`amr_warehouse_knowledge` 可用；8080 和 8000 无监听。Fast 由 `E:\Llama.cpp\start-qwen3.6-agent.cmd` 启动用于验收，验收完成后已停止；Smart 未启动。C++ 三个固定 CLI 仍在 `build\cpp\services\planner_cpp\`，构建和 CTest 已通过。
+- 已知限制/风险：当前只实现成功闭环，不处理复杂异常、局部重规划、Checkpoint 恢复或跨进程副作用恢复；默认执行状态/审批仍是进程内适配器，不能宣称重启恢复。`payload_kg=1.0` 是缺少订单重量字段的临时正常路径约束。模型输出规范化是受控兼容方案，未来若升级 Planner Schema 应优先改为明确 typed argument contract 并继续保留拒绝反例。
+- 下一工作包直接复用：P0-14 应从 `PEVRGraphState`/`RunState`、`ToolResult`、`effect_id`/digest 和当前阶段 Trace 接入 PostgreSQL Checkpoint，恢复时不能重新执行已完成副作用；P0-15 在 `verify`/`execute` 失败边界增加确定性异常分类和局部重规划，但不得放松当前 P0-13 Validator、审批和白名单门禁。下一次启动前仍需重新核验 Docker、Qdrant、PostgreSQL 和模型 alias。
+
+### 2026-08-20 · P0-14 Checkpoint、幂等与局部重规划
+
+- 完成：新增 `agent.runtime.checkpoint` 运行时契约和恢复协调器；`CheckpointSnapshot` 保存 JSON 化 `PEVRGraphState`，`EffectLedgerEntry` 保存预留/完成/核对/失败/待补偿状态。审计修复后，`make_effect_idempotency_key(run_id, plan_version, task_id)` 固定返回规范三元组 SHA-256（`p014:<digest>`），禁止分隔符碰撞，也禁止用 attempt、call_id 或随机 UUID 代替。
+- 完成：新增 `services.application.PostgresRuntimeStore`（别名 `PostgresCheckpointStore`），复用 P0-06 的 `runs.run_state_snapshot`、`plans`、`tasks`、`tool_calls`、`effects`、`events`。Checkpoint/计划/任务状态同步和事件在同一事务中提交；Effect 先独立提交 `reserved` 唯一行；审计修复后 dispatch 外部快照在 handler 返回前独立提交到同一 Effect 行，再更新 completed，唯一键并发冲突只读取赢家。
+- 完成：`PEVRGraphRunner` 增加可选 `checkpoint_store` 和 `external_state_reconciler`。恢复先严格校验 run 请求/环境/seed/状态结构，再逐条查询真实仿真/工具状态；只有 effect/tool/key/input/output 身份全部一致的外部完成才复用并写 `reconciled`，明确 not_found 才可沿原键继续，未知/进行中/不一致转重规划，外部失败落 `compensation_required` 后停止。终态 Checkpoint 也必须先核对外部状态。
+- 完成：`ToolRegistry.execute`/`ToolExecutor.execute` 接受 `idempotency_key`，传入业务键时缓存与 in-flight 协调按业务键工作；无键的既有 P0-12 调用继续按 call_id 兼容。PEVR 对真实副作用任务在调用前预留、完成后落账，恢复不会重新派发已核对的 dispatch。
+- 完成：新增 `AffectedEntitySet`、`LocalReplanner`、`LocalReplanAnalysis/Result`。支持 AMR、命名/坐标通道、blocked cell/edge、工位、工具和任务标签；审计修复后从实际 allocation/route ToolResult 构建 provenance，直接影响只沿 DAG 传播到未完成后继，已完成节点和 `effect_id` 原样保留，替换任务用新 ID，计划版本恰好加一并重新通过完整 PEVR Validator；`apply_to_run_state()` 同步 `replanning` 状态和重规划计数。
+- 完成：FastAPI 生命周期组装 `application.state.checkpoint_store`，新增 `get_checkpoint_store` 依赖入口；没有在启动时执行迁移或工具副作用。数据库没有新增 revision，继续使用 `0001_p006_core`。
+- 未完成：P0-14 不提供任意自动补偿工具，也没有把局部重规划动态插入 P0-13 固定八节点图；它提供安全决策/状态边界和可调用的确定性 Replanner。单独构造 `ToolRegistry` 时 execution/approval 仍默认进程内；真实 PEVR CLI 已为 dispatch 注入 PostgreSQL 外部状态，未来其他副作用工具仍需各自可靠适配器。P0-13 正常合同的 `max_replans=0`。本次明确不推进 P0-15。
+- 新增/变化的公共契约：`CheckpointSnapshot`、`EffectLedgerEntry`、`EffectLedgerStatus`、`ExternalExecutionSnapshot/Status`、`RecoveryDecision/Assessment`、`RuntimePersistenceProtocol`；`ToolRegistry/ToolExecutor.execute(..., idempotency_key=...)`；`AffectedEntitySet.channel_ids`、`LocalReplanner` 及 `apply_to_run_state()`；`PostgresRuntimeStore/PostgresCheckpointStore`；FastAPI `checkpoint_store` state/依赖。没有新增 Pydantic 数据库字段或 Alembic revision。
+- 关键设计决策及原因：先 reserved 后外部调用，避免长事务；恢复必须先核对真实状态，未知不等价于 not_found；已完成任务缺少结果时直接停止，不用重复执行补齐；局部重规划只沿原 DAG 失效未完成后继，保留已完成节点/副作用作为只读锚点；补偿只落账为 required，不假造未定义的补偿接口。
+- 实际验证命令与结果：
+  - `E:\Anaconda\envs\torch128\python.exe -m pytest tests\unit\test_p014_checkpoint.py -q -p no:cacheprovider`：`7 passed, 1 warning`。
+  - `E:\Anaconda\envs\torch128\python.exe -m pytest tests\unit\test_p014_replanner.py -q -p no:cacheprovider`：`6 passed, 1 warning`。
+  - `E:\Anaconda\envs\torch128\python.exe -m pytest tests\integration\test_p014_postgres.py -q -p no:cacheprovider`：`2 passed, 1 warning`，真实 PostgreSQL 跨 Store/Runner 实例读取 Checkpoint/Effect Ledger 并验证不重派 dispatch。
+  - `E:\Anaconda\envs\torch128\python.exe -m pytest tests\unit\test_p006_persistence.py tests\unit\test_p012_tools.py tests\unit\test_p013_pevr.py tests\unit\test_p014_checkpoint.py tests\unit\test_p014_replanner.py -q -p no:cacheprovider`：`44 passed, 1 warning`。
+  - `E:\Anaconda\envs\torch128\python.exe -m compileall -q agent\planning agent\runtime services\application apps\api tests\unit\test_p014_checkpoint.py tests\unit\test_p014_replanner.py`：退出码 `0`。
+  - `E:\Anaconda\envs\torch128\python.exe -m pytest -q -p no:cacheprovider`：`158 passed, 1 warning`。
+  - `.\scripts\run_smoke.ps1`：退出码 `0`；环境/依赖门禁通过，PostgreSQL 8 张核心表缺失 `0`、Qdrant collection 健康，pytest `158 passed, 1 warning`，CTest `33/33 passed`。
+- 外部服务当前状态：本步 PostgreSQL 集成测试已实际连接 `localhost:5432/amr_agent`；`migrate_database.py current` 为 `0001_p006_core (head)`，8 张核心表缺失 `0`；Docker `amr-postgres`/`amr-qdrant` 当前 running，5432/6333/6334 监听，8000/8080 无监听。没有启动新的常驻模型/API 进程；Checkpoint Store 只使用已注入的 SessionFactory。
+- 已知限制/风险：真实 `query_execution_state` 目前只对 `dispatch_simulation` 提供默认只读核对；其他副作用工具必须注入专用 `ExternalStateReconciler`。Python handler 超时仍不能被线程强杀；外部身份与 operator 真实性仍由 P0-16 处理。`tasks` 状态同步依赖同一事务中的计划任务行，损坏/缺失会显式抛出而不猜测。
+- 下一工作包直接复用的信息：P0-15 应消费 `RecoveryAssessment`/`COMPENSATION_REQUIRED`，为补偿建立独立、审批和审计完备的工具契约；在线异常分支应调用 `LocalReplanner.apply_model_output()`，先比较确定性影响集合再接受 LLM 替换任务，并保留当前 Validator、审批和 Effect Ledger 唯一键门禁。启动前以本文件顶部状态、`docs/P014_CHECKPOINT.md` 和实际数据库/模型健康检查为准。
+
+### 2026-08-21 · P0-00～P0-14 阶段审计修复（当前有效状态）
+
+- 范围：只修复阶段审计发现的缺口，没有实现、启动或验证 P0-15。Smart 按用户指示
+  暂时禁用，等待日后明确指示；本条覆盖上方 P0-14 初次完成记录中的临时/旧语义。
+- 模型门禁：`ModelProfileSettings` 新增 `enabled/disabled_reason`，默认 TOML 与代码
+  fallback 均把 Smart 设为 `enabled=false`。`ModelProvider.startup()` 在构造任何
+  `/v1/models` 或 completion 请求前抛出 `ModelProfileDisabledError`，稳定错误码为
+  `MODEL_PROFILE_DISABLED`；环境变量只能选择 Profile/alias，不能覆盖 enabled。
+- Fast 稳定性：Planner 首个候选立即经过正常确定性 PEVR Validator；只允许一次带错误
+  反馈的语义修复，第二个候选仍非法即停止。模型调用数改为状态内真实累计，不再固定为 4。
+  Validator ToolResult success 但业务 invalid、route timeout、仿真 blocked 等路径均在
+  dispatch/finish 前失败。
+- 公共契约：run ID 上限统一为 64，task/assignment ID 上限统一为 128，环境 ID 上限为
+  256；`GridPosition` 的 x/y 使用 strict integer。新增 `WarehouseMap`、`WarehouseLocation`、
+  `WarehouseEdge`、`NarrowAisle` 严格契约和 Schema；固定地图有非空但不阻断正常订单的
+  obstacles/narrow aisles/blocked edges/one-way edges/temporary blocks。
+- P0-09：未分配 AMR 从 start_time 到 max_time 持续预约初始 cell；新增
+  `route_planner_idle_amr_reservation` 反例，防止路线穿过窄通道中的空闲车。
+- P0-14 幂等：副作用身份仍严格是 `run_id + plan_version + task_id`，但字符串键改为
+  规范 JSON 三元组 SHA-256（`p014:<digest>`），避免合法 ID 含冒号时碰撞。Effect Ledger
+  与 ToolResult 都对 Pydantic 规范化后的工具参数求同一种 input digest；完成落账再次核对。
+- P0-14 恢复：Checkpoint 恢复同时核对 request/environment/seed，未知键、坏列表项、
+  Trace 逆序/重复、ToolResult 与 task ID 数量不一致均 fail closed 为 `checkpoint_corrupt`。
+  外部 completed 只有 effect ID、tool、business key、input/output digest 全部相符才能
+  `reconciled`；任一不一致都转安全重规划。
+- P0-14 持久化：`PostgresRuntimeStore` 现在也实现 execution state store。真实 PEVR CLI
+  把同一 Store 注入 ToolRegistry 和 Runner；dispatch handler 返回前先按业务键锁定
+  Effect 行并独立提交 `external_execution` 快照/digest。真实子进程在此后、Effect 完成
+  前 `os._exit(73)`，新 Engine/Runner 恢复时实测不再次调用 dispatch，Effect 仍只有一行。
+- P0-14 局部重规划：从成功 allocation/route ToolResult 和地图构建真实 AMR/cell/edge/
+  channel/workstation provenance，影响只传播到未完成后继；完成节点/effect 保留。新版本
+  必须带原合同、九工具规格和 seed 重新通过完整 `allocate→route→validate→dispatch`
+  PEVR Validator，route-only 替换即使 DAG 合法也会被拒绝。
+- 工程修复：`run_smoke.ps1`/`check_environment.py` 支持通过参数或 `AMR_*` 环境变量覆盖
+  Python/CMake/Ninja/MSVC 路径，保留当前 E 盘默认。仓库测试必须显式用 torch128
+  Python；曾误用 Anaconda base 的一次 pytest 在收集阶段缺依赖，属于错误运行环境，
+  没有计入产品失败或通过。
+- 实际验证命令与结果：
+  - `E:\Anaconda\envs\torch128\python.exe scripts\export_schemas.py`：成功导出 36 份
+    运行时同源 Schema。
+  - `E:\Anaconda\envs\torch128\python.exe -m pytest tests\unit\test_p004_contracts.py tests\unit\test_settings.py tests\unit\test_model_provider.py -q -p no:cacheprovider`：
+    `65 passed, 1 warning`。
+  - P0-13 专项 `tests\unit\test_p013_pevr.py`：`10 passed`；覆盖一次计划修复和四类
+    Validator/route/simulation 失败反例。
+  - P0-14 三个专项文件：`24 passed`；其中真实 PostgreSQL 强杀窗口用例单独执行通过。
+  - 最终 `.\scripts\run_smoke.ps1`：退出码 `0`；Python `178 passed, 1 warning in
+    10.57s`，CMake/Ninja 构建成功，CTest `34/34 passed`，PostgreSQL 8 张核心表缺失 0，
+    Qdrant collection 健康。唯一 warning 仍是 jieba 依赖的 `pkg_resources` 弃用提示。
+  - `git diff --check`：退出码 `0`；仅 Git 提示工作区 LF 将来按配置转换为 CRLF，无空白错误。
+- 真实在线模型验证：先确认 8080 空闲，再用隐藏窗口运行
+  `E:\Llama.cpp\start-qwen3.6-agent.cmd`。`check_model_gateway.py --profile fast` 成功且
+  served alias=`qwen3.6-fast`；`--profile smart` 在 Fast 仍在线时预期退出 1，返回
+  `MODEL_PROFILE_DISABLED`，证明没有访问服务 alias。
+- 三次真实 PEVR：分别使用 `p014-fast-online-1-20260821-1037`、
+  `p014-fast-online-2-20260821-1038`、`p014-fast-online-3-20260821-1039`，均
+  `completed`；每次 8/8 阶段、5/5 工具、4 次模型调用、4 个计划任务、Validator error=0、
+  仿真 completed、ORDER-001 完成、结束时间 120。工具总耗时分别为 13215/7642/7512 ms。
+- 服务终态：验收前 8080 确认为空；验收后只停止本次启动且路径/PID 均核对过的
+  `E:\Llama.cpp\llama-server.exe` 与其 cmd 父进程，8080/8000 均再次确认无监听。
+  Smart 从未启动。`amr-postgres`、`amr-qdrant` 当前 running，5432/6333-6334 正常映射。
+- 未验证/限制：按用户指示没有重新启动 Smart 做生成行为测试；其最近一次历史结果仍是
+  P0-05 2/5，不能视为通过。没有验证 P0-15、自动补偿、真实 ROS/底盘或未来其他外部
+  副作用工具的 reconciler，这些均不在本次授权范围。正常 P0-13 合同仍为
+  `max_replans=0`；P0-14 只交付可调用的安全局部 Replanner 边界。
+- 当前建议：不要进入 P0-15，先让用户审阅/接受本次修复并处理现有未提交工作树。若用户
+  日后要求启用 Smart，应先修改受审配置，再依次重跑 alias、五个 P0-05 节点和至少三次
+  真实 PEVR；任何一步未通过都应恢复禁用。

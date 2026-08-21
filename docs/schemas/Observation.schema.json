@@ -332,6 +332,7 @@
       "type": "string"
     },
     "run_id": {
+      "maxLength": 64,
       "minLength": 1,
       "title": "Run Id",
       "type": "string"
@@ -339,6 +340,7 @@
     "task_id": {
       "anyOf": [
         {
+          "maxLength": 128,
           "type": "string"
         },
         {

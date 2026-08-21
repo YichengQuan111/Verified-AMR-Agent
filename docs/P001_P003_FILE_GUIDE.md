@@ -4,7 +4,7 @@
 
 ## 1. 推荐阅读顺序
 
-1. `config/default.toml`：先看系统有哪些可配置项，以及 Fast/Smart 的差异。
+1. `config/default.toml`：先看系统有哪些可配置项、Fast/Smart 的差异和 Smart 当前的硬禁用状态。
 2. `services/config/settings.py`：理解配置如何按优先级合并并由 Pydantic 校验。
 3. `services/model_gateway/contracts.py`：理解业务层与模型网关之间传递什么数据。
 4. `services/model_gateway/exceptions.py`：理解网关如何把第三方错误归一化。
@@ -25,6 +25,7 @@ Uvicorn 导入 apps.api.main:app
   → load_settings()
   → 创建 ModelProvider
   → FastAPI lifespan 启动
+  → 先拒绝 enabled=false 的 Profile
   → provider.startup()
   → 请求 llama.cpp /v1/models
   → 检查“只暴露一个模型 + alias 精确匹配”
@@ -117,7 +118,7 @@ generate_structured(messages, PydanticModel)
 | 文件 | 用途 |
 |---|---|
 | `scripts/check_environment.py` | 一条命令输出 Python、锁定依赖、CMake、Ninja 和 MSVC 的版本匹配报告。 |
-| `scripts/check_model_gateway.py` | 对 Fast 或 Smart 执行真实 `/v1/models`、单模型和 alias 门禁。 |
+| `scripts/check_model_gateway.py` | 对 Fast 执行真实 `/v1/models`、单模型和 alias 门禁；选择 Smart 时验证其在网络前返回 `MODEL_PROFILE_DISABLED`。 |
 | `scripts/run_smoke.ps1` | 串联环境检查、全部 pytest、MSVC 初始化、CMake/Ninja 构建和 CTest。 |
 
 ### 3.7 测试
@@ -127,9 +128,9 @@ generate_structured(messages, PydanticModel)
 | `tests/__init__.py` | 声明测试包。 |
 | `tests/unit/__init__.py` | 声明单元/契约测试包。 |
 | `tests/unit/fakes.py` | 模拟 OpenAI SDK 的 models 和 chat.completions 响应，不需要真实模型。 |
-| `tests/unit/test_settings.py` | 验证配置优先级、Smart Profile、alias 冲突和最多一次修复的硬限制。 |
+| `tests/unit/test_settings.py` | 验证配置优先级、Smart 硬禁用、alias 冲突和最多一次修复的硬限制。 |
 | `tests/unit/test_logging.py` | 验证日志确实输出可解析 JSON 及必要上下文字段。 |
-| `tests/unit/test_model_provider.py` | 验证 alias、单模型、超时参数、安全请求面、结构化输出和一次修复。 |
+| `tests/unit/test_model_provider.py` | 验证 alias、单模型、Smart 网络前禁用、超时参数、安全请求面、结构化输出和一次修复。 |
 | `tests/unit/test_api.py` | 验证 API 健康检查、错误 alias 拒绝启动和模型健康接口。 |
 | `tests/smoke/__init__.py` | 声明 Python 冒烟测试包。 |
 | `tests/smoke/test_python_smoke.py` | 验证主要包可导入，并能在隔离模式创建 FastAPI 应用。 |
@@ -149,7 +150,7 @@ generate_structured(messages, PydanticModel)
 | 文件 | 原来 | 现在 |
 |---|---|---|
 | `apps/api/main.py` | 只有最小 `/health`。 | 改为应用工厂、类型化配置、依赖注入、FastAPI lifespan 模型门禁、基础健康和模型健康接口。 |
-| `scripts/smoke_llm_structured.py` | 直接创建 OpenAI 客户端并手工解析 JSON。 | 改为通过统一 ModelProvider、Pydantic Schema 和 alias 门禁运行 Fast/Smart 重复测试。 |
+| `scripts/smoke_llm_structured.py` | 直接创建 OpenAI 客户端并手工解析 JSON。 | 改为通过统一 ModelProvider、Pydantic Schema 和 alias 门禁运行；当前仅允许 Fast 在线重复测试。 |
 | `docs/SERVICES_STARTUP.md` | 记录 P0-02 服务启动方式。 | 增加模型网关预检命令，并说明 API 默认在启动时执行 alias 门禁。 |
 
 ## 5. 原有但未修改的文件
@@ -190,4 +191,3 @@ generate_structured(messages, PydanticModel)
 - `pytest-asyncio==1.4.0`
 
 精确版本已经写入 `requirements.lock` 或 `requirements-dev.lock`。
-

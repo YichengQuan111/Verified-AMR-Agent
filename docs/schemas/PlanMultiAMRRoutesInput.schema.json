@@ -32,11 +32,13 @@
       "description": "P0-08 分配结果转给 P0-09 时允许保留 components 审计快照。",
       "properties": {
         "amr_id": {
+          "maxLength": 128,
           "minLength": 1,
           "title": "Amr Id",
           "type": "string"
         },
         "order_id": {
+          "maxLength": 128,
           "minLength": 1,
           "title": "Order Id",
           "type": "string"

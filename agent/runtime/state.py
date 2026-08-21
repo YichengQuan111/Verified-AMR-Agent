@@ -73,8 +73,8 @@ class Observation(RuntimeContract):
     """一次工具、仿真、验证或人工操作产生的结构化状态证据。"""
 
     observation_id: str = Field(min_length=1)
-    run_id: str = Field(min_length=1)
-    task_id: str | None
+    run_id: str = Field(min_length=1, max_length=64)
+    task_id: str | None = Field(max_length=128)
     source: ObservationSource
     observed_at: AwareDatetime
     status: ObservationStatus
@@ -108,7 +108,7 @@ class Observation(RuntimeContract):
 class RunState(RuntimeContract):
     """一次 Agent 运行可检查点化的完整聚合状态。"""
 
-    run_id: str = Field(min_length=1)
+    run_id: str = Field(min_length=1, max_length=64)
     status: RunStatus
     plan_version: int = Field(ge=1)
     task_contract: TaskContract
@@ -116,7 +116,7 @@ class RunState(RuntimeContract):
     amr_states: list[AMRState] = Field(min_length=1)
     orders: list[TransportOrder] = Field(min_length=1)
     observations: list[Observation]
-    current_task_id: str | None
+    current_task_id: str | None = Field(max_length=128)
     completed_task_ids: list[str]
     failed_task_ids: list[str]
     created_at: AwareDatetime

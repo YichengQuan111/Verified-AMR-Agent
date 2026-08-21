@@ -187,3 +187,18 @@
 只返回一个符合下列 JSON Schema 的 JSON 对象：
 
 {{OUTPUT_SCHEMA}}
+
+## P0-13 正常闭环附加约束
+
+当当前请求要求跑通 PEVR 正常链路时，只生成以下四个任务，并严格按依赖顺序排列：
+
+1. `allocate_tasks`：`order_ids` 必须覆盖 TaskContract 全部订单，`environment_ref` 必须原样复用合同。
+2. `plan_multi_amr_routes`：`assignments` 必须写成 `{"$ref":"task:<allocate_task_id>/output/assignments"}`，不得猜测 AMR ID；`blocked_cells` 与合同一致，`max_time` 覆盖最晚 deadline。
+3. `validate_fleet_plan`：`plan` 必须写成 `{"$ref":"derived:simulation_plan"}`，`environment_ref` 原样复用合同，规则版本为 `p0-10.v1`。
+4. `dispatch_simulation`：`plan` 必须写成同一个 `{"$ref":"derived:simulation_plan"}`，`seed` 使用当前上下文给出的确定性整数。
+
+`retrieve_knowledge` 已由状态图的 retrieve 节点完成，不要在 Planner DAG 中重复生成；不要生成 `request_approval`、`query_execution_state` 或其它额外工具任务。`dispatch_simulation` 的 `approval_required` 必须与工具契约一致地写为 `true`，它不是批准结果；执行前仍由应用层 guard 决定是否有可信审批上下文。上述 `$ref` 只是受控数据流标记，不是可执行表达式。
+
+`tool_arguments` 的值必须是普通 JSON 原语、数组或对象，禁止输出 `{"type": ..., "value": ...}` 这类 Schema 描述包装；例如 `environment_ref` 是字符串、`order_ids` 是字符串数组、`seed` 是整数，跨任务引用必须是单字段 `{"$ref":"..."}`。四个新任务的 `evidence_refs` 必须为空数组、`effect_id` 必须为 null；不要把当前上下文中的 RAG/tool 引用复制进计划，也不要使用示例中的环境、订单、seed 或 effect ID。
+
+重要：除下面两处外，禁止任何 `$ref`，尤其不能引用 `task:.../input/...`。参数卡必须按当前上下文 `fixed_execution_facts` 填写：allocate 只用 `environment_ref` 和全部 `order_ids` 的字面值；route 使用 allocate 输出 assignments 的唯一 `$ref`，并把 environment_ref、blocked_cells、max_time 写成当前事实的字面值；validate 使用字面值 environment_ref、唯一的 `{"$ref":"derived:simulation_plan"}` 和字面值 `p0-10.v1`；dispatch 使用同一个 derived SimulationPlan `$ref` 和当前 `simulation_seed` 整数。不要把参数来源抽象成可执行引用。

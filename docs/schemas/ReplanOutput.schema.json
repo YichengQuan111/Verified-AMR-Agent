@@ -18,6 +18,7 @@
       "description": "计划 DAG 中一个可独立校验、执行和追踪的原子步骤。",
       "properties": {
         "task_id": {
+          "maxLength": 128,
           "minLength": 1,
           "title": "Task Id",
           "type": "string"

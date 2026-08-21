@@ -28,11 +28,31 @@
     {"id": "C2", "x": 28, "y": 1}
   ],
 
-  "obstacles": [],
+  "obstacles": [
+    {"x": 15, "y": 0},
+    {"x": 15, "y": 1}
+  ],
 
-  "narrow_aisles": [],
+  "narrow_aisles": [
+    {
+      "aisle_id": "NA-01",
+      "cells": [
+        {"x": 10, "y": 17},
+        {"x": 11, "y": 17},
+        {"x": 12, "y": 17}
+      ]
+    }
+  ],
 
-  "one_way_edges": [],
+  "blocked_edges": [
+    {"from": {"x": 5, "y": 0}, "to": {"x": 6, "y": 0}}
+  ],
 
-  "temporary_blocked_cells": []
+  "one_way_edges": [
+    {"from": {"x": 20, "y": 18}, "to": {"x": 21, "y": 18}}
+  ],
+
+  "temporary_blocked_cells": [
+    {"x": 14, "y": 19}
+  ]
 }

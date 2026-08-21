@@ -76,6 +76,18 @@ class ModelProfileSettings(StrictSettingsModel):
     temperature: float = Field(default=0.0, ge=0.0, le=2.0)
     reasoning_enabled: bool = False
     reasoning_budget_tokens: int = Field(default=0, ge=0)
+    # Profile 可以保留 alias/量化等审计信息但禁止实际调用。是否启用不接受环境
+    # 变量覆盖，避免部署残留的 LLM_PROFILE 把尚未验收的模型重新带回生产链。
+    enabled: bool = True
+    disabled_reason: str | None = Field(default=None, min_length=1)
+
+    @model_validator(mode="after")
+    def validate_disabled_profile(self) -> "ModelProfileSettings":
+        """禁用状态必须给出可交接的原因，不能只留下一个含义不明的布尔值。"""
+
+        if not self.enabled and not self.disabled_reason:
+            raise ValueError("disabled model profile must provide disabled_reason")
+        return self
 
 
 def _default_profiles() -> dict[str, ModelProfileSettings]:
@@ -95,6 +107,8 @@ def _default_profiles() -> dict[str, ModelProfileSettings]:
             temperature=0.0,
             reasoning_enabled=True,
             reasoning_budget_tokens=512,
+            enabled=False,
+            disabled_reason="Smart 在线 P0-05 验收仅通过 2/5，等待用户明确指示后再启用",
         ),
     }
 
@@ -112,6 +126,8 @@ class ModelGatewaySettings(StrictSettingsModel):
     generation_timeout_seconds: float = Field(default=120.0, gt=0)
     # le=1 是硬边界：即使配置文件写成 2，也会在启动前被 Pydantic 拒绝。
     max_schema_repair_attempts: int = Field(default=1, ge=0, le=1)
+    # 代码级 fallback 保持保守；仓库默认 TOML 会把本地 P0-13 网关上限
+    # 提高到 4096，具体节点仍由 Context 预算继续收紧。
     max_output_tokens: int = Field(default=1024, gt=0)
     validate_on_startup: bool = True
     profiles: dict[str, ModelProfileSettings] = Field(default_factory=_default_profiles)

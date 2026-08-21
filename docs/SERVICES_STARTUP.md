@@ -2,7 +2,7 @@
 
 本文档固化 P0 开发阶段所需服务、固定路径、端口、启动顺序、健康检查与停止方式。所有命令默认在 Windows PowerShell 中执行；特别标注为 `cmd.exe` 的命令除外。
 
-基准日期：2026-08-20
+基准日期：2026-08-21
 项目根目录：`C:\Users\QYC\Documents\AMR_Agent`
 
 ## 1. 固定环境与端口
@@ -12,7 +12,7 @@
 | Python | `E:\Anaconda\envs\torch128\python.exe` | API、Agent、数据库检查与评测 |
 | C++ Build Tools | `E:\BuildingTools` | MSVC、CMake、Ninja、CTest |
 | Fast 模型 | `E:\Llama.cpp\start-qwen3.6-agent.cmd` | 默认开发与主评测模型 |
-| Smart 模型 | `E:\Llama.cpp\start-qwen3.8-agent.cmd` | 困难规划与失败分析模型 |
+| Smart 模型 | `E:\Llama.cpp\start-qwen3.8-agent.cmd` | 暂时禁用；保留路径只供日后重新验收 |
 | LLM API | `http://127.0.0.1:8080/v1` | OpenAI 兼容接口 |
 | PostgreSQL | `localhost:5432` | 运行状态、Checkpoint、Effect Ledger |
 | Qdrant | `http://localhost:6333` | SOP 和设备文档向量检索 |
@@ -22,9 +22,11 @@
 模型别名：
 
 - Fast：`qwen3.6-fast`
-- Smart：`qwen3.8-smart`
+- Smart：`qwen3.8-smart`（保留标识，当前 `enabled=false`）
 
-两个模型都绑定 `127.0.0.1:8080`，一次只能启动一个。切换模型时必须先在原模型窗口按 `Ctrl+C`，确认 8080 端口释放后再启动另一个模型。
+两个脚本都绑定 `127.0.0.1:8080`。当前只允许启动 Fast；不要启动 Smart，也不要仅靠
+`LLM_PROFILE=smart` 尝试绕过配置。日后收到用户明确指示并恢复 Smart 时，仍必须保证
+一次只常驻一个模型，切换前先确认 8080 已释放。
 
 ## 2. 推荐启动顺序
 
@@ -33,7 +35,7 @@
 1. 进入项目根目录。
 2. 确认 Docker Engine 可用。
 3. 启动 PostgreSQL 和 Qdrant。
-4. 在独立终端启动 Fast 或 Smart 模型，只选一个。
+4. 在独立终端启动 Fast 模型；Smart 当前不得启动。
 5. 在独立终端启动 AMR Agent API。
 6. 需要编译规划器时，再打开已初始化的 C++ 开发终端。
 
@@ -154,15 +156,18 @@ Fast 是 P0 默认模型，使用别名 `qwen3.6-fast`：
 
  
 
-### 4.2 Smart：Qwen3.8
+### 4.2 Smart：Qwen3.8（暂时禁用）
 
-Smart 用于困难案例和失败分析，使用别名 `qwen3.8-smart`：
+Smart 的脚本和别名 `qwen3.8-smart` 仅为日后重新验收保留。最近一次真实 P0-05
+五节点在线验收只有 2/5，因此仓库配置明确设为 `enabled=false`。在用户日后给出明确
+启用指示之前：
 
-```powershell
-& 'E:\Llama.cpp\start-qwen3.8-agent.cmd'
-```
+- 不启动 `E:\Llama.cpp\start-qwen3.8-agent.cmd`；
+- 不修改 `config/default.toml` 的 Smart `enabled=false`；
+- 不把 alias 预检或单条结构化响应记作 Smart 在线验收通过。
 
-启动 Smart 前必须停止 Fast。两者不能同时占用 8080，也不应同时常驻 GPU。
+`check_model_gateway.py --profile smart` 当前预期返回非零退出码和
+`MODEL_PROFILE_DISABLED`，而且门禁发生在 `/v1/models` 之前。
 
 ### 4.3 模型健康检查
 
@@ -182,7 +187,7 @@ Invoke-RestMethod 'http://127.0.0.1:8080/health'
 必须确认返回的模型别名与本次配置一致：
 
 - Fast 运行时必须看到 `qwen3.6-fast`。
-- Smart 运行时必须看到 `qwen3.8-smart`。
+- Smart 当前不能进入在线 alias 检查；选择它必须得到 `MODEL_PROFILE_DISABLED`。
 
 Fast 模型可执行现有 20 次结构化输出冒烟测试：
 
@@ -252,8 +257,8 @@ API 文档：
 ```powershell
 $env:OPENAI_BASE_URL = 'http://127.0.0.1:8080/v1'
 $env:OPENAI_API_KEY = 'dummy'
-$env:LLM_PROFILE = 'fast'  # 切换 Smart 时改为 smart
-$env:LLM_MODEL = 'qwen3.6-fast'  # Smart 时改为 qwen3.8-smart
+$env:LLM_PROFILE = 'fast'  # Smart 当前硬禁用，不得改为 smart
+$env:LLM_MODEL = 'qwen3.6-fast'
 $env:POSTGRES_DSN = 'postgresql://amr:123456@localhost:5432/amr_agent'
 $env:QDRANT_URL = 'http://localhost:6333'
 $env:RAG_EMBEDDING_MODEL_PATH = 'E:\Llama.cpp\Embedding'

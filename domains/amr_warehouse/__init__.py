@@ -7,7 +7,11 @@ from domains.amr_warehouse.contracts import (
     GridPosition,
     Heading,
     HealthStatus,
+    NarrowAisle,
     TransportOrder,
+    WarehouseEdge,
+    WarehouseLocation,
+    WarehouseMap,
 )
 
 __all__ = [
@@ -17,5 +21,9 @@ __all__ = [
     "GridPosition",
     "Heading",
     "HealthStatus",
+    "NarrowAisle",
     "TransportOrder",
+    "WarehouseEdge",
+    "WarehouseLocation",
+    "WarehouseMap",
 ]

@@ -13,7 +13,9 @@
   → 带引用的证据报告
 ```
 
-当前已经完成 **P0-00～P0-12**，下一工作包是 **P0-13：PEVR 主闭环**。
+当前代码范围停在 **P0-00～P0-14**。阶段审计发现的问题已完成修复和复测；本次没有
+推进 P0-15。Smart Profile 因真实 P0-05 在线验收仅通过 2/5，现为硬禁用，只有收到
+用户日后的明确指示并重新完成在线验收后才能启用。
 
 ## 1. 固定范围
 
@@ -33,7 +35,7 @@
 |---|---|---|
 | P0-00 | 已完成 | 冻结 Scope、地图/AMR/订单种子和 Backlog。 |
 | P0-01 | 已完成 | Python/C++17 工程骨架、分层配置、结构化日志、依赖锁和统一冒烟。 |
-| P0-02 | 已完成 | Fast/Smart 两套本地 Qwen 文本 Profile 和启动手册。 |
+| P0-02 | 已完成（Smart 暂停） | Fast/Smart 两套本地 Qwen 文本 Profile 和启动手册；Smart 当前配置为硬禁用。 |
 | P0-03 | 已完成 | OpenAI 兼容模型网关、alias 门禁、超时、版本记录和最多一次 Schema 修复。 |
 | P0-04 | 已完成 | 8 个严格 Pydantic 核心契约、validator、DAG 校验和 JSON Schema 导出。 |
 | P0-05 | 已完成 | 5 个独立 2-shot Prompt、有限状态摘要、来源/版本/时间标记和确定性预算门禁。 |
@@ -44,15 +46,20 @@
 | P0-10 | 已完成 | 独立 C++17 `fleet_plan_validator`、稳定错误字典/证据、严格 JSON CLI 和 14 个正反例 CTest 场景。 |
 | P0-11 | 已完成 | Python 固定时间步仿真、P0-10 前置门禁、P0-09 时间戳路径执行、Observation/事件日志、充电和 Eval 故障注入。 |
 | P0-12 | 已完成 | 九个统一白名单工具、Pydantic 输入/输出 Schema、角色/超时/错误/审计/幂等门禁、固定 C++ JSON 适配器、状态/审批/验证封装。 |
+| P0-13 | 已完成 | 固定 `guard→understand→retrieve→plan→validate→execute→verify→finish` 主图、真实 Fast LLM/RAG/C++/仿真/Observation 成功闭环、带引用和工具证据的报告。 |
+| P0-14 | 已完成 | PostgreSQL Checkpoint、由 `run_id + plan_version + task_id` 规范三元组摘要生成的 Effect Ledger 幂等键、真实状态核对后的中断恢复，以及只替换受影响未完成 DAG 子图的 Local Replanner。 |
 
-明确尚未实现：P0-13 LangGraph 主闭环及其后续能力；默认工具状态/审批存储仍是进程内适配器。
+明确尚未实现：P0-15 的复杂异常分类、自动补偿工具和在线重规划编排。单独构造
+`ToolRegistry` 时状态/审批仍默认使用进程内适配器；真实 PEVR CLI 会把 Checkpoint、
+Effect Ledger 和 dispatch 外部状态共同注入 PostgreSQL，能够跨进程恢复。
 
 ## 3. 已落地架构
 
 ### 3.1 模型与上下文边界
 
 - 业务代码只依赖 `ModelProviderProtocol`，不直接依赖 GGUF、llama.cpp 参数或 OpenAI SDK 响应对象。
-- Fast 模型 alias 为 `qwen3.6-fast`；Smart alias 为 `qwen3.8-smart`。二者共用 `127.0.0.1:8080`，不能同时运行。
+- Fast 模型 alias 为 `qwen3.6-fast`。Smart 的保留 alias 为 `qwen3.8-smart`，但当前
+  `enabled=false`，Provider 会在访问 `/v1/models` 前返回 `MODEL_PROFILE_DISABLED`。
 - 五个 Prompt 分别负责 `understand_goal`、`plan_tasks`、`verify_observation`、`replan`、`compose_report`。
 - 每次模型调用只接收 system Prompt 和当前有限上下文，不传整个聊天/运行历史。
 - RAG/工具证据必须携带来源、版本、时间和引用；Token、工具步数、总时间和重规划次数由模型外代码确定性限制。
@@ -104,11 +111,11 @@ BEGIN → INSERT runs → flush → INSERT events → flush → COMMIT
 |---|---|
 | `agent/planning/` | TaskContract、PlanTask、风险/预算和 DAG 校验。 |
 | `agent/context/` | 5 个 Prompt、上下文契约、摘要器、预算门禁和独立节点。 |
-| `agent/runtime/` | Observation 与 RunState。 |
+| `agent/runtime/` | Observation、RunState、Checkpoint/Effect Ledger 契约、恢复协调和 PEVR 状态图。 |
 | `agent/tools/` | 9 个白名单工具名、ToolSpec/ToolResult、输入/输出 Schema、统一执行器、固定 C++/状态/审批/验证适配器。 |
 | `apps/api/` | FastAPI 应用工厂、请求 Schema、依赖和 Router。 |
 | `services/model_gateway/` | 本地模型统一访问边界。 |
-| `services/application/` | 运行、计划、审批和文档事务 Service。 |
+| `services/application/` | 运行、计划、审批、文档以及 PostgreSQL Checkpoint/Effect Ledger 事务 Service。 |
 | `services/persistence/` | SQLAlchemy ORM、Session 工厂和 Repository。 |
 | `services/retrieval/` | P0-07 文档加载、分块、Embedding、Qdrant/BM25、混合融合、ACL、拒答与引用。 |
 | `services/planner_cpp/` | P0-08 C++17 Hungarian/最近空闲分配、P0-09 A*/Dijkstra 路径与时空预约、P0-10 计划验证器、严格 JSON 编解码和 CTest。 |
@@ -131,7 +138,7 @@ BEGIN → INSERT runs → flush → INSERT events → flush → COMMIT
 | FastAPI | `http://127.0.0.1:8000` |
 | 模型 API | `http://127.0.0.1:8080/v1` |
 | Fast 模型脚本 | `E:\Llama.cpp\start-qwen3.6-agent.cmd` |
-| Smart 模型脚本 | `E:\Llama.cpp\start-qwen3.8-agent.cmd` |
+| Smart 模型脚本 | `E:\Llama.cpp\start-qwen3.8-agent.cmd`（暂时禁用，不得启动） |
 
 不要假设 Docker、数据库、Qdrant 或 Qwen 已经运行；每次新会话都应重新检查。
 
@@ -171,17 +178,20 @@ docker compose ps
 .\scripts\run_smoke.ps1 -SkipCpp
 ```
 
-最近一次完整验证基线（2026-08-20）：
+最近一次完整验证基线（2026-08-21，P0-00～P0-14 阶段审计修复后）：
 
-- pytest：110/110 通过。
-- CTest：33/33 通过（含原有 C++ 工程冒烟、P0-08 7 个回归、P0-09 12 个路由/冲突/性能/JSON 场景和 P0-10 14 个验证正反例）。
+- pytest：178/178 通过，唯一警告为既有 `jieba/pkg_resources` 弃用警告。
+- CTest：34/34 通过；新增反例确认未分配/空闲 AMR 的初始位置仍会阻断冲突路线。
 - Alembic：`0001_p006_core (head)`，8 张核心表缺失数 0。
 - Qdrant：健康检查通过，`amr_warehouse_knowledge` 保留 70 个正式 points。
-- Fast Qwen：基础结构化输出 20/20；5 个 P0-05 2-shot 节点 5/5。
+- Fast Qwen：alias 门禁通过；三个独立 `run_id` 的真实 PEVR 均 `completed`，每次都是
+  8/8 阶段、5/5 工具、Validator error=0、仿真完成。验收后 8080 已释放。
+- Smart Qwen：未启动；禁用门禁实测返回 `MODEL_PROFILE_DISABLED`。历史在线 P0-05
+  节点仅 2/5，因此未把 Smart 记为通过。
 
 ### 7.4 模型与 API
 
-需要真实模型时，在独立窗口只启动 Fast 或 Smart 其中一个，再运行：
+需要真实模型时，只启动 Fast，再运行：
 
 ```powershell
 & 'E:\Anaconda\envs\torch128\python.exe' .\scripts\check_model_gateway.py
@@ -189,6 +199,7 @@ docker compose ps
 ```
 
 隔离测试可以关闭启动期模型门禁；生产/真实联调不得用这个开关掩盖模型未启动或 alias 错误。
+不要启动或选择 Smart；环境变量不能绕过其 `enabled=false` 门禁。
 
 完整启动顺序见 [docs/SERVICES_STARTUP.md](docs/SERVICES_STARTUP.md)。
 
@@ -294,7 +305,46 @@ result = registry.execute(
 & 'E:\Anaconda\envs\torch128\python.exe' -m pytest tests\unit\test_p012_tools.py -q
 ```
 
-## 14. 协作与交接入口
+## 14. P0-13 PEVR 正常闭环
+
+P0-13 的主图固定为 `guard → understand → retrieve → plan → validate → execute → verify → finish`。
+理解和四个 P0-05 命名 Prompt 节点使用本地模型网关；Planner DAG 先经过确定性
+Validator，再由 Executor 通过 P0-12 九工具注册表调用 Hungarian、A*、P0-10
+Validator 和 Python 仿真。`dispatch_simulation` 的 `requires_approval=true` 不会
+被 Planner 自己满足，CLI 必须显式提供 operator 的可信审批上下文。
+
+真实 Fast 验收入口（先启动 `E:\Llama.cpp\start-qwen3.6-agent.cmd`）：
+
+```powershell
+& 'E:\Anaconda\envs\torch128\python.exe' scripts\run_p013_e2e.py --approve-dispatch
+```
+
+运行报告写入 `tmp/p013_e2e_result.json`；报告包含 RAG citations、plan version、
+工具 call/evidence、阶段和仿真指标、预算用量及未解决风险。详细边界见
+[docs/P013_PEVR.md](docs/P013_PEVR.md)。
+
+## 15. P0-14 Checkpoint、幂等与局部重规划
+
+P0-14 在不新增数据库表的前提下复用 P0-06 的 `runs.run_state_snapshot`、`plans`、
+`tasks`、`tool_calls`、`effects` 和 `events`。副作用身份严格由
+`run_id + plan_version + task_id` 三元组决定，持久化键是其规范 JSON 的 SHA-256 摘要，
+避免 ID 含分隔符时碰撞。首次执行先原子写入 `reserved` Effect Ledger；dispatch 的
+外部状态在返回图节点前持久化到同一 Effect 行。重启时核对 effect ID、工具名、输入和
+输出 digest，再决定继续、复用、待补偿或重规划，不能只信任 `completed` 字符串。
+
+局部重规划从真实分配/路线 `ToolResult` 构建 AMR、cell、edge、通道和工位 provenance，
+只失效受影响的未完成后继，保留已完成任务及旧 Effect；新版本必须重新通过完整
+`allocate → route → validate → dispatch` PEVR Validator，而不只是 DAG 拓扑校验。
+
+专项测试：
+
+```powershell
+& 'E:\Anaconda\envs\torch128\python.exe' -m pytest tests\unit\test_p014_checkpoint.py tests\unit\test_p014_replanner.py tests\integration\test_p014_postgres.py -q -p no:cacheprovider
+```
+
+详细恢复顺序、数据库事务边界和已知限制见 [docs/P014_CHECKPOINT.md](docs/P014_CHECKPOINT.md)。
+
+## 16. 协作与交接入口
 
 开始任何新任务前，按顺序阅读：
 

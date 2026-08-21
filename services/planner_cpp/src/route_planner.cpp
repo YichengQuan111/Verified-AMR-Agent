@@ -732,6 +732,21 @@ RoutePlanResult plan_with_search(const RouteRequest& request,
   }
 
   ReservationTable reservations(request.max_time);
+  std::set<std::string> assigned_amr_ids;
+  for (const auto& item : normalized.work_items) {
+    assigned_amr_ids.insert(item.amr.amr_id);
+  }
+  for (const auto& entry : normalized.amrs) {
+    if (assigned_amr_ids.count(entry.first) != 0U) continue;
+    // 本轮未分配任务不等于车辆从物理世界消失。它会在初始栅格保持占用到
+    // max_time；否则已分配路线可能穿过 idle/offline AMR，直到 P0-10 才被拒绝，
+    // 造成 P0-09 自称 complete 但下游必然 invalid 的接口语义漂移。
+    const auto& amr = entry.second;
+    reservations.reserve_path(
+        {RouteStep{amr.position, amr.heading, request.start_time,
+                   RouteAction::kStart, 0.0}},
+        request.max_time);
+  }
   for (const auto& item : normalized.work_items) {
     PlannedRoute route = plan_one_route(normalized, item, reservations, search);
     result.total_expanded_states += route.expanded_states;

@@ -38,11 +38,18 @@ class ToolSchema(BaseModel):
     )
 
 
-def _validate_unique_ids(values: list[str], field_name: str) -> list[str]:
+def _validate_unique_ids(
+    values: list[str],
+    field_name: str,
+    *,
+    max_length: int = 128,
+) -> list[str]:
     """拒绝重复或空白 ID，避免同一请求被 C++/存储层解释成两种语义。"""
 
     if any(not value.strip() for value in values):
         raise ValueError(f"{field_name} 不能包含空白 ID")
+    if any(len(value) > max_length for value in values):
+        raise ValueError(f"{field_name} 中的 ID 最长为 {max_length} 个字符")
     if len(values) != len(set(values)):
         raise ValueError(f"{field_name} 不能包含重复 ID")
     return values
@@ -110,8 +117,8 @@ class AllocateTasksInput(ToolSchema):
 class RouteAssignmentInput(ToolSchema):
     """P0-08 分配结果转给 P0-09 时允许保留 components 审计快照。"""
 
-    amr_id: str = Field(min_length=1)
-    order_id: str = Field(min_length=1)
+    amr_id: str = Field(min_length=1, max_length=128)
+    order_id: str = Field(min_length=1, max_length=128)
     components: dict[str, JsonValue] | None = None
 
 
@@ -178,7 +185,9 @@ class DispatchSimulationInput(ToolSchema):
 class QueryExecutionStateInput(ToolSchema):
     """查询运行/仿真状态的稳定筛选参数。"""
 
-    run_id: str = Field(min_length=1, max_length=256)
+    # 既用于 runs.run_id，也用于固定长度的 simulation ID；两者都不能超过
+    # PostgreSQL runs/tool/effect 公共边界的 64 字符。
+    run_id: str = Field(min_length=1, max_length=64)
     task_ids: list[str] | None = None
     amr_ids: list[str] | None = None
 
@@ -210,7 +219,7 @@ class RunVerificationSuiteInput(ToolSchema):
     """验证套件选择器只允许注册表内的固定套件 ID。"""
 
     suite_id: VerificationSuiteId
-    run_id: str | None = Field(default=None, min_length=1, max_length=256)
+    run_id: str | None = Field(default=None, min_length=1, max_length=64)
     case_ids: list[str] | None = None
 
     @model_validator(mode="after")
@@ -227,8 +236,8 @@ class RunVerificationSuiteInput(ToolSchema):
 class RequestApprovalInput(ToolSchema):
     """高风险步骤的人工审批请求，不接受自动批准或任意决策字段。"""
 
-    run_id: str = Field(min_length=1, max_length=256)
-    task_id: str = Field(min_length=1, max_length=256)
+    run_id: str = Field(min_length=1, max_length=64)
+    task_id: str = Field(min_length=1, max_length=128)
     reason: str = Field(min_length=1, max_length=2000)
     expires_at: AwareDatetime | None = None
 

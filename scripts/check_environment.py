@@ -73,13 +73,13 @@ def executable_version(path: Path, *arguments: str) -> dict[str, Any]:
     return result
 
 
-def newest_msvc_compiler() -> Path | None:
-    """在固定 Build Tools 目录中选择版本号最高的 x64 MSVC 编译器。"""
+def newest_msvc_compiler(msvc_root: Path) -> Path | None:
+    """在显式 Build Tools 目录中选择版本号最高的 x64 MSVC 编译器。"""
 
-    if not DEFAULT_MSVC_ROOT.is_dir():
+    if not msvc_root.is_dir():
         return None
     candidates = sorted(
-        DEFAULT_MSVC_ROOT.glob(r"*\bin\Hostx64\x64\cl.exe"), reverse=True
+        msvc_root.glob(r"*\bin\Hostx64\x64\cl.exe"), reverse=True
     )
     return candidates[0] if candidates else None
 
@@ -89,6 +89,9 @@ def main() -> int:
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--no-native", action="store_true", help="skip C++ tool checks")
+    parser.add_argument("--cmake", type=Path)
+    parser.add_argument("--ninja", type=Path)
+    parser.add_argument("--msvc-root", type=Path)
     args = parser.parse_args()
 
     # 对每个锁定包查询安装元数据；不导入重型库，因此检查速度很快。
@@ -134,9 +137,12 @@ def main() -> int:
 
     # -SkipCpp 会让 PowerShell 入口传入 --no-native，只检查 Python 部分。
     if not args.no_native:
-        cmake = Path(os.environ.get("AMR_CMAKE", str(DEFAULT_CMAKE)))
-        ninja = Path(os.environ.get("AMR_NINJA", str(DEFAULT_NINJA)))
-        compiler = newest_msvc_compiler()
+        cmake = args.cmake or Path(os.environ.get("AMR_CMAKE", str(DEFAULT_CMAKE)))
+        ninja = args.ninja or Path(os.environ.get("AMR_NINJA", str(DEFAULT_NINJA)))
+        msvc_root = args.msvc_root or Path(
+            os.environ.get("AMR_MSVC_ROOT", str(DEFAULT_MSVC_ROOT))
+        )
+        compiler = newest_msvc_compiler(msvc_root)
         report["native_tools"] = {
             "cmake": executable_version(cmake, "--version"),
             "ninja": executable_version(ninja, "--version"),

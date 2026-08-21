@@ -3,7 +3,7 @@
   "description": "查询运行/仿真状态的稳定筛选参数。",
   "properties": {
     "run_id": {
-      "maxLength": 256,
+      "maxLength": 64,
       "minLength": 1,
       "title": "Run Id",
       "type": "string"

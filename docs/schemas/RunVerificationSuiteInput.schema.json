@@ -16,7 +16,7 @@
     "run_id": {
       "anyOf": [
         {
-          "maxLength": 256,
+          "maxLength": 64,
           "minLength": 1,
           "type": "string"
         },

@@ -17,6 +17,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from agent.planning.contracts import PlanTask, TaskContract  # noqa: E402
 from agent.runtime.state import Observation, RunState  # noqa: E402
+from agent.runtime.pevr import PEVRRunReport  # noqa: E402
 from agent.tools.contracts import ToolResult, ToolSpec  # noqa: E402
 from agent.tools.schemas import (  # noqa: E402
     AllocateTasksInput,
@@ -36,7 +37,7 @@ from agent.tools.schemas import (  # noqa: E402
     ValidationResponse,
     VerificationSuiteOutput,
 )
-from domains.amr_warehouse.contracts import AMRState, TransportOrder  # noqa: E402
+from domains.amr_warehouse.contracts import AMRState, TransportOrder, WarehouseMap  # noqa: E402
 from agent.context.contracts import (  # noqa: E402
     FinalReport,
     ObservationVerification,
@@ -60,11 +61,15 @@ SCHEMA_MODELS: dict[str, type[BaseModel]] = {
     "TaskContract.schema.json": TaskContract,
     "AMRState.schema.json": AMRState,
     "TransportOrder.schema.json": TransportOrder,
+    "WarehouseMap.schema.json": WarehouseMap,
     "PlanTask.schema.json": PlanTask,
     "ToolSpec.schema.json": ToolSpec,
     "ToolResult.schema.json": ToolResult,
     "Observation.schema.json": Observation,
     "RunState.schema.json": RunState,
+    # P0-13 最终报告把 P0-05 FinalReport 与工具审计/实际指标合并，作为主闭环
+    # CLI 和后续 Checkpoint 的机器可读交付契约。
+    "PEVRRunReport.schema.json": PEVRRunReport,
     # understand_goal 直接复用上面的 TaskContract；其余四个 P0-05 Prompt
     # 使用独立输出模型，因此各自提交一份可审查的 Schema。
     "PlanTasksOutput.schema.json": PlanTasksOutput,

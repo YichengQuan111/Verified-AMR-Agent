@@ -121,6 +121,9 @@ class ToolInvocationContext:
     call_id: str
     principal_role: UserRole
     input_digest: str
+    # 副作用调用由 P0-14 注入稳定业务键；只读工具或旧 P0-12 调用可为 None。
+    # handler 只能用它关联外部事实，不能自行生成或改写。
+    idempotency_key: str | None
     # Python 线程无法被安全强杀；超时后设置该事件，带副作用的 handler 必须在
     # 最终提交前复核，避免已经返回 timeout 后又异步写入状态存储。
     cancelled: threading.Event
@@ -701,7 +704,11 @@ def _dispatch_handler(dependencies: ToolDependencies) -> ToolHandler:
             )
         store = dependencies.execution_store
         if store is not None:
-            store.put(simulation_id, output)
+            store.put(
+                simulation_id,
+                output,
+                idempotency_key=context.idempotency_key,
+            )
         return ToolHandlerResponse(
             output=output,
             evidence_refs=(f"simulation://{simulation_id}", f"simulation://{simulation_id}/events"),
@@ -1100,6 +1107,7 @@ class ToolRegistry:
         *,
         role: UserRole = UserRole.OPERATOR,
         call_id: str | None = None,
+        idempotency_key: str | None = None,
     ) -> ToolResult:
         """调用统一执行器；参数、权限和输出错误均变成 ToolResult。"""
 
@@ -1108,6 +1116,7 @@ class ToolRegistry:
             arguments,
             role=role,
             call_id=call_id,
+            idempotency_key=idempotency_key,
         )
 
 
@@ -1133,6 +1142,7 @@ class ToolExecutor:
         error: ToolError | None,
         evidence_refs: list[str],
         effect_id: str | None,
+        idempotency_key: str | None = None,
         audit_metadata: Mapping[str, Any] | None = None,
         preflight_validated: bool = True,
     ) -> ToolResult:
@@ -1168,7 +1178,9 @@ class ToolExecutor:
             principal_role=role,
             input_digest=input_digest,
             output_digest=output_digest,
-            idempotency_key=call_id,
+            # 副作用任务由上层传入 run:plan_version:task；旧调用未传时仍以
+            # call_id 兼容 P0-12 语义。这个字段只做审计，不允许 handler 自行改写。
+            idempotency_key=idempotency_key or call_id,
             audit_metadata=metadata,
         )
 
@@ -1188,6 +1200,7 @@ class ToolExecutor:
         output: Any | None = None,
         evidence_refs: list[str] | None = None,
         effect_id: str | None = None,
+        idempotency_key: str | None = None,
         preflight_validated: bool = True,
     ) -> ToolResult:
         """把预检或 handler 失败统一成 ToolResult。"""
@@ -1217,15 +1230,16 @@ class ToolExecutor:
             error=error,
             evidence_refs=evidence_refs or [],
             effect_id=effect_id,
+            idempotency_key=idempotency_key,
             preflight_validated=preflight_validated,
         )
 
-    def _finalize_result(self, call_id: str, result: ToolResult) -> ToolResult:
-        """原子发布首次结果并唤醒同一 call_id 的并发重试。"""
+    def _finalize_result(self, ledger_key: str, result: ToolResult) -> ToolResult:
+        """原子发布首次结果并唤醒同一幂等键的并发重试。"""
 
         with self._lock:
-            self._ledger[call_id] = result
-            inflight = self._inflight.pop(call_id, None)
+            self._ledger[ledger_key] = result
+            inflight = self._inflight.pop(ledger_key, None)
             if inflight is not None:
                 inflight.completed.set()
         return result
@@ -1237,6 +1251,7 @@ class ToolExecutor:
         *,
         role: UserRole = UserRole.OPERATOR,
         call_id: str | None = None,
+        idempotency_key: str | None = None,
     ) -> ToolResult:
         """严格按固定顺序执行一次工具调用。"""
 
@@ -1259,6 +1274,7 @@ class ToolExecutor:
                 message="role 必须是 viewer 或 operator",
                 retryable=False,
                 details={"error_type": type(exc).__name__},
+                idempotency_key=idempotency_key,
                 preflight_validated=False,
             )
         try:
@@ -1275,6 +1291,7 @@ class ToolExecutor:
                 code="arguments_not_json",
                 message=f"工具参数不是有限 JSON: {exc}",
                 retryable=False,
+                idempotency_key=idempotency_key,
                 preflight_validated=False,
             )
             # 无法形成规范 JSON 的请求没有可比较的稳定指纹，因此不能写入
@@ -1293,9 +1310,31 @@ class ToolExecutor:
                 code="call_id_invalid",
                 message="call_id 必须是非空字符串",
                 retryable=False,
+                idempotency_key=idempotency_key,
                 preflight_validated=False,
             )
             return result
+
+        if idempotency_key is not None and (
+            not isinstance(idempotency_key, str) or not idempotency_key.strip()
+        ):
+            result = self._error_result(
+                definition,
+                call_id=active_call_id,
+                role=role,
+                input_digest=raw_digest,
+                started_at=started_at,
+                category=ToolErrorCategory.INVALID_ARGUMENT,
+                code="idempotency_key_invalid",
+                message="idempotency_key 必须是非空字符串",
+                retryable=False,
+                preflight_validated=False,
+            )
+            return result
+
+        # 传入业务幂等键时，缓存/并发协调按业务键而不是易变 call_id；未传入时
+        # 保持 P0-12 原有的 call_id 语义，避免旧调用方的冲突检查退化。
+        ledger_key = idempotency_key or active_call_id
 
         # 在查重前做一次只读的输入规范化，便于把“省略默认值”和“显式默认值”
         # 视作同一请求；这一步不启动 handler，也不会触发外部副作用。
@@ -1313,7 +1352,7 @@ class ToolExecutor:
         cached_result: ToolResult | None = None
         conflict_tool: ToolName | None = None
         with self._lock:
-            previous = self._ledger.get(active_call_id)
+            previous = self._ledger.get(ledger_key)
             if previous is not None:
                 previous_fingerprint = previous.audit_metadata.get("request_fingerprint")
                 if (
@@ -1325,9 +1364,9 @@ class ToolExecutor:
                 else:
                     conflict_tool = previous.tool_name
             else:
-                inflight = self._inflight.get(active_call_id)
+                inflight = self._inflight.get(ledger_key)
                 if inflight is None:
-                    self._inflight[active_call_id] = _InFlightInvocation(
+                    self._inflight[ledger_key] = _InFlightInvocation(
                         tool_name=definition.spec.tool_name,
                         principal_role=role,
                         fingerprints=frozenset(request_fingerprints),
@@ -1346,6 +1385,16 @@ class ToolExecutor:
             # 任何状态（含失败/超时）的精确重试都返回原结果。
             return cached_result.model_copy(deep=True)
         if conflict_tool is not None:
+            conflict_code = (
+                "idempotency_key_reused_with_different_request"
+                if idempotency_key is not None
+                else "call_id_reused_with_different_request"
+            )
+            conflict_message = (
+                "idempotency_key 已用于另一工具请求"
+                if idempotency_key is not None
+                else "call_id 已用于另一工具请求"
+            )
             return self._error_result(
                 definition,
                 call_id=active_call_id,
@@ -1353,17 +1402,18 @@ class ToolExecutor:
                 input_digest=normalised_digest or raw_digest,
                 started_at=started_at,
                 category=ToolErrorCategory.CONFLICT,
-                code="call_id_reused_with_different_request",
-                message="call_id 已用于另一工具请求",
+                code=conflict_code,
+                message=conflict_message,
                 retryable=False,
                 details={"existing_tool": conflict_tool.value},
+                idempotency_key=idempotency_key,
                 preflight_validated=False,
             )
         if wait_for is not None:
             # 首个调用自身会在 ToolSpec 时限内返回或超时，再预留 1 秒给结果落账。
             if wait_for.wait(definition.spec.timeout_seconds + 1.0):
                 with self._lock:
-                    cached_result = self._ledger.get(active_call_id)
+                    cached_result = self._ledger.get(ledger_key)
                 if cached_result is not None:
                     return cached_result.model_copy(deep=True)
             return self._error_result(
@@ -1376,6 +1426,7 @@ class ToolExecutor:
                 code="inflight_result_missing",
                 message="并发重复调用未取得首次结果",
                 retryable=True,
+                idempotency_key=idempotency_key,
                 preflight_validated=False,
             )
 
@@ -1393,9 +1444,10 @@ class ToolExecutor:
                 code="tool_arguments_not_allowed",
                 message=str(exc),
                 retryable=False,
+                idempotency_key=idempotency_key,
                 preflight_validated=False,
             )
-            return self._finalize_result(active_call_id, result)
+            return self._finalize_result(ledger_key, result)
 
         if role not in definition.spec.allowed_roles:
             result = self._error_result(
@@ -1408,9 +1460,10 @@ class ToolExecutor:
                 code="tool_role_not_allowed",
                 message=f"角色 {role.value} 无权调用 {definition.spec.tool_name.value}",
                 retryable=False,
+                idempotency_key=idempotency_key,
                 preflight_validated=False,
             )
-            return self._finalize_result(active_call_id, result)
+            return self._finalize_result(ledger_key, result)
 
         try:
             parsed = definition.input_model.model_validate(raw_arguments)
@@ -1425,9 +1478,10 @@ class ToolExecutor:
                 code="tool_input_schema_invalid",
                 message=str(exc),
                 retryable=False,
+                idempotency_key=idempotency_key,
                 preflight_validated=False,
             )
-            return self._finalize_result(active_call_id, result)
+            return self._finalize_result(ledger_key, result)
 
         # 输入模型经过规范化后重新计算 digest，审计的是实际交给 handler 的值。
         input_digest = normalised_digest or _canonical_digest(parsed)
@@ -1437,6 +1491,7 @@ class ToolExecutor:
             call_id=active_call_id,
             principal_role=role,
             input_digest=input_digest,
+            idempotency_key=idempotency_key,
             cancelled=cancellation_event,
         )
         holder: dict[str, Any] = {}
@@ -1470,8 +1525,9 @@ class ToolExecutor:
                 code="tool_worker_start_failed",
                 message=f"无法启动工具 worker: {type(exc).__name__}",
                 retryable=True,
+                idempotency_key=idempotency_key,
             )
-            return self._finalize_result(active_call_id, result)
+            return self._finalize_result(ledger_key, result)
         if not completed.wait(definition.spec.timeout_seconds):
             cancellation_event.set()
             result = self._error_result(
@@ -1485,8 +1541,9 @@ class ToolExecutor:
                 message=f"工具执行超过 {definition.spec.timeout_seconds:g}s",
                 retryable=True,
                 details={"timeout_seconds": definition.spec.timeout_seconds},
+                idempotency_key=idempotency_key,
             )
-            return self._finalize_result(active_call_id, result)
+            return self._finalize_result(ledger_key, result)
 
         exception = holder.get("exception")
         if exception is not None:
@@ -1514,8 +1571,9 @@ class ToolExecutor:
                 output=failure.output,
                 evidence_refs=failure.evidence_refs,
                 effect_id=failure.effect_id,
+                idempotency_key=idempotency_key,
             )
-            return self._finalize_result(active_call_id, result)
+            return self._finalize_result(ledger_key, result)
 
         response = holder.get("response")
         if not isinstance(response, ToolHandlerResponse):
@@ -1529,8 +1587,9 @@ class ToolExecutor:
                 code="tool_handler_response_invalid",
                 message="handler 没有返回 ToolHandlerResponse",
                 retryable=False,
+                idempotency_key=idempotency_key,
             )
-            return self._finalize_result(active_call_id, result)
+            return self._finalize_result(ledger_key, result)
 
         try:
             output = definition.output_model.model_validate(response.output)
@@ -1545,8 +1604,9 @@ class ToolExecutor:
                 code="tool_output_schema_invalid",
                 message=str(exc),
                 retryable=False,
+                idempotency_key=idempotency_key,
             )
-            return self._finalize_result(active_call_id, result)
+            return self._finalize_result(ledger_key, result)
 
         result = self._result(
             definition,
@@ -1559,9 +1619,10 @@ class ToolExecutor:
             error=None,
             evidence_refs=list(response.evidence_refs),
             effect_id=response.effect_id,
+            idempotency_key=idempotency_key,
             audit_metadata=response.audit_metadata,
         )
-        return self._finalize_result(active_call_id, result)
+        return self._finalize_result(ledger_key, result)
 
 
 def build_tool_registry(

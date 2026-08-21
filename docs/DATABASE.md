@@ -90,6 +90,55 @@ P0-07 没有新增或修改数据库 revision，当前仍为 `0001_p006_core (he
 ## 7. 当前边界
 
 - P0-06 只实现持久化、接口和事务，不执行工具、检索、C++ 规划、仿真、LangGraph 主闭环或评测套件。
-- `tool_calls` 与 `effects` 已有 ORM/Repository/约束，但要等 P0-12/P0-13 的真实工具执行路径写入。
+- `tool_calls` 与 `effects` 由 P0-14 `PostgresRuntimeStore` 在真实执行路径中写入；普通
+  P0-12 工具单独调用仍可只使用进程内 ToolExecutor 缓存。
 - 普通上传文档仍是 `status=stored`、`indexed_at=null`；6 份 P0-07 冻结知识文档在当前成功索引后为 `status=indexed` 并带时间戳。
 - SSE 当前返回请求时已经持久化的有限事件快照，不实现长时间轮询或消息代理。
+
+## 8. P0-14 Checkpoint 与 Effect Ledger
+
+P0-14 复用本节已存在的八张表，没有新增数据库 revision 或同义状态表：
+
+```text
+ensure_run
+  → runs + run.created event
+阶段/任务完成
+  → runs.run_state_snapshot + plans/tasks（同一事务）+ checkpoint.saved event
+副作用任务
+  → INSERT effects(status=reserved, unique key)
+  → 调用外部仿真/工具
+  → UPDATE effects(status=completed/reconciled/compensation_required)
+```
+
+### 8.1 幂等约束
+
+- 业务副作用身份固定为 `run_id + plan_version + task_id` 三元组；具体
+  `idempotency_key` 是该规范 JSON 数组的 SHA-256（`p014:<digest>`）。不能直接用冒号
+  拼接，因为 ID 本身允许包含冒号；`attempt`、`call_id` 和随机 UUID 也不能替代它。
+- `effects` 同时受 `(run_id, plan_version, task_id)` 和 `idempotency_key` 两个唯一约束
+  保护。并发插入发生唯一键冲突时，失败事务只重新读取赢家，不重新调用 handler。
+- `payload_snapshot` 保存规范化输入 digest、原始 call ID、参数、ToolResult、外部效果 ID
+  和恢复说明。`dispatch_simulation` 还在 handler 返回前独立保存
+  `external_execution={simulation_id,snapshot,snapshot_digest}`；重复写必须逐摘要相同，
+  不允许覆盖另一份外部事实。旧版本记录不会被局部重规划删除。
+
+### 8.2 恢复顺序
+
+1. 从 `runs.run_state_snapshot` 读取并重新通过 `CheckpointSnapshot`/`PEVRGraphState`
+   契约校验；请求、环境或 seed 不一致直接拒绝恢复，畸形列表项和未知状态字段不做
+   “尽量恢复”。
+2. 对每条 `reserved/completed/reconciled` 账本记录先调用只读真实状态核对器。外部
+   `completed` 只有在 effect ID、工具名、业务键、输入/输出 digest 均与账本一致时才能
+   写为 `reconciled` 并复用；明确 `not_found` 的 reserved 行才可用同一业务键继续。
+3. 外部仍 `in_progress`、状态未知、账本完成但外部查不到时，禁止重放并转重规划；外部
+   失败时先标记 `compensation_required`，由后续 P0-15/人工补偿流程处理。
+4. 图恢复时已完成任务必须从 Checkpoint 或 Effect Ledger 取得 ToolResult；缺证据直接
+   停止，不通过重复执行补齐。
+
+### 8.3 局部重规划
+
+`LocalReplanner` 从 allocation/route ToolResult 构建真实 AMR、通道 cell/edge、工位、
+工具和任务 provenance，再沿 DAG 依赖向后继传播影响。它只删除未完成受影响节点，保留
+已完成节点及 `effect_id`，生成新任务 ID，使计划版本恰好加一，并重新执行完整 PEVR
+验证（不仅是 DAG 校验）。新版本副作用自然使用新的三元组摘要键，旧版本账本仍作为
+审计和恢复依据。

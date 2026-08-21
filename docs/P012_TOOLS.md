@@ -79,9 +79,16 @@ Validator `status=invalid` 不会被当作成功计划，分别映射为 `unsafe
 
 ## 重复调用与失败行为
 
+- P0-14 运行图为带副作用任务传入统一业务键。键只由
+  `run_id + plan_version + task_id` 三元组决定，但具体字符串是规范 JSON 数组的
+  SHA-256 摘要（`p014:<digest>`），避免 ID 本身含冒号时出现分隔符碰撞。该业务键优先于
+  易变的 `call_id` 参与缓存和 in-flight 协调，并与 PostgreSQL Effect Ledger 保持一致。
+  没有传入业务键的既有 P0-12 调用继续使用 call_id 语义。
 - `call_id` 相同且工具、角色、规范化输入相同：若首次调用仍在执行，后到调用等待
   同一个 in-flight 结果；完成后返回第一次完整 `ToolResult`，handler 和副作用均只执行一次。
-- `call_id` 相同但工具、角色或输入不同：返回 `conflict/call_id_reused_with_different_request`。
+- `call_id` 相同但工具、角色或输入不同：无业务键时返回
+  `conflict/call_id_reused_with_different_request`；业务键复用到不同请求时返回
+  `conflict/idempotency_key_reused_with_different_request`。
 - 未提供 `call_id`：由工具名、角色和参数生成稳定 `call-<digest>`；同一纯输入因此仍可重放。
 - 无法序列化为有限 JSON 的参数在 handler 前失败，且不写幂等 ledger；这种请求没有
   稳定规范指纹，不能借复用 call_id 覆盖此前合法结果。
@@ -96,10 +103,15 @@ Validator `status=invalid` 不会被当作成功计划，分别映射为 `unsafe
 
 ## 环境和持久化边界
 
-默认环境 Provider 只读取仓库提交的 `warehouse_v1` seed 文件，`environment_ref`
-只是快照身份，不会被拼成路径。默认执行状态和审批存储是进程内确定性适配器，
-可在组装注册表时注入 P0-06/PostgreSQL 实现；工具参数不能选择数据库 DSN、表或
-文件路径。`dispatch_simulation` 的结果以确定性 simulation ID 登记，随后可以用
+默认环境 Provider 只读取仓库提交且通过 `WarehouseMap` 公共契约校验的
+`warehouse_v1` seed 文件，`environment_ref` 只是快照身份，不会被拼成路径。单独构造
+注册表时，执行状态和审批默认是进程内确定性适配器；真实 PEVR CLI 会把同一个
+`PostgresRuntimeStore` 同时注入 ToolRegistry 与运行图。`dispatch_simulation` 在 handler
+返回图节点之前，先把外部仿真快照、业务键和 digest 独立提交到对应 Effect 行；进程随后
+被杀时，新进程仍能通过 `query_execution_state` 核对并复用，而不会二次 dispatch。
+工具参数不能选择数据库 DSN、表或文件路径。
+
+`dispatch_simulation` 的结果以确定性 simulation ID 登记，随后可以用
 `query_execution_state` 查询。地图快照会合并 seed 的静态 `obstacles` 和
 `temporary_blocked_cells`；仿真结果中的订单使用 `order_id` 响应 `task_ids` 筛选，
 未知 ID 必须失败，不能返回未过滤快照。

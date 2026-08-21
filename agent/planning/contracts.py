@@ -107,11 +107,11 @@ class ExecutionBudgets(PlanningContract):
 class TaskContract(PlanningContract):
     """把自然语言目标冻结为可验证、带预算的业务合同。"""
 
-    contract_id: str = Field(min_length=1)
+    contract_id: str = Field(min_length=1, max_length=128)
     schema_version: Literal["1.0"] = "1.0"
     goal: str = Field(min_length=1)
     orders: list[TransportOrder] = Field(min_length=1)
-    environment_ref: str = Field(min_length=1)
+    environment_ref: str = Field(min_length=1, max_length=256)
     constraints: TaskConstraints
     completion_criteria: list[str] = Field(min_length=1)
     risk_level: RiskLevel
@@ -140,7 +140,7 @@ class TaskContract(PlanningContract):
 class PlanTask(PlanningContract):
     """计划 DAG 中一个可独立校验、执行和追踪的原子步骤。"""
 
-    task_id: str = Field(min_length=1)
+    task_id: str = Field(min_length=1, max_length=128)
     dependencies: list[str]
     tool_name: ToolName
     tool_arguments: dict[str, JsonValue]
@@ -165,6 +165,8 @@ class PlanTask(PlanningContract):
 
         if self.task_id in self.dependencies:
             raise ValueError("PlanTask 不能依赖自身")
+        if any(not value or len(value) > 128 for value in self.dependencies):
+            raise ValueError("dependencies 中的 task_id 必须为 1～128 个字符")
         for field_name, values in (
             ("dependencies", self.dependencies),
             ("preconditions", self.preconditions),

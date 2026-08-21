@@ -16,7 +16,13 @@ from typing import Any, Mapping, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue
 
-from domains.amr_warehouse import AMRState, GridPosition, TransportOrder
+from domains.amr_warehouse import (
+    AMRState,
+    GridPosition,
+    NarrowAisle,
+    TransportOrder,
+    WarehouseMap,
+)
 
 
 class SnapshotContract(BaseModel):
@@ -35,6 +41,7 @@ class EnvironmentSnapshot(SnapshotContract):
     blocked_cells: list[GridPosition]
     blocked_edges: list[dict[str, GridPosition]]
     one_way_edges: list[dict[str, GridPosition]]
+    narrow_aisles: list[NarrowAisle]
     amrs: list[AMRState]
     orders: list[TransportOrder]
     location_positions: dict[str, GridPosition]
@@ -85,54 +92,58 @@ class DefaultWarehouseSnapshotProvider:
     def _load_snapshot(self, environment_ref: str) -> EnvironmentSnapshot:
         """从三个固定 JSON 文件组装统一快照。"""
 
-        warehouse = self._read_json("warehouse_v1.json")
+        warehouse = WarehouseMap.model_validate(self._read_json("warehouse_v1.json"))
         amr_payload = self._read_json("amrs_v1.json")
         order_payload = self._read_json("orders_seed_v1.json")
         locations: dict[str, GridPosition] = {}
-        for group in ("pickup_points", "dropoff_points", "charging_stations"):
-            for item in warehouse.get(group, []):
-                location_id = str(item["id"])
+        for group in (warehouse.pickup_points, warehouse.dropoff_points, warehouse.charging_stations):
+            for item in group:
+                location_id = item.id
                 if location_id in locations:
                     raise ValueError(f"固定地图包含重复位置: {location_id}")
-                locations[location_id] = GridPosition(x=item["x"], y=item["y"])
+                locations[location_id] = item.position
 
         state_version = environment_ref.split("@", 1)[1] if "@" in environment_ref else "seed-v1"
         return EnvironmentSnapshot(
             environment_ref=environment_ref,
             state_version=state_version,
-            map_width=warehouse["width"],
-            map_height=warehouse["height"],
+            map_width=warehouse.width,
+            map_height=warehouse.height,
             # 静态 obstacles 与运行快照临时封路对路径器/Validator 都是不可进入
             # 栅格；此前只读取后者会在地图增加障碍时形成跨层安全缺口。
-            blocked_cells=self._blocked_cells(warehouse),
+            blocked_cells=self._blocked_cells(
+                warehouse.obstacles,
+                warehouse.temporary_blocked_cells,
+            ),
             blocked_edges=[
-                {"from": GridPosition(x=item["from"]["x"], y=item["from"]["y"]),
-                 "to": GridPosition(x=item["to"]["x"], y=item["to"]["y"])}
-                for item in warehouse.get("blocked_edges", [])
+                {"from": item.from_, "to": item.to}
+                for item in warehouse.blocked_edges
             ],
             one_way_edges=[
-                {"from": GridPosition(x=item["from"]["x"], y=item["from"]["y"]),
-                 "to": GridPosition(x=item["to"]["x"], y=item["to"]["y"])}
-                for item in warehouse.get("one_way_edges", [])
+                {"from": item.from_, "to": item.to}
+                for item in warehouse.one_way_edges
             ],
+            narrow_aisles=list(warehouse.narrow_aisles),
             amrs=[item for item in amr_payload["amrs"]],
             orders=[item for item in order_payload["orders"]],
             location_positions=locations,
             completed_order_ids=[],
             start_time=0,
             max_time=120,
-            workstation_capacities={},
+            workstation_capacities={
+                item.id: 1
+                for item in [*warehouse.pickup_points, *warehouse.dropoff_points]
+            },
         )
 
     @staticmethod
-    def _blocked_cells(warehouse: Mapping[str, Any]) -> list[GridPosition]:
+    def _blocked_cells(
+        obstacles: list[GridPosition],
+        temporary_blocked_cells: list[GridPosition],
+    ) -> list[GridPosition]:
         """合并静态障碍和临时封路，并拒绝重复坐标。"""
 
-        values = [
-            GridPosition(x=item["x"], y=item["y"])
-            for key in ("obstacles", "temporary_blocked_cells")
-            for item in warehouse.get(key, [])
-        ]
+        values = [*obstacles, *temporary_blocked_cells]
         coordinates = [(item.x, item.y) for item in values]
         if len(coordinates) != len(set(coordinates)):
             raise ValueError("固定地图的 obstacles/temporary_blocked_cells 包含重复坐标")
@@ -153,25 +164,38 @@ class DefaultWarehouseSnapshotProvider:
 class ExecutionStateStoreProtocol(Protocol):
     """查询工具和仿真工具共享的最小状态仓储接口。"""
 
-    def put(self, run_id: str, snapshot: BaseModel | Mapping[str, JsonValue]) -> None: ...
+    def put(
+        self,
+        run_id: str,
+        snapshot: BaseModel | Mapping[str, JsonValue],
+        *,
+        idempotency_key: str | None = None,
+    ) -> None: ...
 
     def get(self, run_id: str) -> dict[str, JsonValue] | None: ...
 
 
 class InMemoryExecutionStateStore:
-    """进程内状态存储，作为 P0-06 PostgreSQL Checkpoint 前的确定性适配器。
+    """进程内状态存储，作为单测和无持久化 P0-12 调用的确定性适配器。
 
-    存储层只保存 JSON 深拷贝，不返回可被调用方原地修改的内部对象；未来替换为
-    PostgreSQL 时保持 put/get 契约，工具注册表和审计字段无需改变。
+    存储层只保存 JSON 深拷贝，不返回可被调用方原地修改的内部对象；生产 PEVR
+    必须注入 ``PostgresRuntimeStore``，沿用相同 put/get 契约并把状态绑定到 Effect 行。
     """
 
     def __init__(self) -> None:
         self._values: dict[str, dict[str, JsonValue]] = {}
         self._lock = RLock()
 
-    def put(self, run_id: str, snapshot: BaseModel | Mapping[str, JsonValue]) -> None:
+    def put(
+        self,
+        run_id: str,
+        snapshot: BaseModel | Mapping[str, JsonValue],
+        *,
+        idempotency_key: str | None = None,
+    ) -> None:
         """以 run_id 覆盖同一确定性快照；重复写不会产生第二个 effect。"""
 
+        del idempotency_key  # 内存适配器没有 Effect 行；生产 PostgreSQL 会强制关联。
         if isinstance(snapshot, BaseModel):
             value = snapshot.model_dump(mode="json")
         else:

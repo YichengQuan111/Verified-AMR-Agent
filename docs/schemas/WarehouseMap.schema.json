@@ -1,0 +1,208 @@
+{
+  "$defs": {
+    "GridPosition": {
+      "additionalProperties": false,
+      "description": "30 × 20 仓库栅格中的一个合法位置。\n\n坐标从 0 开始，所以宽度为 30 时 x 最大只能是 29，高度为 20 时 y 最大只能是 19。",
+      "properties": {
+        "x": {
+          "description": "横坐标，允许 0～29",
+          "exclusiveMaximum": 30,
+          "minimum": 0,
+          "title": "X",
+          "type": "integer"
+        },
+        "y": {
+          "description": "纵坐标，允许 0～19",
+          "exclusiveMaximum": 20,
+          "minimum": 0,
+          "title": "Y",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "x",
+        "y"
+      ],
+      "title": "GridPosition",
+      "type": "object"
+    },
+    "NarrowAisle": {
+      "additionalProperties": false,
+      "description": "固定地图中的窄通道标签及其连续栅格。",
+      "properties": {
+        "aisle_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Aisle Id",
+          "type": "string"
+        },
+        "cells": {
+          "items": {
+            "$ref": "#/$defs/GridPosition"
+          },
+          "minItems": 2,
+          "title": "Cells",
+          "type": "array"
+        }
+      },
+      "required": [
+        "aisle_id",
+        "cells"
+      ],
+      "title": "NarrowAisle",
+      "type": "object"
+    },
+    "WarehouseEdge": {
+      "additionalProperties": false,
+      "description": "地图中的一条相邻有向边。",
+      "properties": {
+        "from": {
+          "$ref": "#/$defs/GridPosition"
+        },
+        "to": {
+          "$ref": "#/$defs/GridPosition"
+        }
+      },
+      "required": [
+        "from",
+        "to"
+      ],
+      "title": "WarehouseEdge",
+      "type": "object"
+    },
+    "WarehouseLocation": {
+      "additionalProperties": false,
+      "description": "固定地图中一个带稳定 ID 的工位或充电点。",
+      "properties": {
+        "id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Id",
+          "type": "string"
+        },
+        "x": {
+          "exclusiveMaximum": 30,
+          "minimum": 0,
+          "title": "X",
+          "type": "integer"
+        },
+        "y": {
+          "exclusiveMaximum": 20,
+          "minimum": 0,
+          "title": "Y",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id",
+        "x",
+        "y"
+      ],
+      "title": "WarehouseLocation",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "P0 固定 30×20 地图的唯一 Python/JSON 公共契约。",
+  "properties": {
+    "map_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Map Id",
+      "type": "string"
+    },
+    "version": {
+      "minimum": 1,
+      "title": "Version",
+      "type": "integer"
+    },
+    "width": {
+      "const": 30,
+      "title": "Width",
+      "type": "integer"
+    },
+    "height": {
+      "const": 20,
+      "title": "Height",
+      "type": "integer"
+    },
+    "resolution_m": {
+      "exclusiveMinimum": 0,
+      "title": "Resolution M",
+      "type": "number"
+    },
+    "pickup_points": {
+      "items": {
+        "$ref": "#/$defs/WarehouseLocation"
+      },
+      "title": "Pickup Points",
+      "type": "array"
+    },
+    "dropoff_points": {
+      "items": {
+        "$ref": "#/$defs/WarehouseLocation"
+      },
+      "title": "Dropoff Points",
+      "type": "array"
+    },
+    "charging_stations": {
+      "items": {
+        "$ref": "#/$defs/WarehouseLocation"
+      },
+      "title": "Charging Stations",
+      "type": "array"
+    },
+    "obstacles": {
+      "items": {
+        "$ref": "#/$defs/GridPosition"
+      },
+      "title": "Obstacles",
+      "type": "array"
+    },
+    "narrow_aisles": {
+      "items": {
+        "$ref": "#/$defs/NarrowAisle"
+      },
+      "title": "Narrow Aisles",
+      "type": "array"
+    },
+    "blocked_edges": {
+      "items": {
+        "$ref": "#/$defs/WarehouseEdge"
+      },
+      "title": "Blocked Edges",
+      "type": "array"
+    },
+    "one_way_edges": {
+      "items": {
+        "$ref": "#/$defs/WarehouseEdge"
+      },
+      "title": "One Way Edges",
+      "type": "array"
+    },
+    "temporary_blocked_cells": {
+      "items": {
+        "$ref": "#/$defs/GridPosition"
+      },
+      "title": "Temporary Blocked Cells",
+      "type": "array"
+    }
+  },
+  "required": [
+    "map_id",
+    "version",
+    "width",
+    "height",
+    "resolution_m",
+    "pickup_points",
+    "dropoff_points",
+    "charging_stations",
+    "obstacles",
+    "narrow_aisles",
+    "blocked_edges",
+    "one_way_edges",
+    "temporary_blocked_cells"
+  ],
+  "title": "WarehouseMap",
+  "type": "object"
+}

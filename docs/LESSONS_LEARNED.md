@@ -120,3 +120,108 @@
 - 原因：错误声明分散在九个定义中，执行器级失败没有被集中并入规格，单测也只检查了少量代表工具。
 - 最终解决：注册 ToolSpec 时统一合并 `timeout/conflict/internal`，保留各 handler 专属类别，并逐一断言九个规格声明覆盖真实公共失败面。
 - 后续避免：新增执行器错误类别时必须同时更新规格生成器、ToolResult Schema、专题文档和全工具参数化测试；不能只让运行时“能返回”而静态契约不可见。
+
+## 2026-08-20 · P0-13 累计 Prompt 预算不能等同于单次网关上限
+
+- 现象：P0-13 第一次真实运行在 `plan` 节点因理解节点已消耗输入 Token 而触发剩余预算 fallback；把请求输出提高到 2048 后，Planner JSON 仍在网关默认 1024 上限处 EOF 截断。
+- 原因：四个独立 Prompt 的输入预算是整次运行累计值，不能沿用单节点示例的 8000/1024；同时 `ModelGatewaySettings.max_output_tokens` 会对节点传入值取更小值。
+- 最终解决：P0-13 入口合同固定留出 30000 输入/5000 输出累计预算，节点按合同剩余输出动态收紧；本地默认 TOML 网关上限提高到 4096，单次 Fast context window 仍由 llama.cpp 的 8192 硬限制负责。
+- 后续避免：新增多节点闭环时同时检查“累计预算、Provider 全局上限、单次 context window、结构化 JSON 最小长度”四者；不能只修改调用方的 `max_output_tokens`。
+
+## 2026-08-20 · JsonValue 空 Schema 会诱导本地模型输出 type/value 包装
+
+- 现象：真实 Fast Planner 把 `environment_ref`、数组、整数和 `$ref` 写成 `{type,value}`，或把固定事实写成 `task:.../input/...`、`fixed_execution_facts/...` 引用；Pydantic 仍能接收任意 JsonValue，直到确定性 Validator 才发现环境、时间和 seed 不可执行。
+- 原因：Pydantic 的 `JsonValue` JSON Schema 是空定义，模型会把上下文中的“类型/引用”当作可执行数据流，Prompt 约束不足以消除本地模型的格式偏差。
+- 最终解决：P0-13 增加严格规范化层，只还原明确原语、两个正式业务 `$ref` 和当前合同/请求中字段名完全匹配的固定事实别名；不执行表达式、不读取路径，未命中的引用保持原样并由 Validator 拒绝，且覆盖了对应单测反例。
+- 后续避免：若扩展正常 DAG 字段，先更新固定引用白名单和 Validator 反例；不能用“把任意 `$ref` 求值”换取模型成功，也不能让规范化层静默覆盖不同环境、订单或 seed。
+
+## 2026-08-20 · 报告节点不应重复注入完整 RAG 正文
+
+- 现象：真实闭环已通过 C++/仿真/Observation，`finish` 仍因完整 RAG 正文与工具上下文叠加把请求推到 8757/8192 而被 Fast 网关拒绝。
+- 原因：报告需要的是 citation/evidence ref 和确定性指标，不需要再次阅读五段完整检索正文；上下文来源分区正确但没有按节点职责做最小化。
+- 最终解决：报告 node_input 保留真实 citations/evidence_refs/metrics，报告上下文的 `rag_evidence` 置空；understand/plan/verify 仍按职责保留 RAG 证据，最终报告由真实 RetrievalResponse 和 ToolResult 索引补齐。
+- 后续避免：每个命名 Prompt 都要独立做 token 预算估算；报告/审计节点优先传引用和摘要，不复制正文或完整仿真事件轨迹。
+
+## 2026-08-20 · Checkpoint 完成不等于外部副作用完成
+
+- 现象：如果进程在工具调用和 Checkpoint 更新之间退出，旧快照可能仍显示任务未完成，或 Effect Ledger 只有 `reserved`；直接按快照重跑会重复派发真实仿真/工具。
+- 原因：数据库事务只能证明本地账本已经提交，不能证明外部系统是否已经产生副作用；`reserved` 与外部完成之间天然存在跨系统窗口。
+- 最终解决：副作用先按 `run_id + plan_version + task_id` 三元组写唯一账本（当前字符串键为规范三元组 SHA-256），再调用工具；恢复前通过只读外部状态核对器区分 completed/not_found/in_progress/failed/unknown。未知、进行中和账本/外部不一致均禁止自动重放；外部失败落 `compensation_required`。
+- 后续避免：任何恢复流程都必须同时测试“本地 reserved、外部 completed”和“外部 unknown”两个反例；不能把 Checkpoint 的 `completed` 或没有查询结果分别推断成外部事实。
+
+## 2026-08-20 · 局部重规划必须保留完成锚点并切换业务版本
+
+- 现象：全量重建计划会丢失已经完成的任务、副作用和证据；只替换失败节点又可能留下引用旧路线/旧验证结果的下游任务。
+- 原因：故障影响沿 DAG 依赖向后传播，完成节点是下游继续执行所需的事实锚点；副作用身份又绑定计划版本，不能用 attempt 或随机 ID 模糊合并新旧计划。
+- 最终解决：`LocalReplanner` 先按 AMR、通道 cell/edge、工位、工具和任务精确匹配，再传播未完成后继；已完成节点及 `effect_id` 原样保留，替换任务使用新 ID，计划版本恰好加一并重新验证 DAG。
+- 后续避免：LLM 的 retained/invalidated 集合必须与确定性分析逐项比对；P0-15 调用在线重规划时不能直接接受模型给出的“全量新计划”，也不能删除旧 Effect Ledger。
+
+## 2026-08-21 · 模型 alias 在线不等于节点行为验收通过
+
+- 现象：Smart 的 `/v1/models` alias 和单个结构化样例可以通过，但五个 P0-05 节点真实在线只通过 2/5；`understand/plan/replan` 会因推理占满输出预算而留下空 final。
+- 原因：启动门禁只能证明服务身份，单个简单 Schema 也不能代表长 Prompt、累计上下文和业务后置条件。把两者写成“Smart 已验收”会隐藏真实失败。
+- 最终解决：给 Profile 增加显式 `enabled/disabled_reason`，默认把 Smart 设为 `enabled=false`；Provider 在创建任何 `/v1/models` 或 completion 请求前返回 `MODEL_PROFILE_DISABLED`。保留版本参数供日后复验，但环境变量不能偷偷启用。
+- 后续避免：模型启用必须同时满足 alias、完整节点集、业务断言和连续端到端运行；未运行或部分通过必须原样记录。只有收到用户明确指示并完成相同在线门槛后才能恢复 Smart。
+
+## 2026-08-21 · 可读分隔符不是无碰撞幂等编码
+
+- 现象：`run_id:plan_version:task_id` 在 ID 自身允许冒号时会碰撞，例如不同三元组可以拼成同一个字符串。
+- 原因：数据库列分别唯一并不自动保证派生的字符串键无歧义；简单拼接缺少长度前缀或结构化编码。
+- 最终解决：仍以 `run_id + plan_version + task_id` 为唯一业务身份，但对规范 JSON 数组做 SHA-256，生成 `p014:<digest>`；数据库继续保存并约束原三列，加入分隔符碰撞反例。
+- 后续避免：复合身份必须使用规范结构序列化、长度前缀或元组列，不能把“容易读”误当作“唯一”。
+
+## 2026-08-21 · Ledger 与 ToolResult 必须散列同一份规范化输入
+
+- 现象：Effect Ledger 曾对 `{tool, role, args}` 求摘要，而 ToolExecutor 对 Pydantic 填充默认值后的参数求摘要；同一次合法 dispatch 会在完成落账时看起来像输入冲突。
+- 原因：两个层各自发明了 digest 语义，字段名称相同却不是同一字节表示。
+- 最终解决：副作用预留和 ToolResult 都对 Pydantic 规范化后的工具参数求 SHA-256，并在 `complete_effect` 再次校验输入 digest；结果与账本不一致直接拒绝。
+- 后续避免：公共 digest 必须定义“对象、规范化时点、JSON 排序/编码”三件事，并共享实现或共享测试向量，不能只约定字段名。
+
+## 2026-08-21 · 进程内外部状态不能证明跨进程恢复
+
+- 现象：旧测试用两个 Runner 但复用同一 Python 内存 store，能测绿“恢复不重派”；真正杀进程后，仿真事实随堆内存一起消失。
+- 原因：测试替身保留了生产崩溃时不存在的共享状态，绕过了 `reserved → 外部完成 → ledger completed` 的危险窗口。
+- 最终解决：真实 PEVR 把 `PostgresRuntimeStore` 同时注入运行图和 ToolRegistry；dispatch handler 在返回前先独立提交 `external_execution` 快照及摘要到 Effect 行。新增子进程在该提交后立即 `os._exit(73)` 的集成测试，再用新 Engine/Runner 恢复并断言 handler 总调用次数仍为 1。
+- 后续避免：崩溃恢复必须用操作系统级进程终止验证，且终止点要落在最危险的事务间隙；复用对象实例、线程或内存字典只能算单元测试。
+
+## 2026-08-21 · `completed` 状态不是副作用身份凭证
+
+- 现象：外部查询只要返回 `completed` 和一个 ToolResult，旧恢复器就可能复用；错误 effect、另一份输入或被替换的输出也可能被当作本次结果。
+- 原因：状态枚举只描述生命周期，不证明“谁、对什么输入、产生了哪份输出”。
+- 最终解决：核对外部 effect ID、工具名、业务键、规范化输入 digest 和输出 digest；任何一个不一致都转安全重规划，不能 SKIP。
+- 后续避免：跨系统 reconcile 必须把身份与内容完整性作为联合条件，不能只比较状态字符串或对象是否非空。
+
+## 2026-08-21 · 局部重规划必须使用运行时资源 provenance
+
+- 现象：Planner 的 route/dispatch 参数常只有 `$ref`，静态任务文本里没有 Hungarian 实际选中的 AMR 和 A* 实际经过的 cell/edge；仅扫描 PlanTask 会漏掉受影响路线。
+- 原因：计划描述的是数据流，真正资源选择发生在确定性工具输出中。只做 DAG 校验还可能接受一条缺 allocation/validation/dispatch 的 route-only 替换。
+- 最终解决：从成功的 allocation/route ToolResult 和地图快照构建任务 provenance，按真实 AMR/cell/edge/通道/工位匹配，再只传播到未完成后继；新版本必须重新通过带合同、ToolSpec 和 seed 的完整 PEVR Validator。
+- 后续避免：影响分析应读取“实际执行证据”，不是只读“计划意图”；局部计划验收必须复用正常计划的全部安全门槛。
+
+## 2026-08-21 · 未分配 AMR 仍然占据物理空间
+
+- 现象：P0-09 prioritized planner 只给已分配 AMR 建预约，另一台空闲 AMR 停在单格通道时，A* 仍可能规划路线穿过它。
+- 原因：未参与订单不等于从仓库消失；其初始 cell 在规划时域内仍是确定性障碍。
+- 最终解决：所有未分配 AMR 从 `start_time` 到 `max_time` 保留初始 cell，并增加单格通道不可行 CTest；完整 CTest 从 33 增至 34。
+- 后续避免：多机器人规划测试必须包含空闲车、终点保持和未被选择资源，不能只构造所有 AMR 都有任务的正常样例。
+
+## 2026-08-21 · 损坏 Checkpoint 不能“过滤后继续”
+
+- 现象：恢复代码对列表中的非对象项做条件过滤，会把损坏证据静默删掉，再用残缺状态继续执行。
+- 原因：宽松反序列化把数据腐败误当作兼容性，可能改变已完成任务、工具结果和 Trace 的对应关系。
+- 最终解决：恢复时严格检查允许键、必需对象、每个列表元素类型、tool result/task id 等长、Trace 唯一有序，并把 seed 纳入恢复请求一致性；任一错误统一为 `checkpoint_corrupt`。
+- 后续避免：安全恢复应 fail closed。旧版本兼容必须使用显式迁移和版本号，不能靠丢弃未知/畸形内容实现。
+
+## 2026-08-21 · 空数组种子会让地图能力测试变成空命题
+
+- 现象：固定地图的 obstacles、窄通道、禁行边、单向边和临时封锁为空时，代码可以声称支持这些资源，但真实 seed 从未经过相应分支。
+- 原因：测试只验证字段存在和正常订单，不验证非空资源的解析、契约和上下游传播。
+- 最终解决：增加严格 `WarehouseMap` 公共契约，seed 提供不干扰 ORDER-001 主链的确定性非空资源，并由 snapshot provider 统一解析；布尔/浮点坐标也被 strict integer 拒绝。
+- 后续避免：能力验收不能依赖 vacuous truth；每类冻结资源至少要有一个有效 fixture 和一个非法反例，并从公共 Schema 导出 JSON 契约。
+
+## 2026-08-21 · 文档工具运行时不是项目 pytest 运行时
+
+- 现象：直接执行 PATH 中的 `python -m pytest` 落到 Anaconda base，因依赖缺失在收集阶段失败；文档渲染运行时虽然带 `python-docx`，却没有项目 pytest 依赖。
+- 原因：同一桌面会话同时存在项目环境和文档工具环境，依赖能力不同；省略解释器绝对路径会产生与代码无关的假失败。
+- 最终解决：仓库验证统一显式使用 `E:\Anaconda\envs\torch128\python.exe`；可移植 smoke 允许用参数或 `AMR_*` 环境变量覆盖 Python/CMake/Ninja/MSVC 路径，并把误用环境的收集失败与产品测试结果分开记录。
+- 后续避免：运行任何验收前先打印解释器和锁依赖报告；工具专用 runtime 只用于其技能任务，不能据其缺包判断仓库失败。

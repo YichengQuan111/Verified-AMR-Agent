@@ -78,6 +78,7 @@
   "properties": {
     "amr_id": {
       "description": "AMR 的稳定唯一标识",
+      "maxLength": 128,
       "minLength": 1,
       "title": "Amr Id",
       "type": "string"

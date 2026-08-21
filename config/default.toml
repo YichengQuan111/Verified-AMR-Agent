@@ -17,7 +17,9 @@ api_key = "dummy"
 connect_timeout_seconds = 3.0
 generation_timeout_seconds = 120.0
 max_schema_repair_attempts = 1
-max_output_tokens = 1024
+# 四步 PEVR 正常链路的 PlanTasksOutput 可能超过 1024 Token；调用节点仍会
+# 通过各自 NodeContext 的请求上限和累计预算进一步收紧，网关这里只设安全上界。
+max_output_tokens = 4096
 # true 时 API 启动前必须通过 /v1/models alias 门禁。
 validate_on_startup = true
 
@@ -27,14 +29,18 @@ context_window = 8192
 temperature = 0.0
 reasoning_enabled = false
 reasoning_budget_tokens = 0
+enabled = true
 
 [model_gateway.profiles.smart]
 alias = "qwen3.8-smart"
 context_window = 12288
 temperature = 0.0
 reasoning_enabled = true
-# Smart 允许思考，但限制预算，避免只生成 reasoning_content 而没有最终 JSON。
+# 2026-08-21 在线 P0-05 验收仅通过 2/5；保留身份参数供审计，但 Provider 会在
+# 发起任何 HTTP 请求前以 MODEL_PROFILE_DISABLED 拒绝，直到用户明确要求重新启用。
 reasoning_budget_tokens = 512
+enabled = false
+disabled_reason = "Smart 在线 P0-05 验收仅通过 2/5，等待用户明确指示后再启用"
 
 [database]
 postgres_dsn = "postgresql://amr:123456@localhost:5432/amr_agent"

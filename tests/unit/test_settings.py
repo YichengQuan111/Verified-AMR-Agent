@@ -12,8 +12,8 @@ def test_environment_variables_have_highest_precedence() -> None:
             "AMR_ENV": "test",
             "LOG_LEVEL": "debug",
             "LOG_JSON": "false",
-            "LLM_PROFILE": "smart",
-            "LLM_MODEL": "qwen3.8-smart",
+            "LLM_PROFILE": "fast",
+            "LLM_MODEL": "qwen3.6-fast",
             "OPENAI_BASE_URL": "http://127.0.0.1:18080/v1/",
             "LLM_CONNECT_TIMEOUT_SECONDS": "2.5",
             "LLM_GENERATION_TIMEOUT_SECONDS": "45",
@@ -31,9 +31,9 @@ def test_environment_variables_have_highest_precedence() -> None:
     assert settings.app.environment == "test"
     assert settings.logging.level == "DEBUG"
     assert settings.logging.json_output is False
-    assert settings.model_gateway.profile == "smart"
-    assert settings.model_gateway.active_alias == "qwen3.8-smart"
-    assert settings.model_gateway.active_profile.reasoning_budget_tokens == 512
+    assert settings.model_gateway.profile == "fast"
+    assert settings.model_gateway.active_alias == "qwen3.6-fast"
+    assert settings.model_gateway.active_profile.enabled is True
     assert settings.model_gateway.base_url == "http://127.0.0.1:18080/v1"
     assert settings.model_gateway.connect_timeout_seconds == 2.5
     assert settings.model_gateway.generation_timeout_seconds == 45
@@ -70,6 +70,20 @@ def test_profile_and_explicit_alias_must_agree() -> None:
                 "LLM_MODEL": "qwen3.6-fast",
             }
         )
+
+
+def test_smart_profile_is_declared_but_hard_disabled() -> None:
+    """Smart 保留版本信息供审计，但环境变量不能把它偷偷重新启用。"""
+
+    settings = load_settings(
+        environ={
+            "LLM_PROFILE": "smart",
+            "LLM_MODEL": "qwen3.8-smart",
+        }
+    )
+
+    assert settings.model_gateway.active_profile.enabled is False
+    assert settings.model_gateway.active_profile.disabled_reason
 
 
 def test_schema_repairs_can_never_exceed_one(tmp_path) -> None:

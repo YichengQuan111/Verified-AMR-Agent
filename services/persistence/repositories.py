@@ -83,6 +83,25 @@ class TaskRepository:
             )
         )
 
+    def get_by_business_key(
+        self,
+        run_id: str,
+        plan_version: int,
+        task_id: str,
+        *,
+        for_update: bool = False,
+    ) -> TaskRecord | None:
+        """按运行/计划版本/任务 ID 读取任务，供 Effect Ledger 建立可选外键。"""
+
+        statement = select(TaskRecord).where(
+            TaskRecord.run_id == run_id,
+            TaskRecord.plan_version == plan_version,
+            TaskRecord.task_id == task_id,
+        )
+        if for_update:
+            statement = statement.with_for_update()
+        return self.session.scalar(statement)
+
 
 class ToolCallRepository:
     """tool_calls 表读写，不在 Repository 内重试工具。"""
@@ -106,9 +125,43 @@ class EffectRepository:
     def add(self, record: EffectRecord) -> None:
         self.session.add(record)
 
-    def get_by_idempotency_key(self, key: str) -> EffectRecord | None:
-        return self.session.scalar(
-            select(EffectRecord).where(EffectRecord.idempotency_key == key)
+    def get_by_idempotency_key(
+        self,
+        key: str,
+        *,
+        for_update: bool = False,
+    ) -> EffectRecord | None:
+        """读取唯一幂等键；更新账本状态时由 Service 请求行锁。"""
+
+        statement = select(EffectRecord).where(EffectRecord.idempotency_key == key)
+        if for_update:
+            statement = statement.with_for_update()
+        return self.session.scalar(statement)
+
+    def list_for_run(self, run_id: str) -> list[EffectRecord]:
+        """按稳定业务键返回一个运行的全部副作用记录。"""
+
+        return list(
+            self.session.scalars(
+                select(EffectRecord)
+                .where(EffectRecord.run_id == run_id)
+                .order_by(EffectRecord.plan_version, EffectRecord.task_id)
+            )
+        )
+
+    def list_by_external_execution_id(self, execution_id: str) -> list[EffectRecord]:
+        """按 Effect JSONB 中的真实执行 ID 查询跨进程仿真快照。"""
+
+        return list(
+            self.session.scalars(
+                select(EffectRecord)
+                .where(
+                    EffectRecord.payload_snapshot.contains(
+                        {"external_execution": {"run_id": execution_id}}
+                    )
+                )
+                .order_by(EffectRecord.updated_at.desc(), EffectRecord.effect_id)
+            )
         )
 
 

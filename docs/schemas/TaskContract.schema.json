@@ -170,24 +170,28 @@
       "properties": {
         "order_id": {
           "description": "订单唯一标识",
+          "maxLength": 128,
           "minLength": 1,
           "title": "Order Id",
           "type": "string"
         },
         "material_id": {
           "description": "待运输物料标识",
+          "maxLength": 128,
           "minLength": 1,
           "title": "Material Id",
           "type": "string"
         },
         "pickup": {
           "description": "取货点标识",
+          "maxLength": 128,
           "minLength": 1,
           "title": "Pickup",
           "type": "string"
         },
         "dropoff": {
           "description": "交付点标识",
+          "maxLength": 128,
           "minLength": 1,
           "title": "Dropoff",
           "type": "string"
@@ -247,6 +251,7 @@
   "description": "把自然语言目标冻结为可验证、带预算的业务合同。",
   "properties": {
     "contract_id": {
+      "maxLength": 128,
       "minLength": 1,
       "title": "Contract Id",
       "type": "string"
@@ -271,6 +276,7 @@
       "type": "array"
     },
     "environment_ref": {
+      "maxLength": 256,
       "minLength": 1,
       "title": "Environment Ref",
       "type": "string"

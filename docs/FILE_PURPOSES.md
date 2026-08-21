@@ -374,3 +374,98 @@ P0-01/P0-03 涉及的全部文件、用途、学习顺序、修改前后差异�
 - `**/__pycache__/`
 - `.pytest_cache/`
 - `tmp/`
+
+## 2026-08-20：P0-13 PEVR 正常闭环
+
+本步 Python 核心代码、Planner 兼容层和测试均补充中文注释/docstring，说明固定状态图、数据流、预算、审批、安全边界和失败行为；Prompt/README/专题 Markdown 与导出的 JSON Schema 只保存公共契约，因此本步无核心代码注释需求。`tmp/`、`build/`、`__pycache__/` 和 pytest 临时目录属于自动生成物，不是源码交付物。
+
+| 变更 | 文件 | 作用 | 下游影响 |
+|---|---|---|---|
+| 新建 | `agent/planning/validator.py` | 实现 P0-13 四任务正常 DAG 的确定性 Validator、拓扑/参数/审批/数据流/seed 门禁，以及本地 JsonValue 包装的严格固定事实规范化。 | `agent/runtime/graph.py` 在任何 P0-12 Planner 工具执行前调用；P0-14/P0-15 必须继续把它作为安全硬门。 |
+| 修改 | `agent/planning/__init__.py` | 延迟导出 P0-13 Validator 与规范化入口，避免 contracts/context 循环导入。 | 主图和测试从稳定 planning 包入口复用；不改变 P0-04/P0-05 原有契约。 |
+| 新建 | `agent/runtime/pevr.py` | 定义八阶段枚举、PEVR 请求/轨迹、工具证据、指标、最终报告、结果和 LangGraph 受控状态信封。 | P0-13 CLI/API 消费；P0-14 Checkpoint 可在不重造 RunState 的前提下持久化。 |
+| 新建 | `agent/runtime/graph.py` | 编译固定 `guard→understand→retrieve→plan→validate→execute→verify→finish` 图，串接 P0-05 命名节点、P0-12 注册表、RAG、C++、仿真和 Observation 验证。 | P0-14/P0-15 在此图上增加恢复/异常分支，但不得让 LLM 动态添加节点或绕过 Validator。 |
+| 修改 | `agent/runtime/__init__.py` | 懒加载导出 PEVR 公共类型，避免 `services.amr_simulator` 反向导入时形成循环。 | 外部调用方可从 runtime 稳定入口导入 RunState/PEVR 类型。 |
+| 修改 | `agent/context/prompts/plan_tasks.md` | 增加 P0-13 四任务顺序、固定 `$ref`、原语参数、空运行期证据和禁止示例事实的 Prompt 约束。 | `plan_tasks` 仍由 P0-05 Prompt Registry 统一渲染并注入实时 Schema。 |
+| 修改 | `config/default.toml` | 将本地网关输出安全上限调为 4096，避免四任务结构化 JSON 在 1024 处截断；节点预算仍继续收紧。 | Fast 本地 P0-13 运行使用；Provider/测试显式小预算仍保持原语义。 |
+| 修改 | `services/config/settings.py` | 保留代码级保守 fallback，并注释 TOML 覆盖与节点级预算边界。 | 配置契约、ModelProvider 单测和 P0-03 网关行为保持兼容。 |
+| 修改 | `scripts/export_schemas.py` | 将 `PEVRRunReport` 纳入统一 Pydantic Schema 导出。 | `docs/schemas/PEVRRunReport.schema.json` 与运行时报告契约同步。 |
+| 新建 | `docs/schemas/PEVRRunReport.schema.json` | 保存 P0-13 带引用、计划版本、工具证据、指标和风险的机器可读报告 Schema；本步无核心代码注释需求。 | P0-06/P0-17 或后续持久化消费者可校验最终报告。 |
+| 新建 | `scripts/run_p013_e2e.py` | 提供真实 Fast LLM P0-13 验收入口，要求预先启动固定模型且显式传入审批，不自动启动/批准副作用。 | 操作者可复现自然语言订单→RAG→DAG→C++→仿真→验证→报告；输出 JSON 属于 `tmp/` 自动生成物。 |
+| 新建 | `tests/unit/test_p013_pevr.py` | 覆盖 mock 八阶段成功闭环、非法 dataflow、dispatch 可信审批和模型 JsonValue/固定事实兼容反例。 | 后续状态图、Validator 或 Planner Prompt 修改必须通过此门禁。 |
+| 修改 | `README.md` | 将 P0-13 标记完成，增加主图、真实 Fast 验收命令和报告入口；本步无核心代码注释需求。 | 项目首页当前边界转交 P0-14/P0-15。 |
+| 新建 | `docs/P013_PEVR.md` | 记录 P0-13 状态图、Planner/Validator/审批边界、真实模型配置、实际指标、运行命令和限制；本步无核心代码注释需求。 | 下一 Agent 以此专题入口复现正常闭环，不把异常能力提前混入。 |
+| 修改 | `docs/FILE_PURPOSES.md` | 登记本步全部新建/修改源码、配置、测试、Schema 与文档职责；本步无核心代码注释需求。 | 文件职责入口保持唯一，并明确 `tmp/`/`build/` 为生成物。 |
+| 修改 | `docs/HANDOFF_CONTEXT.md` | 记录 P0-13 公共类型/状态图/报告契约、真实 Fast E2E、测试、服务状态、风险和下一工作包；本步无核心代码注释需求。 | P0-14/P0-15 可直接复用 RunState、ToolResult 和证据边界。 |
+| 修改 | `docs/LESSONS_LEARNED.md` | 沉淀 Fast 输出预算、JsonValue 包装/固定事实引用、报告上下文窗口和安全审批的可复用坑；本步无核心代码注释需求。 | 后续 Prompt/网关/主图工作避免重复踩坑。 |
+
+## 2026-08-20：P0-14 Checkpoint、幂等与局部重规划
+
+本步新增/修改的 Python 核心代码均补充中文模块说明、类/函数 docstring 和关键分支注释，
+说明 Checkpoint/Effect Ledger 数据流、事务边界、外部状态核对、重复调用、补偿停机和
+局部 DAG 传播。Markdown、README、JSON Schema 和纯文档登记没有核心代码注释需求；
+`migrations/` 没有新增文件，继续复用 `0001_p006_core` 的 8 张表。`build/`、
+`__pycache__/`、`.pytest_cache/`、`tmp/` 和 pytest 临时目录均为自动生成物，不登记为源码交付物。
+
+| 变更 | 文件 | 作用 | 下游影响 |
+|---|---|---|---|
+| 新建 | `agent/runtime/checkpoint.py` | 定义 CheckpointSnapshot、EffectLedgerEntry、唯一幂等键、外部状态快照、恢复决策、持久化 Protocol 及线程安全单测适配器。 | `agent/runtime/graph.py`、PostgreSQL Service 和 P0-15 补偿/重规划流程共享同一恢复契约。 |
+| 修改 | `agent/runtime/graph.py` | 给固定 PEVR 图加入阶段/任务 Checkpoint、Effect Ledger 预留/完成、恢复前真实仿真查询、终态核对和已完成任务跳过。 | P0-13 保持不注入 Store 时的兼容行为；生产入口可注入 PostgreSQL Store。 |
+| 修改 | `agent/runtime/__init__.py` | 从 runtime 稳定入口导出 Checkpoint、Effect Ledger 和 Recovery 公共类型，并保留 PEVR 延迟导出。 | API/测试/P0-15 不需依赖内部模块路径。 |
+| 新建 | `agent/planning/replanner.py` | 规范化 AMR/通道/工位/工具/任务影响集合，沿 DAG 后继传播，保留完成锚点，生成版本加一的新局部计划并复验 DAG。 | P0-15 可在 verify/异常分类后复用，不允许 LLM 绕过确定性影响分析。 |
+| 修改 | `agent/planning/__init__.py` | 延迟导出 LocalReplanner、AffectedEntitySet 和局部重规划结果契约。 | 规划调用方共享稳定导入，避免 planning/context/runtime 循环。 |
+| 修改 | `agent/tools/registry.py` | 扩展 ToolRegistry/ToolExecutor 接收统一业务 `idempotency_key`，并让 ToolResult/cache/in-flight 以该键协调重复调用。 | P0-14 外层 Ledger 与 P0-12 进程内幂等使用同一副作用身份；旧 call_id 调用保持兼容。 |
+| 修改 | `docs/P012_TOOLS.md` | 补充业务幂等键优先于 call_id、业务键冲突错误和 P0-14 持久化边界说明；本步无核心代码注释需求。 | P0-12 工具调用方和 P0-15 补偿流程复用一致的重复调用语义。 |
+| 修改 | `services/persistence/repositories.py` | 增加按 `(run_id, plan_version, task_id)` 查询任务和按幂等键/运行查询 Effect Ledger 的无事务 Repository 方法。 | Checkpoint Service 可在同一事务挂载任务外键、读取赢家和审计列表。 |
+| 新建 | `services/application/checkpoint_service.py` | 实现 PostgreSQLRuntimeStore：运行绑定、Checkpoint JSONB/计划任务事务、Effect Ledger 唯一预留、完成/失败更新和跨实例回读。 | PEVR 生产组装和 FastAPI state 注入使用；不新增表或修改已执行 migration。 |
+| 修改 | `services/application/__init__.py` | 导出 PostgresRuntimeStore/PostgresCheckpointStore。 | 应用组装、API 和外部运行器通过稳定入口注入。 |
+| 修改 | `apps/api/main.py` | 在 FastAPI 生命周期中组装 PostgreSQL Checkpoint Store，供运行图依赖注入；不在启动时执行迁移或副作用。 | 后续 P0-15/API 执行入口可直接复用同一数据库边界。 |
+| 修改 | `apps/api/dependencies.py` | 增加 `get_checkpoint_store` 依赖入口。 | 新增运行接口可获取同一 PostgreSQL Store，不直接访问 ORM。 |
+| 新建 | `tests/unit/test_p014_checkpoint.py` | 覆盖三元组幂等键、重复预留、真实状态恢复决策、补偿分支、Checkpoint 序号、模拟进程重启和已完成副作用重复次数为 0。 | 后续修改恢复流程必须保留安全反例和 no-redispatch 断言。 |
+| 新建 | `tests/unit/test_p014_replanner.py` | 覆盖 AMR/通道 cell/工位/工具影响传播、下游失效、版本加一、完成 effect 保留和 RunState 重建。 | P0-15 扩展异常处置时作为局部 DAG 回归门禁。 |
+| 新建 | `tests/integration/test_p014_postgres.py` | 在真实 PostgreSQL 验证 Checkpoint 跨 Store 实例回读、Effect Ledger 唯一预留/完成和精确清理。 | 证明 P0-14 不是 SQLite/fake-only；统一 smoke 必须保留该集成门禁。 |
+| 修改 | `docs/DATABASE.md` | 记录 P0-14 复用 8 表、事务数据流、幂等约束、恢复顺序和局部重规划边界；本步无核心代码注释需求。 | 数据库设计仍以 P0-06 migration 为唯一表结构来源。 |
+| 修改 | `docs/P013_PEVR.md` | 更新 P0-13 与 P0-14 的职责边界和 Store 注入方式；本步无核心代码注释需求。 | 下一步可区分正常内存闭环与可恢复运行。 |
+| 新建 | `docs/P014_CHECKPOINT.md` | P0-14 专题说明 Checkpoint/Effect Ledger、恢复流程、局部重规划、验证命令和限制；本步无核心代码注释需求。 | P0-15/运维/新 Agent 以此作为恢复语义唯一专题入口。 |
+| 修改 | `README.md` | 将 P0-14 标记完成，增加恢复/幂等/局部重规划能力和专项测试入口；本步无核心代码注释需求。 | 项目首页当前下一步转为 P0-15。 |
+| 修改 | `docs/FILE_PURPOSES.md` | 登记本步全部新建/修改源码、测试和文档职责；本步无核心代码注释需求。 | 文件职责入口保持唯一，并明确自动生成物与无 migration 变化。 |
+| 修改 | `docs/HANDOFF_CONTEXT.md` | 写入 P0-14 公共契约、恢复决策、数据库/外部服务、测试事实、限制和下一步；本步无核心代码注释需求。 | 后续 Agent 可直接接续 P0-15，不把旧 Checkpoint 当外部事实。 |
+| 修改 | `docs/LESSONS_LEARNED.md` | 沉淀唯一业务键、reserved 窗口、外部状态优先和局部重规划锚点的可复用坑；本步无核心代码注释需求。 | 后续副作用/恢复/重规划实现避免重复派发和全图重算。 |
+
+## 2026-08-21：P0-00～P0-14 阶段审计修复
+
+本次只修复阶段审计发现的 P0-00～P0-14 缺口，没有推进 P0-15。修改的 Python/C++
+核心代码均同步补充或校正中文注释，说明禁用门禁、规范摘要、事务窗口、失败关闭、运行时
+provenance、空闲 AMR 占位和路径可移植性。Markdown、TOML、JSON seed、运行时导出的
+JSON Schema 与测试数据没有核心代码注释需求；其设计原因记录在本节和专题文档中。
+`build/`、`tmp/`、`__pycache__/`、`.pytest_cache/` 与系统临时在线报告是生成物，不登记
+为源码交付，也没有新增 Alembic revision。
+
+| 变更 | 文件 | 作用 | 下游影响 |
+|---|---|---|---|
+| 修改 | `services/config/settings.py`、`config/default.toml` | 给模型 Profile 增加 `enabled/disabled_reason`，默认硬禁用 Smart 并保留审计原因。 | API、CLI 和 Provider 都不能借环境变量悄悄启用 Smart；日后须经用户明确指示修改受审配置。 |
+| 修改 | `services/model_gateway/exceptions.py`、`services/model_gateway/provider.py` | 新增稳定 `MODEL_PROFILE_DISABLED`，并在 `/v1/models` 或 completion 之前拒绝禁用 Profile。 | Smart 服务即使碰巧在线也不可被当前 Agent 使用；Fast alias/Schema 门禁保持原样。 |
+| 修改 | `agent/planning/contracts.py`、`agent/runtime/state.py`、`agent/runtime/pevr.py`、`agent/tools/schemas.py` | 对齐 run/task/environment/assignment 等公共 ID 长度，并给栅格坐标和运行请求保持一致边界；PEVR 状态增加模型调用计数与资源 provenance。 | Pydantic、数据库列、工具参数和 Checkpoint 不再因上下游最大长度漂移产生晚失败。 |
+| 修改 | `agent/runtime/checkpoint.py` | 把幂等键改为规范三元组 SHA-256；收紧 Effect/ToolResult digest 一致性，并对外部 effect/tool/key/input/output 身份做完整核对。 | 合法 ID 含冒号不碰撞；伪造或串线的 `completed` 结果不能被恢复器跳过执行。 |
+| 修改 | `agent/runtime/graph.py` | 严格恢复 Checkpoint、校验 seed/列表/Trace，对坏快照 fail closed；统一工具输入 digest；首个非法计划只允许一次语义修复并准确统计模型调用；保存运行时 provenance。 | 恢复不会静默丢证据，Planner 不能绕过正常 Validator，在线指标反映真实调用数。 |
+| 修改 | `agent/planning/validator.py`、`agent/planning/replanner.py`、`agent/planning/__init__.py` | 从真实 allocation/route 结果构建资源 provenance；局部影响只传播未完成后继；新版本复用合同、ToolSpec、seed 重新执行完整 PEVR 验证。 | route-only 替换和遗漏实际 AMR/cell/edge 的局部计划被拒绝，完成锚点仍保留。 |
+| 修改 | `agent/runtime/__init__.py` | 从稳定入口导出新增/变化的 PEVR、恢复和 provenance 类型。 | 调用方不必依赖内部模块路径，循环导入边界保持不变。 |
+| 修改 | `agent/tools/registry.py`、`agent/tools/snapshots.py` | dispatch 使用业务幂等键写 execution store；固定地图经 `WarehouseMap` 解析并暴露障碍、窄通道、单向/禁行边和容量；更正内存 Store 仅供单测/无持久化调用的职责。 | 真实 CLI 可在图完成落账前持久化外部仿真事实；九工具共享非空且受契约校验的地图。 |
+| 修改 | `services/persistence/repositories.py`、`services/application/checkpoint_service.py` | 增加按外部 execution ID 查 Effect；`PostgresRuntimeStore` 同时实现 execution state store，按业务键锁行、独立提交外部快照并校验摘要。 | 真实进程在 external commit 与 Effect completed 之间退出后，新进程仍能核对且不重复 dispatch。 |
+| 修改 | `scripts/run_p013_e2e.py` | 将同一 PostgreSQL Store 同时注入 ToolRegistry 与 PEVR Runner，并在结束时释放数据库资源。 | 在线 PEVR 不再依赖进程内仿真真相；每个独立 run_id 都可跨进程恢复。 |
+| 修改 | `services/planner_cpp/src/route_planner.cpp` | 为所有未分配 AMR 在完整规划时域预约初始 cell。 | A* 不会穿过物理上仍停在窄通道的空闲机器人。 |
+| 修改 | `services/planner_cpp/CMakeLists.txt`、`services/planner_cpp/tests/route_planner_tests.cpp` | 注册并实现空闲 AMR 阻断单格通道的确定性反例。 | CTest 基线从 33 增至 34，持续保护 P0-09 物理占位语义。 |
+| 修改 | `domains/amr_warehouse/contracts.py`、`domains/amr_warehouse/__init__.py` | 新增严格 `WarehouseMap/Location/Edge/NarrowAisle` 公共契约，拒绝 bool/float 伪装整数坐标并校验重复、相邻和连续性。 | Python seed、工具快照和 JSON Schema 共享同一地图语义，不靠 C++ 晚失败。 |
+| 修改 | `domains/amr_warehouse/data/warehouse_v1.json` | 加入不干扰固定 ORDER-001 正常主链的非空 obstacle、窄通道、blocked/one-way edge 和临时封锁 fixture。 | 地图能力测试不再是空数组上的空命题；本文件是纯数据，无核心代码注释需求。 |
+| 修改 | `scripts/export_schemas.py`；新建 `docs/schemas/WarehouseMap.schema.json` | 将地图公共契约加入统一导出。 | 运行时 Pydantic 与机器可读地图 JSON 契约保持同源。 |
+| 修改 | `docs/schemas/AMRState.schema.json`、`DispatchSimulationInput.schema.json`、`FleetStateOutput.schema.json`、`Observation.schema.json`、`PlanMultiAMRRoutesInput.schema.json`、`PlanTask.schema.json`、`PlanTasksOutput.schema.json`、`QueryExecutionStateInput.schema.json`、`ReplanOutput.schema.json`、`RequestApprovalInput.schema.json`、`RunState.schema.json`、`RunVerificationSuiteInput.schema.json`、`SimulationPlan.schema.json`、`SimulationResult.schema.json`、`TaskContract.schema.json`、`TransportOrder.schema.json`、`ValidateFleetPlanInput.schema.json`；保留/再生成 `PEVRRunReport.schema.json` | 反映 ID 长度、strict 坐标、运行状态/provenance 和嵌套公共契约变化；全部由导出脚本生成，无手写分叉。 | 契约测试逐字比较 36 份 Schema，API/工具/文档消费者获得同一边界。 |
+| 修改 | `scripts/check_environment.py`、`scripts/run_smoke.ps1` | Python/CMake/Ninja/CTest/MSVC 路径允许命令参数或 `AMR_*` 环境变量覆盖，同时保留当前 E 盘默认值。 | smoke 可在不同 Windows 开发机复用；仍显式打印实际解释器和工具版本。 |
+| 修改 | `tests/unit/test_settings.py`、`tests/unit/test_model_provider.py` | 覆盖 Smart 配置状态和“网络调用次数为 0”的禁用反例。 | 防止以后只隐藏文档、实际仍可访问 Smart。 |
+| 修改 | `tests/unit/test_p004_contracts.py`、`tests/unit/test_p012_tools.py` | 覆盖非空地图 seed、严格坐标、公共 ID 边界和规范化工具摘要。 | Pydantic/JSON/工具上下游契约漂移会在单测阶段暴露。 |
+| 修改 | `tests/unit/test_p013_pevr.py` | 增加一次语义修复、二次非法停止、Validator 业务 invalid、路线 timeout 和仿真 blocked 等反例。 | “工具 success”不能替代业务完成；任何 Planner 工具执行前仍有确定性门禁。 |
+| 修改 | `tests/unit/test_p014_checkpoint.py`、`tests/unit/test_p014_replanner.py` | 覆盖冒号碰撞、seed 漂移、坏快照、外部身份/digest 不一致、真实 provenance、只失效未完成子图和完整 PEVR 复验。 | P0-14 的幂等、恢复和局部重规划不再只测正常路径。 |
+| 新建 | `tests/helpers/__init__.py`、`tests/helpers/p014_process_worker.py` | 提供仅供集成测试的子进程工作器，在外部快照提交后用 `os._exit(73)` 模拟真实掉电窗口。 | 不进入生产导入链；用于证明进程内 fake 无法替代跨进程恢复测试。 |
+| 修改 | `tests/integration/test_p014_postgres.py` | 用新 Engine/Runner 恢复被强杀的真实 PostgreSQL 运行，并断言 dispatch 次数 0、Effect 单行和结果核对复用。 | P0-14 恢复门槛包含真实进程边界，而非仅跨对象实例。 |
+| 修改 | `README.md`、`docs/MODEL_GATEWAY.md`、`docs/SERVICES_STARTUP.md`、`docs/P001_P003_FILE_GUIDE.md`、`docs/P012_TOOLS.md`、`docs/P013_PEVR.md`、`docs/P014_CHECKPOINT.md`、`docs/DATABASE.md` | 对齐 Smart 禁用、摘要幂等键、外部状态持久化、严格恢复、完整局部复验和最新离线/在线证据；均为文档，无核心代码注释需求。 | 操作者和后续工作不再按旧的“Smart 可启动/冒号拼接/内存外部状态”语义行动。 |
+| 修改 | `docs/LESSONS_LEARNED.md` | 沉淀本次模型验收、幂等、digest、进程恢复、reconcile、provenance、空闲 AMR、坏快照、非空地图和 Python 环境十类坑；本步无核心代码注释需求。 | 后续工作包可复用失败模式与反例设计。 |
+| 修改 | `docs/HANDOFF_CONTEXT.md`、`docs/FILE_PURPOSES.md` | 记录全部修复、公共接口、真实命令/结果、服务终态和文件职责；本步无核心代码注释需求。 | 仓库唯一交接/文件作用入口与当前代码一致，当前状态冻结在 P0-14。 |

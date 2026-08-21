@@ -1,4 +1,4 @@
-"""P0-04 八个核心数据契约及 Schema 导出的正反例测试。"""
+"""P0-04 核心数据契约及 Schema 导出的正反例测试。"""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from pydantic import BaseModel, ValidationError
 from agent.planning import PlanTask, TaskContract, topological_sort
 from agent.runtime import Observation, RunState
 from agent.tools import ToolResult, ToolSpec
-from domains.amr_warehouse import AMRState, TransportOrder
+from domains.amr_warehouse import AMRState, GridPosition, TransportOrder, WarehouseMap
 from scripts.export_schemas import SCHEMA_MODELS, export_schemas
 
 
@@ -212,7 +212,7 @@ def run_state_payload(
 
 
 def core_contract_cases() -> list[tuple[type[BaseModel], dict[str, Any], str]]:
-    """返回八个核心模型、合法输入和一个必填字段名。"""
+    """返回核心模型、合法输入和一个必填字段名。"""
 
     return [
         (TaskContract, task_contract_payload(), "goal"),
@@ -223,6 +223,19 @@ def core_contract_cases() -> list[tuple[type[BaseModel], dict[str, Any], str]]:
         (ToolResult, tool_result_payload(), "status"),
         (Observation, observation_payload(), "source"),
         (RunState, run_state_payload(), "task_contract"),
+        (
+            WarehouseMap,
+            json.loads(
+                (
+                    PROJECT_ROOT
+                    / "domains"
+                    / "amr_warehouse"
+                    / "data"
+                    / "warehouse_v1.json"
+                ).read_text(encoding="utf-8")
+            ),
+            "map_id",
+        ),
     ]
 
 
@@ -234,7 +247,7 @@ def core_contract_cases() -> list[tuple[type[BaseModel], dict[str, Any], str]]:
 def test_core_contracts_reject_undeclared_fields(
     model: type[BaseModel], payload: dict[str, Any], required_field: str
 ) -> None:
-    """八个核心契约都必须执行 extra=forbid。"""
+    """核心契约都必须执行 extra=forbid。"""
 
     del required_field
     invalid = deepcopy(payload)
@@ -262,16 +275,32 @@ def test_core_contracts_reject_missing_required_fields(
 
 
 def test_seed_data_matches_domain_contracts() -> None:
-    """仓库内已提交的 AMR 与订单种子必须能被 P0-04 契约读取。"""
+    """仓库地图、AMR 与订单种子必须全部通过同一套公共契约。"""
 
     data_directory = PROJECT_ROOT / "domains" / "amr_warehouse" / "data"
     amrs = json.loads((data_directory / "amrs_v1.json").read_text(encoding="utf-8"))
     orders = json.loads(
         (data_directory / "orders_seed_v1.json").read_text(encoding="utf-8")
     )
+    warehouse = json.loads(
+        (data_directory / "warehouse_v1.json").read_text(encoding="utf-8")
+    )
 
+    parsed_map = WarehouseMap.model_validate(warehouse)
+    assert parsed_map.obstacles
+    assert parsed_map.narrow_aisles
+    assert parsed_map.one_way_edges
+    assert parsed_map.temporary_blocked_cells
     assert len([AMRState.model_validate(item) for item in amrs["amrs"]]) == 4
     assert len([TransportOrder.model_validate(item) for item in orders["orders"]]) == 3
+
+
+@pytest.mark.parametrize("value", [True, 1.0])
+def test_grid_position_requires_actual_integers(value: object) -> None:
+    """JSON 布尔值和浮点值不能借 Python 的 int 兼容语义进入 C++ 坐标。"""
+
+    with pytest.raises(ValidationError):
+        GridPosition.model_validate({"x": value, "y": 1})
 
 
 @pytest.mark.parametrize(

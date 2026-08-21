@@ -34,6 +34,7 @@ from services.model_gateway.exceptions import (
     ModelGenerationError,
     ModelGenerationTimeoutError,
     ModelGatewayStartupError,
+    ModelProfileDisabledError,
     MultipleModelsServedError,
     StructuredOutputError,
 )
@@ -103,6 +104,15 @@ class ModelProvider:
 
     def startup(self) -> ModelVersionRecord:
         """执行启动门禁：模型身份不符合预期时拒绝应用启动。"""
+
+        profile = self.settings.active_profile
+        if not profile.enabled:
+            # 禁用门禁必须早于 /v1/models。这样即使 Smart 服务碰巧仍在运行，
+            # API、CLI 和业务调用也不会向它发送任何网络请求。
+            raise ModelProfileDisabledError(
+                self.settings.profile,
+                profile.disabled_reason,
+            )
 
         # 快路径：已经成功验证过时直接复用证据，不重复探测。
         if self._version_record is not None:
@@ -379,8 +389,9 @@ class ModelProvider:
             "temperature": self.settings.active_profile.temperature,
             "max_tokens": effective_output_tokens,
             "stream": False,
-            # 这是 Provider 内部固定的 llama.cpp 模板参数：Fast 关闭思考，
-            # Smart 开启但限制为 512 Token。调用方不能覆盖这段 extra_body。
+            # 这是 Provider 内部固定的 llama.cpp 模板参数：Fast 关闭思考；
+            # Smart 参数仅为以后重新验收保留，当前会在 startup() 的网络调用前被拒绝。
+            # 即使日后显式启用，调用方也不能覆盖这段 extra_body。
             "extra_body": {
                 "chat_template_kwargs": {
                     "enable_thinking": self.settings.active_profile.reasoning_enabled

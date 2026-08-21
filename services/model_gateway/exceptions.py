@@ -19,6 +19,20 @@ class ModelGatewayStartupError(ModelGatewayError):
     code = "MODEL_GATEWAY_STARTUP_FAILED"
 
 
+class ModelProfileDisabledError(ModelGatewayStartupError):
+    """配置中保留了 Profile，但当前策略明确禁止启动或生成。"""
+
+    code = "MODEL_PROFILE_DISABLED"
+
+    def __init__(self, profile: str, reason: str | None) -> None:
+        self.profile = profile
+        self.reason = reason
+        message = f"model profile {profile!r} is temporarily disabled"
+        if reason:
+            message = f"{message}: {reason}"
+        super().__init__(message)
+
+
 class ModelConnectionError(ModelGatewayStartupError):
     """模型服务不可达或连接超时。"""
 

@@ -1,4 +1,4 @@
-"""P0-06 应用服务公共入口；P0-07 复用其 documents 事务边界。"""
+"""P0-06～P0-14 应用服务公共入口与 PostgreSQL 事务边界。"""
 
 from services.application.contracts import (
     ApprovalView,
@@ -19,6 +19,10 @@ from services.application.exceptions import (
     ResourceNotFoundError,
 )
 from services.application.run_service import RunService
+from services.application.checkpoint_service import (
+    PostgresCheckpointStore,
+    PostgresRuntimeStore,
+)
 
 __all__ = [
     "ApplicationError",
@@ -35,6 +39,8 @@ __all__ = [
     "PlanView",
     "ResourceNotFoundError",
     "RunService",
+    "PostgresCheckpointStore",
+    "PostgresRuntimeStore",
     "RunView",
     "StoredDocument",
 ]

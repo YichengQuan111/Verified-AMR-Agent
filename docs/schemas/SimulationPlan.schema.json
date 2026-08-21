@@ -6,6 +6,7 @@
       "properties": {
         "amr_id": {
           "description": "AMR 的稳定唯一标识",
+          "maxLength": 128,
           "minLength": 1,
           "title": "Amr Id",
           "type": "string"
@@ -302,24 +303,28 @@
       "properties": {
         "order_id": {
           "description": "订单唯一标识",
+          "maxLength": 128,
           "minLength": 1,
           "title": "Order Id",
           "type": "string"
         },
         "material_id": {
           "description": "待运输物料标识",
+          "maxLength": 128,
           "minLength": 1,
           "title": "Material Id",
           "type": "string"
         },
         "pickup": {
           "description": "取货点标识",
+          "maxLength": 128,
           "minLength": 1,
           "title": "Pickup",
           "type": "string"
         },
         "dropoff": {
           "description": "交付点标识",
+          "maxLength": 128,
           "minLength": 1,
           "title": "Dropoff",
           "type": "string"

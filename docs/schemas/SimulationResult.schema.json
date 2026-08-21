@@ -6,6 +6,7 @@
       "properties": {
         "amr_id": {
           "description": "AMR 的稳定唯一标识",
+          "maxLength": 128,
           "minLength": 1,
           "title": "Amr Id",
           "type": "string"
@@ -241,6 +242,7 @@
           "type": "string"
         },
         "run_id": {
+          "maxLength": 64,
           "minLength": 1,
           "title": "Run Id",
           "type": "string"
@@ -248,6 +250,7 @@
         "task_id": {
           "anyOf": [
             {
+              "maxLength": 128,
               "type": "string"
             },
             {

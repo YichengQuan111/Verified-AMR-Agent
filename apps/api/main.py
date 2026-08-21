@@ -10,7 +10,12 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from apps.api.routers import documents_router, evals_router, runs_router
-from services.application import ApplicationError, DocumentService, RunService
+from services.application import (
+    ApplicationError,
+    DocumentService,
+    PostgresRuntimeStore,
+    RunService,
+)
 from services.config import AppSettings, load_settings
 from services.model_gateway.exceptions import ModelGatewayError
 from services.model_gateway.provider import ModelProvider
@@ -44,6 +49,9 @@ def create_app(
 
     run_service = RunService(resolved_session_factory)
     document_service = DocumentService(resolved_session_factory)
+    # P0-14 的运行图通过此共享 Store 注入 Checkpoint/Effect Ledger；这里仅组装
+    # PostgreSQL 边界，不在 API 进程启动时主动创建表或执行工具副作用。
+    checkpoint_store = PostgresRuntimeStore(resolved_session_factory)
 
     @asynccontextmanager
     async def lifespan(application: FastAPI) -> AsyncIterator[None]:
@@ -56,6 +64,7 @@ def create_app(
         application.state.session_factory = resolved_session_factory
         application.state.run_service = run_service
         application.state.document_service = document_service
+        application.state.checkpoint_store = checkpoint_store
         try:
             if resolved_settings.model_gateway.validate_on_startup:
                 # ModelProvider 是同步 SDK；to_thread 避免在等待模型服务时阻塞

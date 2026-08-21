@@ -350,6 +350,26 @@ void test_no_solution() {
   expect(result.routes.front().path.empty(), "infeasible route must not emit an unsafe path");
 }
 
+void test_unassigned_amr_reserves_its_stationary_cell() {
+  auto request = one_route_request(5, 1);
+  request.amrs = {
+      make_amr("A1", GridPosition{0, 0}, 90),
+      make_amr("A2", GridPosition{2, 0}, 90),
+  };
+  request.locations = {
+      Location{"P1", GridPosition{1, 0}},
+      Location{"D1", GridPosition{4, 0}},
+  };
+  request.assignments = {RouteAssignment{"A1", "O1"}};
+
+  const auto result = amr::planner::plan_routes_astar(request);
+
+  expect(result.status == "infeasible",
+         "assigned route must not pass through an unassigned idle AMR");
+  expect(result.routes.front().reason_code == "no_safe_path_to_dropoff",
+         "stationary AMR conflict must surface as deterministic infeasibility");
+}
+
 void test_dijkstra_baseline() {
   const auto request = one_route_request();
   const auto astar = amr::planner::plan_routes_astar(request);
@@ -437,6 +457,7 @@ void run_case(const std::string& name) {
   if (name == "vertex_conflict") return test_vertex_conflict_direct();
   if (name == "swap_edge_conflict") return test_swap_edge_conflict();
   if (name == "no_solution") return test_no_solution();
+  if (name == "idle_amr_reservation") return test_unassigned_amr_reserves_its_stationary_cell();
   if (name == "dijkstra_baseline") return test_dijkstra_baseline();
   if (name == "reproducibility") return test_reproducibility();
   if (name == "performance") return test_performance();
