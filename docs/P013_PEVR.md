@@ -14,11 +14,9 @@ guard → understand → retrieve → plan → validate → execute → verify �
 - Planner 候选生成后立即使用同一个确定性 PEVR Validator 检查；若首个候选不合法，
   只允许一次带明确错误的语义修复调用。第二个候选仍不合法就终止，绝不自动改写 seed、
   环境、订单或工具参数来“修绿”。
-- `validate` 再次使用确定性 `validate_normal_pevr_plan`；只有无错误结果才能进入 Executor。
+- `validate` 首轮使用确定性 `validate_normal_pevr_plan`；重规划后的 v2+ 走 `validate_replanned_pevr_plan`。只有无错误结果才能进入 Executor。
 - `execute` 只通过 P0-12 `ToolRegistry` 调用 Hungarian、A*、P0-10 Validator 和 Python 仿真。
-- `dispatch_simulation` 的 ToolSpec 仍要求审批；旧的 `--approve-dispatch` 只保留给 P0-13
-  离线兼容夹具，生产安全入口必须使用 P0-16 的已验签 operator 和 HITL ApprovalGrant，
-  Planner 不能自行批准。
+- `dispatch_simulation` 的 ToolSpec 仍要求审批；发布 CLI 已删除 `--approve-dispatch`。生产入口必须使用已验签 operator 与 HITL `ApprovalGrant`，Planner 不能自行批准。
 - `verify` 只接受仿真订单全部完成且 Observation 验证为真；中断恢复与局部重规划由 P0-14
   的运行时适配器承接，复杂异常分类和确定终止策略见 P0-15 专题；身份、ACL、HITL
   中断和恢复前审批核验见 [docs/P016_SECURITY.md](P016_SECURITY.md)；自动补偿工具仍不在
@@ -28,24 +26,31 @@ Planner 的 `JsonValue` 在本地 Fast 模型上可能被写成有限的 `{type,
 
 ## 真实 Fast 验收
 
-先启动固定模型：
+先启动固定 Fast（发布入口）：
 
 ```powershell
-& 'E:\Llama.cpp\start-qwen3.6-agent.cmd'
+.\scripts\start_local.ps1 -StartFast
 ```
 
-再运行：
+首次运行必须停在 `waiting_approval`（退出码 3），再用同一 `run_id` 与 `approval_id` 批准恢复：
 
 ```powershell
-& 'E:\Anaconda\envs\torch128\python.exe' scripts\run_p013_e2e.py --approve-dispatch --output tmp\p013_e2e_result.json
+& 'E:\Anaconda\envs\torch128\python.exe' scripts\run_p013_e2e.py `
+  --run-id p020-release-hitl-1-20260821-2028 `
+  --jwt-token-file .\tmp\operator.jwt `
+  --output tmp\p013_e2e_wait.json
+& 'E:\Anaconda\envs\torch128\python.exe' scripts\run_p013_e2e.py `
+  --run-id p020-release-hitl-1-20260821-2028 `
+  --jwt-token-file .\tmp\operator.jwt `
+  --approve-and-resume <approval_id> `
+  --output tmp\p013_e2e_result.json
 ```
 
-2026-08-21 阶段审计修复后，用三个独立 `run_id` 连续实测：
+2026-08-21 收口用三个独立 `run_id` 连续实测 HITL：
 
-- 模型：`qwen3.6-fast`，`http://127.0.0.1:8080/v1`，Fast context window `8192`。
+- 模型：`qwen3.6-fast`，代理 `http://127.0.0.1:8080/v1`，llama-server `18080`，IQ4_NL，ctx `16384`。
 - 输入：`请把 MAT-001 从 P1 运到 S3，并在截止时间前完成。`
-- `p014-fast-online-1-20260821-1037`、`...-2-...1038`、`...-3-...1039` 均为
-  `completed`，阶段顺序均为固定 8/8。
+- `p020-release-hitl-1-20260821-2028`、`...-2-...`、`...-3-...` 均为先 waiting 再 `completed`，阶段顺序均为固定 8/8，Approval=1、Effect=1。
 - 每次工具都是 5/5 成功（RAG 1 次 + Planner DAG 4 次），计划版本 `1`、Validator
   错误数 `0`、仿真 `completed`、`ORDER-001` 完成、结束时间 `120`。
 - 三次均为 4 次模型调用，说明首个计划候选已经合法；若触发唯一一次语义修复，指标会

@@ -13,6 +13,7 @@ import re
 from typing import Any
 
 from .contracts import P019Report, P019Strategy, StrategySummary
+from .independent import run_independent_comparison
 from .replay import run_comparison
 
 
@@ -69,8 +70,8 @@ def report_to_markdown(report: P019Report) -> str:
         "# P0-19：策略对照实验报告",
         "",
         f"- 报告：`{report.report_id}`；状态：**{report.status}**；版本：`{report.report_version}`",
-        f"- 执行模式：`{report.execution_mode.value}`；源报告：`{_md(report.source_report.get('report_id'))}` / `{_md(report.source_report.get('report_digest'))}`",
-        "- 模型：`qwen3.6-fast`（继承 P0-18 Fast 配置与身份指纹；本次 replay 不新增在线模型调用）",
+        f"- 执行模式：`{report.execution_mode.value}`；身份：`{_md(report.source_report.get('report_id'))}` / `{_md(report.source_report.get('report_digest'))}`",
+        f"- 模型：`qwen3.6-fast`（继承 P0-18 Fast 配置与身份指纹；{'独立离线对照' if report.execution_mode.value == 'offline_independent_oracle' else '本次 replay 不新增在线模型调用'}）",
         "",
         "## 公平性门禁",
         "",
@@ -80,7 +81,7 @@ def report_to_markdown(report: P019Report) -> str:
         f"| 同一 Prompt 版本 | `{report.fairness.same_prompts}`；`{_md(report.fairness.prompt_versions)}` |",
         f"| 同一 ToolSpec 版本 | `{report.fairness.same_tools}`；`{_md(report.fairness.tool_spec_versions)}` |",
         f"| 同一 P0-18 配置 | `{report.fairness.same_config}`；SHA-256=`{report.fairness.p018_config_sha256}` |",
-        f"| P0-19 策略配置 | `p0-19.v1`；SHA-256=`{report.fairness.p019_config_sha256}` |",
+        f"| P0-19 策略配置 | `{report.report_version}`；SHA-256=`{report.fairness.p019_config_sha256}` |",
         f"| 同一 Qwen3.6 Fast | `{report.fairness.same_model}`；`qwen3.6-fast` |",
         f"| ReAct 是否触碰生产主链 | `{report.fairness.react_production_path_touched}` |",
         "",
@@ -160,10 +161,21 @@ def write_report(report: P019Report, *, output_dir: str | Path) -> tuple[Path, P
     return json_path, markdown_path, raw_path
 
 
-def run_and_write(*, source_report: str | Path, config: str | Path, output_dir: str | Path) -> tuple[P019Report, tuple[Path, Path, Path]]:
-    """CLI/测试共用的执行与落盘入口。"""
+def run_and_write(
+    *,
+    source_report: str | Path | None = None,
+    config: str | Path,
+    output_dir: str | Path,
+    mode: str = "independent",
+) -> tuple[P019Report, tuple[Path, Path, Path]]:
+    """CLI/测试共用的执行与落盘入口。默认独立对照，replay 必须显式指定。"""
 
-    report = run_comparison(source_report_path=source_report, config_path=config)
+    if mode == "replay":
+        if source_report is None:
+            raise ValueError("Trace Replay 模式必须提供 source_report")
+        report = run_comparison(source_report_path=source_report, config_path=config)
+    else:
+        report = run_independent_comparison(config_path=config)
     return report, write_report(report, output_dir=output_dir)
 
 

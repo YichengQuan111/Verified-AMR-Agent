@@ -54,7 +54,8 @@ TransportOrder make_order(const std::string& id,
                           const std::string& pickup,
                           const std::string& dropoff,
                           int priority = 3,
-                          int release_time = 0) {
+                          int release_time = 0,
+                          int deadline = 200) {
   return TransportOrder{
       id,
       "material-" + id,
@@ -62,7 +63,7 @@ TransportOrder make_order(const std::string& id,
       dropoff,
       priority,
       release_time,
-      200,
+      deadline,
       {},
   };
 }
@@ -436,6 +437,102 @@ void test_performance() {
             << " expanded_states=" << result.total_expanded_states << '\n';
 }
 
+RouteRequest release_window_request() {
+  // 审计复现：10×3 空地图，朝东从 (0,1) 到 pickup (5,1)、dropoff (6,1)。
+  // pickup 不得早于 release_time=5，但 AMR 必须允许在 t=0..5 预定位。
+  RouteRequest request;
+  request.environment_ref = "release-window";
+  request.map.width = 10;
+  request.map.height = 3;
+  request.start_time = 0;
+  request.max_time = 7;
+  request.amrs = {make_amr("A1", GridPosition{0, 1}, 90)};
+  request.orders = {make_order("O1", "P1", "D1", 3, 5, 7)};
+  request.locations = {
+      Location{"P1", GridPosition{5, 1}},
+      Location{"D1", GridPosition{6, 1}},
+  };
+  request.assignments = {RouteAssignment{"A1", "O1"}};
+  return request;
+}
+
+void expect_release_preposition(const RoutePlanResult& result, const char* algorithm) {
+  expect(result.status == "complete" && result.routes.size() == 1U,
+         std::string(algorithm) + " should plan the late-release window");
+  const PlannedRoute& route = result.routes.front();
+  expect(route.status == "planned", std::string(algorithm) + " route must be planned");
+  expect(route.pickup_time == 5,
+         std::string(algorithm) + " pickup must occur at release_time=5");
+  expect(route.dropoff_time == 6 && route.dropoff_time <= 7,
+         std::string(algorithm) + " dropoff must finish before deadline=7");
+  expect(position_at(route, 5).x == 5 && position_at(route, 5).y == 1,
+         std::string(algorithm) + " must be at pickup at t=5");
+  expect(position_at(route, 4).x >= 4,
+         std::string(algorithm) + " must pre-position before release_time instead of waiting in place");
+}
+
+void test_release_time_preposition() {
+  const auto request = release_window_request();
+  expect_release_preposition(amr::planner::plan_routes_astar(request), "astar");
+  expect_release_preposition(amr::planner::plan_routes_dijkstra(request), "dijkstra");
+}
+
+void test_release_time_early_wait() {
+  RouteRequest request = release_window_request();
+  request.amrs = {make_amr("A1", GridPosition{5, 1}, 90)};
+  request.max_time = 8;
+  request.orders = {make_order("O1", "P1", "D1", 3, 5, 8)};
+  // 默认 turn_cost=0.25 < wait_cost=1，提前到达会原地转向凑时间；本例验证的是
+  // release 前在 pickup 格等待，因此把等待代价压到低于转向。
+  request.costs.wait_cost = 0.25;
+  request.costs.turn_cost = 1.0;
+  const auto astar = amr::planner::plan_routes_astar(request);
+  const auto dijkstra = amr::planner::plan_routes_dijkstra(request);
+  expect(astar.status == "complete" && dijkstra.status == "complete",
+         "already-at-pickup should wait until release_time");
+  expect(astar.routes.front().pickup_time == 5 && dijkstra.routes.front().pickup_time == 5,
+         "early arrival must wait at pickup until t=5");
+  expect(has_action(astar.routes.front(), RouteAction::kWait),
+         "early arrival A* path must contain wait");
+}
+
+void test_release_time_reservation_conflict() {
+  RouteRequest request = release_window_request();
+  request.amrs.push_back(make_amr("A2", GridPosition{3, 1}, 90));
+  // 未分配 A2 会预约 (3,1) 至时域结束，A1 必须绕行；审计原 max_time=7 不够绕行
+  // 后再 dropoff，会把“可行绕行”误判成无解。
+  request.max_time = 20;
+  request.orders = {make_order("O1", "P1", "D1", 3, 5, 20)};
+  const auto result = amr::planner::plan_routes_astar(request);
+  expect(result.status == "complete", "idle AMR on corridor must not make the order infeasible");
+  expect(result.routes.front().pickup_time >= 5,
+         "conflicting reservation may delay pickup but still honor release_time");
+  assert_path_safe(request, result.routes.front());
+}
+
+void test_release_time_infeasible_window() {
+  RouteRequest tight = release_window_request();
+  // deadline 必须严格大于 release_time，否则 normalize 直接抛 invalid_order。
+  // max_time=5 使 pickup 最早发生在 t=5 后无法再走一步到达 dropoff。
+  tight.orders = {make_order("O1", "P1", "D1", 3, 5, 6)};
+  tight.max_time = 5;
+  const auto tight_result = amr::planner::plan_routes_astar(tight);
+  expect(tight_result.status == "infeasible" ||
+             (tight_result.status == "complete" &&
+              tight_result.routes.front().status == "infeasible"),
+         "pickup at release_time with no remaining horizon must be infeasible");
+
+  RouteRequest blocked = release_window_request();
+  blocked.map.blocked_cells = {
+      GridPosition{1, 1}, GridPosition{1, 0}, GridPosition{1, 2},
+  };
+  const auto blocked_result = amr::planner::plan_routes_astar(blocked);
+  expect(blocked_result.status == "infeasible" ||
+             (blocked_result.status == "complete" &&
+              blocked_result.routes.front().status == "infeasible"),
+         "walled-off pickup must remain infeasible");
+}
+
 void test_json_contract() {
   bool rejected = false;
   try {
@@ -462,6 +559,10 @@ void run_case(const std::string& name) {
   if (name == "reproducibility") return test_reproducibility();
   if (name == "performance") return test_performance();
   if (name == "json_contract") return test_json_contract();
+  if (name == "release_time_preposition") return test_release_time_preposition();
+  if (name == "release_time_early_wait") return test_release_time_early_wait();
+  if (name == "release_time_reservation_conflict") return test_release_time_reservation_conflict();
+  if (name == "release_time_infeasible_window") return test_release_time_infeasible_window();
   throw TestFailure("unknown test case: " + name);
 }
 

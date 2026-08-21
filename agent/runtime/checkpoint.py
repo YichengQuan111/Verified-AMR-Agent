@@ -59,6 +59,26 @@ def make_effect_idempotency_key(run_id: str, plan_version: int, task_id: str) ->
     return f"p014:{canonical_json_digest([run_id, plan_version, task_id])}"
 
 
+def make_external_execution_id(idempotency_key: str, input_digest: str) -> str:
+    """为副作用生成全局唯一、可恢复的外部执行 ID。
+
+    ``idempotency_key`` 已经封装 ``run_id + plan_version + task_id``，再绑定规范化
+    输入摘要后，同一业务副作用在重试时保持稳定，不同运行即使计划和 seed 完全
+    相同也不会共享仿真 ID。外部系统只看到定长摘要，不会泄漏运行名称或任务名。
+    """
+
+    if not isinstance(idempotency_key, str) or not idempotency_key.strip():
+        raise ValueError("idempotency_key 必须是非空字符串")
+    if (
+        not isinstance(input_digest, str)
+        or len(input_digest) != 64
+        or any(character not in "0123456789abcdef" for character in input_digest)
+    ):
+        raise ValueError("input_digest 必须是小写 SHA-256")
+    digest = canonical_json_digest([idempotency_key, input_digest])
+    return f"simulation-{digest[:32]}"
+
+
 def canonical_json_digest(value: Any) -> str:
     """为恢复比对计算稳定 JSON SHA-256；不接受 NaN 或不可序列化对象。"""
 
@@ -608,6 +628,7 @@ __all__ = [
     "RecoveryDecision",
     "RuntimePersistenceProtocol",
     "canonical_json_digest",
+    "make_external_execution_id",
     "make_effect_idempotency_key",
     "to_jsonable",
 ]

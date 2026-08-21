@@ -33,7 +33,7 @@ def load_config(path: str | Path = DEFAULT_CONFIG_PATH) -> dict[str, object]:
     payload = json.loads(config_path.read_text(encoding="utf-8"))
     if not isinstance(payload, dict):
         raise ValueError("P0-18 config.json 顶层必须是对象")
-    if payload.get("version") != "p0-18.v1":
+    if payload.get("version") not in {"p0-18.v1", "p0-18.v2"}:
         raise ValueError("P0-18 评测配置版本不匹配")
     if payload.get("execution_mode") != "offline_deterministic_oracle":
         raise ValueError("P0-18 默认只允许确定性离线 oracle 模式")

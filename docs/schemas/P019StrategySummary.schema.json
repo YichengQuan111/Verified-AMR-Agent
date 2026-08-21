@@ -40,8 +40,11 @@
           "type": "number"
         },
         "source": {
-          "const": "p018_trace",
           "default": "p018_trace",
+          "enum": [
+            "p018_trace",
+            "p018_independent_oracle"
+          ],
           "title": "Source",
           "type": "string"
         },

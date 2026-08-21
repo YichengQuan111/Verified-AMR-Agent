@@ -1,7 +1,7 @@
 """P0-19 实验配置和 P0-18 源报告加载。
 
 配置只允许引用仓库内的 P0-18 固定输入，不能让对照实验通过参数替换任务集、
-工具或模型。源报告缺失/损坏时 fail closed；命令行应先运行 P0-18 生成它。
+工具或模型。独立执行是默认发布验收；同源 replay 仍可显式加载，但不能冒充独立对照。
 """
 
 from __future__ import annotations
@@ -14,6 +14,8 @@ from typing import Mapping
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_CONFIG_PATH = Path(__file__).with_name("config.json")
 DEFAULT_SOURCE_REPORT_PATH = PROJECT_ROOT / "tmp" / "p018_eval_final" / "p018_eval.json"
+ALLOWED_EXECUTION_MODES = {"offline_independent_oracle", "offline_trace_replay"}
+ALLOWED_VERSIONS = {"p0-19.v1", "p0-19.v2"}
 
 
 def _rooted(relative: str) -> Path:
@@ -34,10 +36,10 @@ def load_config(path: str | Path = DEFAULT_CONFIG_PATH) -> dict[str, object]:
     payload = json.loads(config_path.read_text(encoding="utf-8"))
     if not isinstance(payload, dict):
         raise ValueError("P0-19 config.json 顶层必须是对象")
-    if payload.get("version") != "p0-19.v1":
-        raise ValueError("P0-19 配置版本不匹配")
-    if payload.get("execution_mode") != "offline_trace_replay":
-        raise ValueError("P0-19 当前只允许 offline_trace_replay")
+    if payload.get("version") not in ALLOWED_VERSIONS:
+        raise ValueError("P0-19 评测配置版本不匹配")
+    if payload.get("execution_mode") not in ALLOWED_EXECUTION_MODES:
+        raise ValueError("P0-19 只允许独立 oracle 或显式 Trace Replay")
     strategies = payload.get("strategies")
     strategy_ids = [item.get("id") if isinstance(item, Mapping) else None for item in strategies] if isinstance(strategies, list) else None
     if strategy_ids != ["fixed_workflow", "react", "pevr"]:
@@ -63,6 +65,7 @@ def rooted_path(relative: str) -> Path:
 
 
 __all__ = [
+    "ALLOWED_EXECUTION_MODES",
     "DEFAULT_CONFIG_PATH",
     "DEFAULT_SOURCE_REPORT_PATH",
     "PROJECT_ROOT",

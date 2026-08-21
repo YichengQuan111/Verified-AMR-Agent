@@ -1,4 +1,36 @@
-[
+{
+  "version": "p0-07.split.v1",
+  "purpose": "evaluation_only",
+  "is_training_data": false,
+  "splits": {
+    "calibration": [
+      "rag-001-standard-flow",
+      "rag-002-one-order-per-cycle",
+      "rag-003-completion-evidence",
+      "rag-004-state-owner-paraphrase",
+      "rag-006-battery-25",
+      "rag-007-battery-full",
+      "rag-019-wifi-password",
+      "rag-020-fire-extinguisher"
+    ],
+    "test": [
+      "rag-005-amr-state-fields",
+      "rag-008-loaded-at-18-percent",
+      "rag-009-vertex-conflict",
+      "rag-010-swap-conflict",
+      "rag-011-blocked-path",
+      "rag-012-priority-cannot-bypass",
+      "rag-013-timeout-effect-ledger",
+      "rag-014-replan-limit"
+    ],
+    "attack": [
+      "rag-015-approval-timeout",
+      "rag-016-old-plan-approval",
+      "rag-017-viewer-timeout-summary",
+      "rag-018-viewer-approval-policy"
+    ]
+  },
+  "cases": [
   {
     "case_id": "rag-001-standard-flow",
     "category": "explicit_fact",
@@ -236,4 +268,5 @@
     "expected_citations": [],
     "forbidden_doc_ids": []
   }
-]
+  ]
+}

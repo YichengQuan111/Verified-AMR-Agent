@@ -51,6 +51,11 @@ class WarehouseKnowledgeIndexer:
         )
         self.vector_store = vector_store or QdrantVectorStore(
             url=settings.qdrant_url,
+            api_key=(
+                settings.qdrant_api_key.get_secret_value()
+                if settings.qdrant_api_key is not None
+                else None
+            ),
             collection_name=settings.collection_name,
         )
 
@@ -176,6 +181,11 @@ def build_hybrid_retriever(
     )
     active_store = vector_store or QdrantVectorStore(
         url=settings.qdrant_url,
+        api_key=(
+            settings.qdrant_api_key.get_secret_value()
+            if settings.qdrant_api_key is not None
+            else None
+        ),
         collection_name=settings.collection_name,
     )
     return HybridRetriever(

@@ -213,6 +213,29 @@ class RunState(RuntimeContract):
         if failed != task_failed:
             raise ValueError("failed_task_ids 与 PlanTask.status 不一致")
 
+        # Checkpoint 会把 completed 节点当作不可重做的恢复锚点，因此必须先证明
+        # 其依赖闭包真实完成。逐任务检查直接依赖即可递归覆盖传递依赖；若 A 未
+        # 完成，任何依赖链上的首个 completed 后继都会在这里被拒绝。
+        for task_id in completed:
+            missing = sorted(set(task_by_id[task_id].dependencies) - completed)
+            if missing:
+                raise ValueError(
+                    f"已完成任务 {task_id} 的依赖尚未完成: {', '.join(missing)}"
+                )
+        active_task_ids = {
+            task.task_id
+            for task in self.plan_tasks
+            if task.status is PlanTaskStatus.RUNNING
+        }
+        if self.current_task_id is not None:
+            active_task_ids.add(self.current_task_id)
+        for task_id in active_task_ids:
+            missing = sorted(set(task_by_id[task_id].dependencies) - completed)
+            if missing:
+                raise ValueError(
+                    f"运行中任务 {task_id} 的依赖尚未完成: {', '.join(missing)}"
+                )
+
         for task in self.plan_tasks:
             if task.target_amr is not None and task.target_amr not in amr_by_id:
                 raise ValueError(f"任务 {task.task_id} 引用了未知 AMR: {task.target_amr}")

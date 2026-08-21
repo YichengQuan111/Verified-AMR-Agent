@@ -32,10 +32,8 @@ Prompt、九个 ToolSpec、配置版本和 Git 指纹，并输出全部逐例 Tr
 
 ## P0-19 策略对照实验
 
-P0-19 复用 P0-18 的 60 例、真实逐例 Trace、Prompt/ToolSpec/配置指纹和
-`qwen3.6-fast` 身份，对固定 Workflow、ReAct、PEVR 做同源 `offline_trace_replay`。
-ReAct 只作测评投影，不接入生产主链；Token/资源没有源样本时报告为未观测。Smart
-`qwen3.8-smart` 当前因速度问题延期，未启动、未测试，不阻塞 P0-19。
+P0-19 默认对固定 Workflow、ReAct、PEVR 做 `offline_independent_oracle` 独立执行；
+同源 `offline_trace_replay` 仅可视化。ReAct 不接入生产主链；Token/资源未观测。Smart 延期。
 
 ```powershell
 .\scripts\run_p019_compare.ps1

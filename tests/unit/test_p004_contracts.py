@@ -472,6 +472,38 @@ def test_run_state_rejects_status_list_mismatch() -> None:
         RunState.model_validate(payload)
 
 
+def test_run_state_rejects_completed_task_with_incomplete_dependency_chain() -> None:
+    """完成锚点不能跨过直接或传递依赖，否则恢复会错误跳步。"""
+
+    payload = run_state_payload(
+        plan_tasks=[
+            plan_task_payload("TASK-A"),
+            plan_task_payload("TASK-B", dependencies=["TASK-A"]),
+            plan_task_payload("TASK-C", dependencies=["TASK-B"], status="completed"),
+        ]
+    )
+    payload["completed_task_ids"] = ["TASK-C"]
+
+    with pytest.raises(ValidationError, match="依赖尚未完成"):
+        RunState.model_validate(payload)
+
+
+def test_run_state_rejects_running_task_with_incomplete_dependency() -> None:
+    """running/current_task 只有在全部前置任务完成后才是可恢复状态。"""
+
+    payload = run_state_payload(
+        plan_tasks=[
+            plan_task_payload("TASK-A"),
+            plan_task_payload("TASK-B", dependencies=["TASK-A"], status="running"),
+        ]
+    )
+    payload["status"] = "executing"
+    payload["current_task_id"] = "TASK-B"
+
+    with pytest.raises(ValidationError, match="运行中任务.*依赖尚未完成"):
+        RunState.model_validate(payload)
+
+
 def test_run_state_enforces_replan_budget() -> None:
     payload = run_state_payload()
     payload["replan_count"] = 3

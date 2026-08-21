@@ -1,4 +1,9 @@
-"""运行 20 例 P0-07 RAG 评测并计算排序、引用、ACL 与拒答指标。"""
+"""运行 20 例 P0-07 RAG 评测并计算排序、引用、ACL 与拒答指标。
+
+阈值只允许从 calibration 子集建议；对外发布的 Recall/MRR/citation/answerability/ACL
+只在未参与调参的 test+attack 上计算。CLI 在任一发布指标失败或 citation_total=0 时
+必须非零退出，不能只按 ACL 假绿。
+"""
 
 from __future__ import annotations
 
@@ -37,6 +42,13 @@ DEFAULT_CASES = Path(__file__).with_name("cases.json")
 DEFAULT_KNOWLEDGE_ROOT = (
     PROJECT_ROOT / "domains" / "amr_warehouse" / "knowledge"
 )
+DEFAULT_METRIC_GATES = {
+    "recall_at_k": 0.8,
+    "mrr": 0.8,
+    "citation_correctness": 0.9,
+    "answerability_accuracy": 0.8,
+}
+REQUIRED_SPLITS = ("calibration", "test", "attack")
 
 
 class EvalContract(BaseModel):
@@ -83,12 +95,11 @@ class RAGEvalCase(EvalContract):
         return self
 
 
-def _load_cases(path: Path) -> list[RAGEvalCase]:
-    """读取固定 JSON，并保证至少 20 条且 case_id 唯一。"""
+def _parse_cases(payload: Any) -> list[RAGEvalCase]:
+    """把 JSON 数组校验成评测用例。"""
 
-    payload = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(payload, list):
-        raise ValueError("RAG eval 文件顶层必须是数组")
+        raise ValueError("RAG eval cases 必须是数组")
     cases = [RAGEvalCase.model_validate(item) for item in payload]
     if len(cases) < 20:
         raise ValueError(f"RAG eval 至少需要 20 例，当前 {len(cases)}")
@@ -96,6 +107,57 @@ def _load_cases(path: Path) -> list[RAGEvalCase]:
     if len(case_ids) != len(set(case_ids)):
         raise ValueError("RAG eval case_id 不能重复")
     return cases
+
+
+def _load_cases(path: Path) -> list[RAGEvalCase]:
+    """读取固定 JSON；兼容历史顶层数组和带 split 的对象。"""
+
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if isinstance(payload, list):
+        return _parse_cases(payload)
+    if not isinstance(payload, dict):
+        raise ValueError("RAG eval 文件顶层必须是数组或带 splits 的对象")
+    return _parse_cases(payload.get("cases"))
+
+
+def load_eval_bundle(path: Path) -> tuple[list[RAGEvalCase], dict[str, list[str]]]:
+    """加载评测包，并强制 calibration/test/attack 互斥且覆盖全部 case。"""
+
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if isinstance(payload, list):
+        cases = _parse_cases(payload)
+        splits = {"calibration": [], "test": [case.case_id for case in cases], "attack": []}
+        return cases, splits
+    if not isinstance(payload, dict):
+        raise ValueError("RAG eval 文件顶层必须是数组或对象")
+    if payload.get("purpose") != "evaluation_only" or payload.get("is_training_data") is not False:
+        raise ValueError("RAG eval 必须声明 evaluation_only 且 is_training_data=false")
+    cases = _parse_cases(payload.get("cases"))
+    raw_splits = payload.get("splits")
+    if not isinstance(raw_splits, dict):
+        raise ValueError("RAG eval 对象必须提供 splits")
+    splits: dict[str, list[str]] = {}
+    seen: list[str] = []
+    known = {case.case_id for case in cases}
+    for name in REQUIRED_SPLITS:
+        ids = raw_splits.get(name)
+        if not isinstance(ids, list) or not ids:
+            raise ValueError(f"RAG eval splits.{name} 必须是非空数组")
+        values = [str(item) for item in ids]
+        if len(values) != len(set(values)):
+            raise ValueError(f"RAG eval splits.{name} 不能重复")
+        unknown = sorted(set(values) - known)
+        if unknown:
+            raise ValueError(f"RAG eval splits.{name} 引用了未知 case: {', '.join(unknown)}")
+        overlap = sorted(set(values) & set(seen))
+        if overlap:
+            raise ValueError(f"RAG eval split 不能交叉: {', '.join(overlap)}")
+        splits[name] = values
+        seen.extend(values)
+    missing = sorted(known - set(seen))
+    if missing:
+        raise ValueError(f"RAG eval 仍有未划分 case: {', '.join(missing)}")
+    return cases, splits
 
 
 def _score_distribution(values: list[float]) -> dict[str, Any]:
@@ -112,14 +174,41 @@ def _score_distribution(values: list[float]) -> dict[str, Any]:
     }
 
 
+def evaluate_metric_gates(
+    report: dict[str, Any],
+    *,
+    gates: dict[str, float] | None = None,
+) -> list[str]:
+    """发布门禁：ACL、citation 分母和 Recall/MRR/引用/拒答都必须达标。"""
+
+    metrics = report.get("metrics")
+    if not isinstance(metrics, dict):
+        return ["metrics_missing"]
+    failures: list[str] = []
+    if int(metrics.get("acl_leak_count") or 0) != 0:
+        failures.append("acl_leak_count")
+    if int(metrics.get("citation_total") or 0) <= 0:
+        failures.append("citation_total")
+    selected = gates or DEFAULT_METRIC_GATES
+    for name, minimum in selected.items():
+        observed = float(metrics.get(name) or 0.0)
+        if observed < float(minimum):
+            failures.append(name)
+    return failures
+
+
 def run_evaluation(
     *,
     cases: list[RAGEvalCase],
     retriever: HybridRetriever,
     chunks_by_id: dict[str, Any],
+    metric_case_ids: set[str] | None = None,
+    calibration_case_ids: set[str] | None = None,
 ) -> dict[str, Any]:
-    """执行全部查询并聚合 Recall@K、MRR、引用正确率和 ACL leak。"""
+    """执行全部查询；发布指标与阈值建议使用互斥集合。"""
 
+    published_ids = metric_case_ids or {case.case_id for case in cases}
+    calibration_ids = calibration_case_ids or set()
     recall_values: list[float] = []
     reciprocal_ranks: list[float] = []
     section_recall_values: list[float] = []
@@ -133,6 +222,7 @@ def run_evaluation(
     citation_correct = 0
     acl_leaks: list[dict[str, str]] = []
     answerability_correct = 0
+    published_count = 0
     case_reports: list[dict[str, Any]] = []
 
     for case in cases:
@@ -148,21 +238,26 @@ def run_evaluation(
             candidates=candidates,
         )
         predicted_answerable = response.status is RetrievalStatus.ANSWERABLE
-        answerability_correct += int(predicted_answerable == case.answerable)
         top_score = candidates[0].hybrid_score if candidates else 0.0
         top_vector_score = candidates[0].vector_score if candidates else -1.0
-        (answerable_scores if case.answerable else unanswerable_scores).append(top_score)
-        (
-            answerable_vector_scores
-            if case.answerable
-            else unanswerable_vector_scores
-        ).append(top_vector_score)
-        if top_score < retriever.minimum_hybrid_score:
+        publish = case.case_id in published_ids
+        calibrate = case.case_id in calibration_ids
+        if publish:
+            published_count += 1
+            answerability_correct += int(predicted_answerable == case.answerable)
+        if calibrate:
+            (answerable_scores if case.answerable else unanswerable_scores).append(top_score)
             (
-                fallback_answerable_vectors
+                answerable_vector_scores
                 if case.answerable
-                else fallback_unanswerable_vectors
+                else unanswerable_vector_scores
             ).append(top_vector_score)
+            if top_score < retriever.minimum_hybrid_score:
+                (
+                    fallback_answerable_vectors
+                    if case.answerable
+                    else fallback_unanswerable_vectors
+                ).append(top_vector_score)
 
         expected_docs = {item.doc_id for item in case.expected_citations}
         expected_sections = {
@@ -170,7 +265,7 @@ def run_evaluation(
         }
         retrieved_docs = [item.doc_id for item in candidates]
         retrieved_sections = [(item.doc_id, item.section) for item in candidates]
-        if case.answerable:
+        if publish and case.answerable:
             recall_values.append(
                 len(expected_docs & set(retrieved_docs)) / len(expected_docs)
             )
@@ -188,45 +283,51 @@ def run_evaluation(
                 / len(expected_sections)
             )
 
-        for result in response.results:
-            citation_total += 1
-            source_chunk = chunks_by_id.get(result.chunk_id)
-            expected_citation = (
-                f"{result.doc_id}@{result.version} § {result.section} "
-                f"[{result.chunk_id}]"
-            )
-            if (
-                source_chunk is not None
-                and source_chunk.doc_id == result.doc_id
-                and source_chunk.section == result.section
-                and source_chunk.version == result.version
-                and source_chunk.checksum == result.checksum
-                and source_chunk.text == result.text
-                and result.citation == expected_citation
-            ):
-                citation_correct += 1
-
-        # ACL 对阈值前所有候选审计；弱候选也不能包含 operator-only payload。
-        for result in candidates:
-            reasons: list[str] = []
-            if case.role_scope not in result.role_scope:
-                reasons.append("role_scope_mismatch")
-            if result.doc_id in case.forbidden_doc_ids:
-                reasons.append("forbidden_doc_id")
-            for reason in reasons:
-                acl_leaks.append(
-                    {
-                        "case_id": case.case_id,
-                        "chunk_id": result.chunk_id,
-                        "doc_id": result.doc_id,
-                        "reason": reason,
-                    }
+        if publish:
+            for result in response.results:
+                citation_total += 1
+                source_chunk = chunks_by_id.get(result.chunk_id)
+                expected_citation = (
+                    f"{result.doc_id}@{result.version} § {result.section} "
+                    f"[{result.chunk_id}]"
                 )
+                if (
+                    source_chunk is not None
+                    and source_chunk.doc_id == result.doc_id
+                    and source_chunk.section == result.section
+                    and source_chunk.version == result.version
+                    and source_chunk.checksum == result.checksum
+                    and source_chunk.text == result.text
+                    and result.citation == expected_citation
+                ):
+                    citation_correct += 1
+            for result in candidates:
+                reasons: list[str] = []
+                if case.role_scope not in result.role_scope:
+                    reasons.append("role_scope_mismatch")
+                if result.doc_id in case.forbidden_doc_ids:
+                    reasons.append("forbidden_doc_id")
+                for reason in reasons:
+                    acl_leaks.append(
+                        {
+                            "case_id": case.case_id,
+                            "chunk_id": result.chunk_id,
+                            "doc_id": result.doc_id,
+                            "reason": reason,
+                        }
+                    )
 
+        split_name = next(
+            (name for name, ids in (("calibration", calibration_ids), ("holdout", published_ids)) if case.case_id in ids),
+            "unassigned",
+        )
         case_reports.append(
             {
                 "case_id": case.case_id,
                 "category": case.category,
+                "split": split_name,
+                "used_for_published_metrics": publish,
+                "used_for_threshold_calibration": calibrate,
                 "role_scope": case.role_scope.value,
                 "expected_answerable": case.answerable,
                 "status": response.status.value,
@@ -267,19 +368,25 @@ def run_evaluation(
 
     return {
         "case_count": len(cases),
+        "published_case_count": published_count,
         "metrics": {
-            "recall_at_k": statistics.fmean(recall_values),
-            "mrr": statistics.fmean(reciprocal_ranks),
-            "section_recall_at_k": statistics.fmean(section_recall_values),
+            "recall_at_k": statistics.fmean(recall_values) if recall_values else 0.0,
+            "mrr": statistics.fmean(reciprocal_ranks) if reciprocal_ranks else 0.0,
+            "section_recall_at_k": (
+                statistics.fmean(section_recall_values) if section_recall_values else 0.0
+            ),
             "citation_correctness": (
                 citation_correct / citation_total if citation_total else 0.0
             ),
             "citation_correct": citation_correct,
             "citation_total": citation_total,
             "acl_leak_count": len(acl_leaks),
-            "answerability_accuracy": answerability_correct / len(cases),
+            "answerability_accuracy": (
+                answerability_correct / published_count if published_count else 0.0
+            ),
         },
         "threshold": {
+            "source": "calibration_only",
             "configured": retriever.minimum_hybrid_score,
             "suggested_if_separable": suggested_threshold,
             "answerable_top_scores": _score_distribution(answerable_scores),
@@ -314,6 +421,10 @@ def main() -> int:
     parser.add_argument("--rebuild-index", action="store_true")
     parser.add_argument("--minimum-hybrid-score", type=float, default=None)
     parser.add_argument("--minimum-vector-score", type=float, default=None)
+    parser.add_argument("--min-recall", type=float, default=DEFAULT_METRIC_GATES["recall_at_k"])
+    parser.add_argument("--min-mrr", type=float, default=DEFAULT_METRIC_GATES["mrr"])
+    parser.add_argument("--min-citation", type=float, default=DEFAULT_METRIC_GATES["citation_correctness"])
+    parser.add_argument("--min-answerability", type=float, default=DEFAULT_METRIC_GATES["answerability_accuracy"])
     parser.add_argument("--output", type=Path, default=None)
     args = parser.parse_args()
 
@@ -322,7 +433,9 @@ def main() -> int:
         settings.retrieval.minimum_hybrid_score = args.minimum_hybrid_score
     if args.minimum_vector_score is not None:
         settings.retrieval.minimum_vector_score = args.minimum_vector_score
-    cases = _load_cases(args.cases)
+    cases, splits = load_eval_bundle(args.cases)
+    published_ids = set(splits["test"]) | set(splits["attack"])
+    calibration_ids = set(splits["calibration"])
     embedder = Embedder(
         settings.retrieval.embedding_model_path,
         device=settings.retrieval.embedding_device,
@@ -331,6 +444,11 @@ def main() -> int:
     vector_store = QdrantVectorStore(
         url=settings.retrieval.qdrant_url,
         collection_name=settings.retrieval.collection_name,
+        api_key=(
+            settings.retrieval.qdrant_api_key.get_secret_value()
+            if settings.retrieval.qdrant_api_key is not None
+            else None
+        ),
     )
 
     runtime = None
@@ -360,7 +478,10 @@ def main() -> int:
             cases=cases,
             retriever=retriever,
             chunks_by_id={chunk.chunk_id: chunk for chunk in chunks},
+            metric_case_ids=published_ids,
+            calibration_case_ids=calibration_ids,
         )
+        report["splits"] = splits
         report["runtime"] = {
             "collection_name": settings.retrieval.collection_name,
             "collection_point_count": vector_store.count(),
@@ -372,12 +493,24 @@ def main() -> int:
                 else index_report.model_dump(mode="json")
             ),
         }
+        gates = {
+            "recall_at_k": args.min_recall,
+            "mrr": args.min_mrr,
+            "citation_correctness": args.min_citation,
+            "answerability_accuracy": args.min_answerability,
+        }
+        gate_failures = evaluate_metric_gates(report, gates=gates)
+        report["metric_gates"] = {
+            "passed": not gate_failures,
+            "failures": gate_failures,
+            "thresholds": gates,
+        }
         rendered = json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True)
         if args.output is not None:
             args.output.parent.mkdir(parents=True, exist_ok=True)
             args.output.write_text(rendered + "\n", encoding="utf-8", newline="\n")
         print(rendered)
-        return 0 if report["metrics"]["acl_leak_count"] == 0 else 2
+        return 0 if not gate_failures else 2
     finally:
         if runtime is not None:
             runtime.dispose()

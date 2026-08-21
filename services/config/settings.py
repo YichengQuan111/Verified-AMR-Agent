@@ -6,10 +6,12 @@
 2. ``config/default.toml``；
 3. ``config/<environment>.toml``；
 4. 调用方显式指定的 TOML 文件；
-5. 环境变量。
+5. 项目根目录 ``.env`` 中的白名单键（仅当调用方没有传入 ``environ`` 覆盖时）；
+6. 进程环境变量。
 
 后加载的配置只覆盖自己提供的字段，而不是把整棵配置树替换掉。
 密码、API Key、数据库 DSN 使用 ``SecretStr``，避免在日志或调试输出中泄漏明文。
+``.env`` 只解析 ``_apply_environment`` 已声明的键，空值忽略，且不会把明文写进日志。
 """
 
 from __future__ import annotations
@@ -74,6 +76,10 @@ class ModelProfileSettings(StrictSettingsModel):
     alias: str = Field(min_length=1)
     context_window: int = Field(gt=0)
     temperature: float = Field(default=0.0, ge=0.0, le=2.0)
+    top_p: float = Field(default=0.95, gt=0.0, le=1.0)
+    top_k: int = Field(default=20, ge=0)
+    parallel_slots: int = Field(default=1, ge=1)
+    quantization: str = Field(default="unknown", min_length=1)
     reasoning_enabled: bool = False
     reasoning_budget_tokens: int = Field(default=0, ge=0)
     # Profile 可以保留 alias/量化等审计信息但禁止实际调用。是否启用不接受环境
@@ -96,8 +102,12 @@ def _default_profiles() -> dict[str, ModelProfileSettings]:
     return {
         "fast": ModelProfileSettings(
             alias="qwen3.6-fast",
-            context_window=8192,
-            temperature=0.0,
+            context_window=16384,
+            temperature=0.1,
+            top_p=0.95,
+            top_k=20,
+            parallel_slots=1,
+            quantization="IQ4_NL",
             reasoning_enabled=False,
             reasoning_budget_tokens=0,
         ),
@@ -120,6 +130,14 @@ class ModelGatewaySettings(StrictSettingsModel):
     profile: str = "fast"
     base_url: str = "http://127.0.0.1:8080/v1"
     api_key: SecretStr = SecretStr("dummy")
+    # 发布入口必须校验仓库内 manifest 与宿主真实文件；直接构造 Settings 的纯
+    # 单元测试默认关闭，避免每个 Fake Provider 都重复哈希 19GB GGUF。
+    artifact_manifest_path: str = "config/fast_model_manifest.json"
+    artifact_verification_required: bool = False
+    # 路径覆盖只改变当前机器的文件定位，不改变 manifest 中的大小/hash 身份。
+    # 这样第二台机器不必复刻 E: 盘布局，仍会验证完全相同的字节制品。
+    artifact_model_path_override: str | None = None
+    artifact_runtime_path_override: str | None = None
     # LLM_MODEL 环境变量写入这里。它只能用于重复确认 alias，不能改写 Profile。
     expected_alias_override: str | None = None
     connect_timeout_seconds: float = Field(default=3.0, gt=0)
@@ -190,6 +208,11 @@ class SecuritySettings(StrictSettingsModel):
     jwt_secret: SecretStr = SecretStr(
         "p016-development-only-change-this-jwt-secret-2026"
     )
+    # 审批票据与登录 JWT 使用独立密钥域；轮换 JWT 时不会使已签发、仍在期限内
+    # 的 ApprovalGrant 无法恢复，也避免一个泄漏同时破坏两道安全边界。
+    hitl_signing_secret: SecretStr = SecretStr(
+        "p016-development-only-change-this-hitl-secret-2026"
+    )
     issuer: str = Field(default="amr-agent", min_length=1, max_length=128)
     audience: str = Field(default="amr-agent-api", min_length=1, max_length=128)
     leeway_seconds: int = Field(default=0, ge=0, le=300)
@@ -203,6 +226,15 @@ class SecuritySettings(StrictSettingsModel):
             raise ValueError("security.jwt_secret 至少需要 32 个字符")
         return value
 
+    @field_validator("hitl_signing_secret")
+    @classmethod
+    def validate_hitl_signing_secret(cls, value: SecretStr) -> SecretStr:
+        """审批 HMAC 密钥使用与 JWT 相同的最低熵长度门禁。"""
+
+        if len(value.get_secret_value()) < 32:
+            raise ValueError("security.hitl_signing_secret 至少需要 32 个字符")
+        return value
+
 
 class RetrievalSettings(StrictSettingsModel):
     """P0-07 仓储知识检索的可复现配置。
@@ -212,6 +244,9 @@ class RetrievalSettings(StrictSettingsModel):
     """
 
     qdrant_url: str = "http://localhost:6333"
+    # 开发时允许连接无鉴权的内存/测试实例；compose/production 由 AppSettings
+    # 的跨字段门禁强制要求独立强密钥。
+    qdrant_api_key: SecretStr | None = None
     collection_name: str = Field(
         default="amr_warehouse_knowledge",
         min_length=1,
@@ -261,6 +296,45 @@ class AppSettings(StrictSettingsModel):
     database: DatabaseSettings = Field(default_factory=DatabaseSettings)
     security: SecuritySettings = Field(default_factory=SecuritySettings)
     retrieval: RetrievalSettings = Field(default_factory=RetrievalSettings)
+
+    @model_validator(mode="after")
+    def validate_release_secrets(self) -> "AppSettings":
+        """发布环境拒绝仓库公开默认值及缺失的服务间凭据。
+
+        该校验位于整棵配置树上，保证无论值来自 TOML、环境变量还是显式配置，
+        ``compose``/``production`` 都不能靠开发默认值启动。测试与本地开发仍可
+        使用隔离 fixture，不会被生产门禁误伤。
+        """
+
+        if self.app.environment not in {"compose", "production"}:
+            return self
+
+        jwt_secret = self.security.jwt_secret.get_secret_value()
+        hitl_secret = self.security.hitl_signing_secret.get_secret_value()
+        model_key = self.model_gateway.api_key.get_secret_value()
+        qdrant_key = (
+            self.retrieval.qdrant_api_key.get_secret_value()
+            if self.retrieval.qdrant_api_key is not None
+            else ""
+        )
+        dsn = self.database.postgres_dsn.get_secret_value()
+        forbidden = {
+            "p016-development-only-change-this-jwt-secret-2026",
+            "p016-development-only-change-this-hitl-secret-2026",
+            "dummy",
+            "123456",
+        }
+        if jwt_secret in forbidden or hitl_secret in forbidden:
+            raise ValueError("发布环境禁止使用仓库公开的 JWT/HITL 开发密钥")
+        if model_key in forbidden or len(model_key) < 32:
+            raise ValueError("发布环境 OPENAI_API_KEY 必须是至少 32 字符的独立密钥")
+        if qdrant_key in forbidden or len(qdrant_key) < 32:
+            raise ValueError("发布环境 QDRANT_API_KEY 必须是至少 32 字符的独立密钥")
+        if ":123456@" in dsn:
+            raise ValueError("发布环境 PostgreSQL DSN 禁止使用公开默认密码")
+        if not self.model_gateway.artifact_verification_required:
+            raise ValueError("发布环境必须启用 Fast artifact 启动校验")
+        return self
 
 
 # 先把类型化默认值转换成普通字典，后续各层都在这份字典上进行合并。
@@ -314,6 +388,33 @@ def _set_path(data: dict[str, Any], path: tuple[str, ...], value: Any) -> None:
     current[path[-1]] = value
 
 
+def _read_dotenv(path: Path) -> dict[str, str]:
+    """读取项目 ``.env``，只保留非空 ``KEY=VALUE``，不记录也不返回注释行。
+
+    轮换后的 PostgreSQL/JWT/Qdrant 凭据只存在 gitignore 的 ``.env`` 中。
+    ``AppSettings()`` 不会读这个文件，因此集成测试和 ``load_settings()``
+    必须走本函数，否则会继续用仓库公开的 ``123456`` 去连已经轮换的库。
+    """
+
+    if not path.is_file():
+        return {}
+    values: dict[str, str] = {}
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.lower().startswith("export "):
+            line = line[7:].strip()
+        if "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        key = key.strip()
+        value = value.strip().strip("'").strip('"')
+        if key and value:
+            values[key] = value
+    return values
+
+
 def _apply_environment(data: dict[str, Any], environ: Mapping[str, str]) -> dict[str, Any]:
     """应用白名单环境变量。
 
@@ -328,6 +429,22 @@ def _apply_environment(data: dict[str, Any], environ: Mapping[str, str]) -> dict
         "LOG_JSON": (("logging", "json"), lambda value: _parse_bool("LOG_JSON", value)),
         "OPENAI_BASE_URL": (("model_gateway", "base_url"), str),
         "OPENAI_API_KEY": (("model_gateway", "api_key"), str),
+        "FAST_MODEL_MANIFEST_PATH": (
+            ("model_gateway", "artifact_manifest_path"),
+            str,
+        ),
+        "FAST_MODEL_VERIFY_ARTIFACT": (
+            ("model_gateway", "artifact_verification_required"),
+            lambda value: _parse_bool("FAST_MODEL_VERIFY_ARTIFACT", value),
+        ),
+        "FAST_MODEL_PATH": (
+            ("model_gateway", "artifact_model_path_override"),
+            str,
+        ),
+        "LLAMA_SERVER_PATH": (
+            ("model_gateway", "artifact_runtime_path_override"),
+            str,
+        ),
         "LLM_PROFILE": (("model_gateway", "profile"), str),
         "LLM_MODEL": (("model_gateway", "expected_alias_override"), str),
         "LLM_CONNECT_TIMEOUT_SECONDS": (
@@ -344,10 +461,12 @@ def _apply_environment(data: dict[str, Any], environ: Mapping[str, str]) -> dict
         ),
         "POSTGRES_DSN": (("database", "postgres_dsn"), str),
         "AMR_JWT_SECRET": (("security", "jwt_secret"), str),
+        "AMR_HITL_SIGNING_SECRET": (("security", "hitl_signing_secret"), str),
         "AMR_JWT_ISSUER": (("security", "issuer"), str),
         "AMR_JWT_AUDIENCE": (("security", "audience"), str),
         "AMR_JWT_LEEWAY_SECONDS": (("security", "leeway_seconds"), int),
         "QDRANT_URL": (("retrieval", "qdrant_url"), str),
+        "QDRANT_API_KEY": (("retrieval", "qdrant_api_key"), str),
         "RAG_COLLECTION_NAME": (("retrieval", "collection_name"), str),
         "RAG_EMBEDDING_MODEL_PATH": (("retrieval", "embedding_model_path"), str),
         "RAG_EMBEDDING_DEVICE": (("retrieval", "embedding_device"), str),
@@ -378,28 +497,39 @@ def load_settings(
     *,
     environ: Mapping[str, str] | None = None,
     project_root: str | Path | None = None,
+    load_dotenv_file: bool | None = None,
 ) -> AppSettings:
     """按照固定优先级加载配置，最后交给 Pydantic 做完整类型校验。"""
 
-    env = os.environ if environ is None else environ
+    process_environ = os.environ if environ is None else environ
     root = Path(project_root) if project_root is not None else PROJECT_ROOT
+    # 单测传入自定义 environ 时默认不读磁盘 .env，避免本机密钥污染断言。
+    should_load_dotenv = load_dotenv_file if load_dotenv_file is not None else environ is None
 
     # 第 1～2 层：Python 默认值 + 项目默认 TOML。
     merged = _deep_merge(DEFAULT_CONFIG, _load_toml(root / "config" / "default.toml"))
 
     # 第 3 层：按 AMR_ENV 选择环境专属文件。文件不存在是允许的。
-    environment_name = env.get(
+    environment_name = process_environ.get(
         "AMR_ENV", str(merged.get("app", {}).get("environment", "development"))
     )
+    if should_load_dotenv and "AMR_ENV" not in process_environ:
+        environment_name = _read_dotenv(root / ".env").get("AMR_ENV", environment_name)
     environment_path = root / "config" / f"{environment_name}.toml"
     if environment_path.name != "default.toml":
         merged = _deep_merge(merged, _load_toml(environment_path))
 
     # 第 4 层：显式文件是调用方明确要求的，因此不存在时必须报错。
-    explicit_path = config_path or env.get("AMR_CONFIG_FILE")
+    explicit_path = config_path or process_environ.get("AMR_CONFIG_FILE")
     if explicit_path:
         merged = _deep_merge(merged, _load_toml(Path(explicit_path), required=True))
 
-    # 第 5 层：环境变量拥有最高优先级。最终统一进行 Pydantic 校验。
-    merged = _apply_environment(merged, env)
+    # 第 5～6 层：.env 白名单键，再被进程环境变量覆盖。
+    layered_environ: dict[str, str] = {}
+    if should_load_dotenv:
+        layered_environ.update(_read_dotenv(root / ".env"))
+    for name, value in process_environ.items():
+        if value != "":
+            layered_environ[name] = value
+    merged = _apply_environment(merged, layered_environ)
     return AppSettings.model_validate(merged)

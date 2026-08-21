@@ -10,6 +10,7 @@ from uuid import uuid4
 
 import pytest
 from sqlalchemy import delete, inspect, select
+from sqlalchemy.orm.attributes import flag_modified
 
 from agent.context import PlanTasksOutput
 from agent.planning import FallbackStrategy, PlanTask, PlanTaskStatus, RiskLevel
@@ -19,20 +20,24 @@ from agent.runtime.checkpoint import (
     ExternalExecutionSnapshot,
     ExternalExecutionStatus,
     InMemoryExternalStateReconciler,
+    make_external_execution_id,
     make_effect_idempotency_key,
+    canonical_json_digest,
     to_jsonable,
 )
-from agent.runtime.graph import PEVRGraphRunner
+from agent.runtime.graph import PEVRExecutionError, PEVRGraphRunner
 from agent.runtime.pevr import PEVRRequest
 from agent.runtime.trace import TraceEvent
 from agent.tools import ToolName, ToolResult, ToolResultStatus
 from agent.tools.snapshots import DefaultWarehouseSnapshotProvider
 from services.application import PostgresRuntimeStore
-from services.config.settings import AppSettings
+from services.application.exceptions import PersistenceConflictError
+from services.config.settings import load_settings
 from services.persistence import (
     Base,
     DatabaseRuntime,
     EffectRecord,
+    EffectRepository,
     EventRecord,
     PlanRecord,
     RunRecord,
@@ -41,7 +46,13 @@ from services.persistence import (
     create_database_runtime,
 )
 from tests.unit.test_p004_contracts import task_contract_payload
-from tests.unit.test_p013_pevr import _FakeProvider, _FakeRegistry, _contract as pevr_contract, _plan as pevr_plan
+from tests.unit.test_p013_pevr import (
+    _FakeProvider,
+    _FakeRegistry,
+    _RouteTimeoutRegistry,
+    _contract as pevr_contract,
+    _plan as pevr_plan,
+)
 from tests.helpers.p014_process_worker import KILL_EXIT_CODE, ProcessRecoveryRegistry
 from agent.planning import TaskContract
 
@@ -53,7 +64,7 @@ NOW = datetime(2026, 8, 20, 12, 0, tzinfo=timezone.utc)
 def database_runtime() -> DatabaseRuntime:
     """真实 PostgreSQL 缺表时直接失败，不能用 SQLite 或 fake 冒充持久化。"""
 
-    runtime = create_database_runtime(AppSettings().database)
+    runtime = create_database_runtime(load_settings().database)
     existing = set(inspect(runtime.engine).get_table_names(schema="public"))
     assert set(Base.metadata.tables).issubset(existing), "请先执行 P0-06 Alembic upgrade"
     yield runtime
@@ -303,6 +314,88 @@ def test_postgres_trace_before_run_creation_is_flushed_idempotently(
         _cleanup(runtime, run_id)
 
 
+def _seed_legacy_shared_simulation_id(
+    runtime: DatabaseRuntime,
+    *,
+    entries: list,
+    old_external_id: str,
+) -> None:
+    """写入无 lookup_id 的历史快照，模拟 C02 修复前跨 run 共用 simulation ID。
+
+    当前 ``put()`` 会立刻写入 ``p014.v2`` 查询身份，无法再现审计里的 6 条冲突；
+    测试必须直接改 JSONB，才能证明迁移脚本补身份而不重放副作用。
+    """
+
+    snapshot = {"status": "completed", "simulation_id": old_external_id}
+    digest = canonical_json_digest(snapshot)
+    with runtime.session_factory() as session:
+        with session.begin():
+            repository = EffectRepository(session)
+            for entry in entries:
+                record = repository.get_by_idempotency_key(
+                    entry.idempotency_key,
+                    for_update=True,
+                )
+                assert record is not None
+                payload = dict(record.payload_snapshot or {})
+                payload["external_execution"] = {
+                    "run_id": old_external_id,
+                    "snapshot": snapshot,
+                    "snapshot_digest": digest,
+                }
+                record.payload_snapshot = to_jsonable(payload)
+                flag_modified(record, "payload_snapshot")
+
+
+def test_legacy_external_id_collision_migrates_without_replaying_side_effect(
+    database_runtime: DatabaseRuntime,
+) -> None:
+    """两个旧 run 共享仿真 ID 时，迁移后必须按 Effect 身份分别核对。"""
+
+    runtime = database_runtime
+    run_ids = [f"run_p014_legacy_{uuid4().hex[:16]}" for _ in range(2)]
+    old_external_id = f"simulation-legacy-{uuid4().hex[:12]}"
+    store = PostgresRuntimeStore(runtime.session_factory, clock=lambda: NOW)
+    entries = []
+    try:
+        for run_id in run_ids:
+            store.ensure_run(run_id, _contract())
+            reservation = store.reserve_effect(
+                run_id=run_id,
+                plan_version=1,
+                task_id="TASK-DISPATCH",
+                tool_name=ToolName.DISPATCH_SIMULATION,
+                call_id=f"{run_id}:dispatch",
+                input_digest="a" * 64,
+                arguments={"seed": 7},
+                now=NOW,
+            )
+            entries.append(reservation.entry)
+
+        _seed_legacy_shared_simulation_id(
+            runtime,
+            entries=entries,
+            old_external_id=old_external_id,
+        )
+
+        with pytest.raises(PersistenceConflictError, match="多条 Effect"):
+            store.get(old_external_id)
+
+        migrated = store.migrate_external_execution_lookups()
+        assert migrated["migrated"] >= 2
+        for entry in entries:
+            observed = store.inspect(entry=entry)
+            assert observed.status is ExternalExecutionStatus.COMPLETED
+            assert observed.external_effect_id == old_external_id
+            assert observed.result is not None
+            assert observed.result.idempotency_key == entry.idempotency_key
+            lookup_id = make_external_execution_id(entry.idempotency_key, entry.input_digest)
+            assert store.get(lookup_id)["simulation_id"] == old_external_id
+    finally:
+        for run_id in run_ids:
+            _cleanup(runtime, run_id)
+
+
 def test_postgres_pevr_restart_reuses_external_result_without_redispatch(
     database_runtime: DatabaseRuntime,
 ) -> None:
@@ -354,6 +447,44 @@ def test_postgres_pevr_restart_reuses_external_result_without_redispatch(
         assert first.report.final_status == second.report.final_status
         assert len(registry.calls) == calls_after_first
         assert len(store.list_effects(run_id)) == 1
+    finally:
+        _cleanup(runtime, run_id)
+
+
+def test_postgres_production_recovery_persists_failed_terminal_not_planning(
+    database_runtime: DatabaseRuntime,
+) -> None:
+    """真实 PostgreSQL 路径预算耗尽后必须保存 failed，而不是遗留 planning。"""
+
+    runtime = database_runtime
+    run_id = f"run_p015_terminal_{uuid4().hex[:16]}"
+    contract = pevr_contract()
+    store = PostgresRuntimeStore(runtime.session_factory, clock=lambda: NOW)
+    try:
+        with pytest.raises(PEVRExecutionError) as terminal:
+            PEVRGraphRunner(
+                _FakeProvider(contract, pevr_plan(contract), run_id),
+                registry=_RouteTimeoutRegistry(run_id),
+                checkpoint_store=store,
+                clock=lambda: NOW,
+            ).run(
+                PEVRRequest(
+                    run_id=run_id,
+                    raw_request="把 MAT-001 从 P1 运到 S3",
+                    environment_ref=contract.environment_ref,
+                    approval_granted=True,
+                )
+            )
+        assert terminal.value.code == "recovery_fallback"
+
+        checkpoint = store.load_checkpoint(run_id)
+        assert checkpoint is not None
+        assert checkpoint.status == RunStatus.FAILED.value
+        with runtime.session_factory() as session:
+            persisted = session.get(RunRecord, run_id)
+            assert persisted is not None
+            assert persisted.status == RunStatus.FAILED.value
+            assert persisted.current_task_id is None
     finally:
         _cleanup(runtime, run_id)
 

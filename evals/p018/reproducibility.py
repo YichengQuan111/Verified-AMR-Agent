@@ -2,8 +2,8 @@
 
 评测报告不能只记录一个“使用了 Fast 模型”的字符串。这里对地图、AMR、订单、
 Prompt、评测配置和数据集做 SHA-256，对运行时实际注册的九个 ToolSpec 记录版本，
-并保存每例 seed。模型脚本在本机存在时额外做摘要；模型服务不启动也不影响离线
-Harness，但报告会明确标记 ``online_service_required=false``，避免把 oracle 结果
+并保存每例 seed。仓库内 Fast manifest 及其模型/运行时/启动器哈希属于必填身份；
+模型服务不启动也不影响离线 Harness，但报告会明确标记 ``online_service_required=false``，避免把 oracle 结果
 误写成真实 LLM 在线验收。后续若接入在线模式，应新增独立 execution_mode，不能
 覆盖当前离线结果。
 """
@@ -161,8 +161,9 @@ def build_reproducibility(
     model = config.get("model")
     if not isinstance(model, Mapping):
         raise ValueError("P0-18 配置缺少 model 映射")
-    artifact_ref = Path(str(model.get("artifact_ref", "")))
-    model_artifact = _file_fingerprint(artifact_ref, required=False) if str(artifact_ref) else None
+    artifact_ref = rooted(str(model.get("artifact_ref", "")))
+    # Fast manifest 是发布身份的一部分，不再把缺失的外部绝对路径当成可选证据。
+    model_artifact = _file_fingerprint(artifact_ref, required=True)
 
     case_seed_map = {case.case_id: case.seed for case in dataset.cases}
     return {
@@ -183,10 +184,17 @@ def build_reproducibility(
             "quantization": str(model["quantization"]),
             "context_window": int(model["context_window"]),
             "temperature": float(model["temperature"]),
+            "top_p": float(model["top_p"]),
+            "top_k": int(model["top_k"]),
+            "parallel_slots": int(model["parallel_slots"]),
             "reasoning_enabled": bool(model["reasoning_enabled"]),
             "reasoning_budget_tokens": int(model["reasoning_budget_tokens"]),
             "artifact_ref": str(model.get("artifact_ref", "")),
             "artifact": model_artifact,
+            "artifact_manifest_sha256": str(model["artifact_manifest_sha256"]),
+            "model_sha256": str(model["model_sha256"]),
+            "runtime_binary_sha256": str(model["runtime_binary_sha256"]),
+            "launch_script_sha256": str(model["launch_script_sha256"]),
             "online_service_required": bool(model["online_service_required"]),
         },
         "runtime": {

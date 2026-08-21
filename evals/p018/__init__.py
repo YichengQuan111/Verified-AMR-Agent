@@ -12,7 +12,7 @@ from .contracts import (
     ZeroToleranceMetrics,
 )
 from .dataset import DEFAULT_CONFIG_PATH, DEFAULT_DATASET_PATH, load_config, load_dataset
-from .runner import EvalHarness, run_harness
+from .runner import EvalHarness, StrategyRecoveryPolicy, run_harness
 
 __all__ = [
     "DEFAULT_CONFIG_PATH",
@@ -24,6 +24,7 @@ __all__ = [
     "EvalDataset",
     "EvalHarness",
     "EvalOutcome",
+    "StrategyRecoveryPolicy",
     "EvalReport",
     "EvalReportCase",
     "ZeroToleranceMetrics",

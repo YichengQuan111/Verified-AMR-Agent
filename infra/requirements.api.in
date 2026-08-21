@@ -1,0 +1,14 @@
+# API 容器的直接依赖输入；requirements.api.lock 由 pip-compile 展开全部传递依赖和哈希。
+alembic==1.18.4
+fastapi==0.141.1
+httpx==0.28.1
+openai==3.3.0
+psycopg[binary]==3.3.4
+pydantic==2.13.4
+python-multipart==0.0.32
+PyJWT==2.13.0
+PyYAML==6.0.3
+SQLAlchemy==2.0.50
+sse-starlette==3.4.8
+structlog==26.1.0
+uvicorn==0.52.3

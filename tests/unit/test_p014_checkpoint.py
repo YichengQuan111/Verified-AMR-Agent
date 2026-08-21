@@ -15,6 +15,7 @@ from agent.runtime.checkpoint import (
     InMemoryRuntimeStore,
     RecoveryCoordinator,
     RecoveryDecision,
+    make_external_execution_id,
     make_effect_idempotency_key,
 )
 from agent.runtime.graph import PEVRGraphRunner
@@ -61,6 +62,19 @@ def test_effect_key_is_only_run_plan_task() -> None:
     )
     with pytest.raises(ValueError, match="正整数"):
         make_effect_idempotency_key("run-1", 0, "task-7")
+
+
+def test_external_execution_id_is_stable_per_effect_and_unique_across_runs() -> None:
+    """相同 plan/seed 的不同 run 仍必须得到不同仿真身份。"""
+
+    input_digest = "a" * 64
+    first_key = make_effect_idempotency_key("run-a", 1, "TASK-DISPATCH")
+    second_key = make_effect_idempotency_key("run-b", 1, "TASK-DISPATCH")
+    first = make_external_execution_id(first_key, input_digest)
+
+    assert first == make_external_execution_id(first_key, input_digest)
+    assert first != make_external_execution_id(second_key, input_digest)
+    assert len(first) == len("simulation-") + 32
 
 
 def test_persisted_identifier_lengths_match_postgres_columns() -> None:

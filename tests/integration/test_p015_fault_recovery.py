@@ -6,22 +6,105 @@ from datetime import datetime, timezone
 
 import pytest
 
+from agent.context import FinalReport
 from agent.planning import PlanTaskStatus
 from agent.runtime import (
     FaultCategory,
     FaultRecoveryController,
+    InMemoryHITLStore,
     RecoveryAction,
     RunState,
     RunStatus,
+    PEVRExecutionError,
+    PEVRGraphRunner,
+    PEVRInterrupt,
 )
 from agent.runtime.checkpoint import InMemoryRuntimeStore, make_effect_idempotency_key
-from agent.tools import ToolName, ToolResult, ToolResultStatus, UserRole, build_tool_registry
+from agent.runtime.pevr import PEVRRequest
+from agent.security import Principal
+from agent.tools import (
+    ToolError,
+    ToolErrorCategory,
+    ToolName,
+    ToolResult,
+    ToolResultStatus,
+    UserRole,
+    build_tool_registry,
+)
 from agent.tools.snapshots import DefaultWarehouseSnapshotProvider
-from tests.unit.test_p013_pevr import _contract, _plan
+from tests.unit.test_p013_pevr import (
+    ENVIRONMENT_REF,
+    _FakeProvider,
+    _FakeRegistry,
+    _contract,
+    _plan,
+)
 from tests.unit.test_p014_replanner import _replacement_chain
 
 
 NOW = datetime(2026, 8, 21, 12, 0, tzinfo=timezone.utc)
+
+
+class _ProductionFaultRegistry(_FakeRegistry):
+    """让固定 PEVR execute 节点收到真实 ToolResult 故障信封。"""
+
+    def __init__(
+        self,
+        run_id: str,
+        *,
+        category: ToolErrorCategory,
+        code: str,
+        retryable: bool,
+        failures: int | None = None,
+    ) -> None:
+        super().__init__(run_id)
+        self.category = category
+        self.code = code
+        self.retryable = retryable
+        self.failures = failures
+
+    def execute(self, tool_name, arguments, *, role, call_id):
+        result = super().execute(tool_name, arguments, role=role, call_id=call_id)
+        if result.tool_name is not ToolName.PLAN_MULTI_AMR_ROUTES:
+            return result
+        if self.failures is not None and self.failures <= 0:
+            return result
+        if self.failures is not None:
+            self.failures -= 1
+        return result.model_copy(
+            update={
+                "status": (
+                    ToolResultStatus.TIMEOUT
+                    if self.category is ToolErrorCategory.TIMEOUT
+                    else ToolResultStatus.FAILED
+                ),
+                "output": None,
+                "output_digest": None,
+                "error": ToolError(
+                    category=self.category,
+                    code=self.code,
+                    message=f"生产图故障注入: {self.code}",
+                    retryable=self.retryable,
+                    details={},
+                ),
+            }
+        )
+
+
+class _ReplanAwareProvider(_FakeProvider):
+    """只在测试报告中接受已由 LocalReplanner 证明的新计划版本。"""
+
+    def generate_structured(self, messages, response_model, **kwargs):
+        generated = super().generate_structured(messages, response_model, **kwargs)
+        if response_model is not FinalReport:
+            return generated
+        report = generated.value.model_copy(
+            update={
+                "plan_version": 2,
+                "state_version": f"run:{self.run_id}/plan:2",
+            }
+        )
+        return generated.model_copy(update={"value": report})
 
 
 @pytest.mark.parametrize(
@@ -219,3 +302,203 @@ def test_checkpointed_local_replan_keeps_effect_ledger_and_is_restart_readable()
         "channel_closed",
     ]
     assert next(item for item in loaded_state.plan_tasks if item.task_id == allocate.task_id).effect_id == "effect-p015-db"
+
+
+@pytest.mark.parametrize(
+    ("category", "code", "retryable", "expected_actions", "expected_plan_version"),
+    [
+        (ToolErrorCategory.UNSAFE_PLAN, "low_battery", False, ["replan", "replan", "human"], 3),
+        (ToolErrorCategory.UNAVAILABLE, "amr_offline", False, ["replan", "replan", "human"], 3),
+        (ToolErrorCategory.UNSAFE_PLAN, "channel_closed", False, ["replan", "replan", "human"], 3),
+        (
+            ToolErrorCategory.UNAVAILABLE,
+            "workstation_occupied",
+            True,
+            ["retry", "retry", "replan", "replan", "human"],
+            3,
+        ),
+        (ToolErrorCategory.TIMEOUT, "tool_timeout", True, ["retry", "retry", "fallback"], 1),
+        (ToolErrorCategory.UNSAFE_PLAN, "route_infeasible", False, ["replan", "replan", "human"], 3),
+        (ToolErrorCategory.CONFLICT, "state_conflict", False, ["human"], 1),
+    ],
+)
+def test_seven_faults_run_through_production_pevr_and_end_bounded(
+    category: ToolErrorCategory,
+    code: str,
+    retryable: bool,
+    expected_actions: list[str],
+    expected_plan_version: int,
+) -> None:
+    """七类故障必须由真实 PEVR execute→controller 路径落到有界终态。"""
+
+    run_id = f"run-p015-production-{code}"
+    base = _contract()
+    contract = base.model_copy(
+        update={
+            "budgets": base.budgets.model_copy(
+                update={"max_replans": 2, "max_retries": 2}
+            )
+        }
+    )
+    store = InMemoryRuntimeStore()
+    registry = _ProductionFaultRegistry(
+        run_id,
+        category=category,
+        code=code,
+        retryable=retryable,
+    )
+    runner = PEVRGraphRunner(
+        _FakeProvider(contract, _plan(contract), run_id),
+        registry=registry,
+        checkpoint_store=store,
+        clock=lambda: NOW,
+    )
+
+    with pytest.raises(PEVRExecutionError):
+        runner.run(
+            PEVRRequest(
+                run_id=run_id,
+                raw_request="把 MAT-001 从 P1 运到 S3",
+                environment_ref=ENVIRONMENT_REF,
+                approval_granted=True,
+            )
+        )
+
+    checkpoint = store.load_checkpoint(run_id)
+    assert checkpoint is not None
+    recovered_state = RunState.model_validate(checkpoint.graph_state["run_state"])
+    assert recovered_state.status is RunStatus.FAILED
+    assert recovered_state.current_task_id is None
+    assert recovered_state.plan_version == expected_plan_version
+    assert recovered_state.replan_count <= 2
+    assert recovered_state.retry_count <= 2
+    recovery_events = [
+        event
+        for event in store.list_trace_events(run_id)
+        if event.node == "recovery"
+    ]
+    assert [event.metadata["recovery_action"] for event in recovery_events] == expected_actions
+    assert recovery_events[-1].status == "failed"
+    assert [name for name, _ in registry.calls].count(ToolName.ALLOCATE_TASKS) == 1
+
+
+def test_production_pevr_retry_can_continue_to_verified_completion() -> None:
+    """一次无副作用 timeout 只重试故障任务，成功后继续 Validator/dispatch。"""
+
+    run_id = "run-p015-production-retry-success"
+    base = _contract()
+    contract = base.model_copy(
+        update={"budgets": base.budgets.model_copy(update={"max_replans": 2, "max_retries": 2})}
+    )
+    store = InMemoryRuntimeStore()
+    registry = _ProductionFaultRegistry(
+        run_id,
+        category=ToolErrorCategory.TIMEOUT,
+        code="tool_timeout",
+        retryable=True,
+        failures=1,
+    )
+    result = PEVRGraphRunner(
+        _FakeProvider(contract, _plan(contract), run_id),
+        registry=registry,
+        checkpoint_store=store,
+        clock=lambda: NOW,
+    ).run(
+        PEVRRequest(
+            run_id=run_id,
+            raw_request="把 MAT-001 从 P1 运到 S3",
+            environment_ref=ENVIRONMENT_REF,
+            approval_granted=True,
+        )
+    )
+
+    assert result.run_state.status is RunStatus.COMPLETED
+    assert result.run_state.retry_count == 1
+    assert [name for name, _ in registry.calls].count(ToolName.ALLOCATE_TASKS) == 1
+    assert [name for name, _ in registry.calls].count(ToolName.PLAN_MULTI_AMR_ROUTES) == 2
+
+
+def test_production_pevr_local_replan_replaces_only_unfinished_subgraph() -> None:
+    """一次不可行路线生成 v2 子图，已完成 allocation 保留且不会重做。"""
+
+    run_id = "run-p015-production-replan-success"
+    base = _contract()
+    contract = base.model_copy(
+        update={"budgets": base.budgets.model_copy(update={"max_replans": 2, "max_retries": 2})}
+    )
+    store = InMemoryRuntimeStore()
+    registry = _ProductionFaultRegistry(
+        run_id,
+        category=ToolErrorCategory.UNSAFE_PLAN,
+        code="route_infeasible",
+        retryable=False,
+        failures=1,
+    )
+    result = PEVRGraphRunner(
+        _ReplanAwareProvider(contract, _plan(contract), run_id),
+        registry=registry,
+        checkpoint_store=store,
+        clock=lambda: NOW,
+    ).run(
+        PEVRRequest(
+            run_id=run_id,
+            raw_request="把 MAT-001 从 P1 运到 S3",
+            environment_ref=ENVIRONMENT_REF,
+            approval_granted=True,
+        )
+    )
+
+    assert result.run_state.status is RunStatus.COMPLETED
+    assert result.run_state.plan_version == 2
+    assert result.run_state.replan_count == 1
+    assert [name for name, _ in registry.calls].count(ToolName.ALLOCATE_TASKS) == 1
+    replacement_ids = {task.task_id for task in result.run_state.plan_tasks}
+    assert "TASK-ALLOCATE" in replacement_ids
+    assert {"TASK-ROUTE", "TASK-VALIDATE", "TASK-DISPATCH"}.isdisjoint(replacement_ids)
+
+
+def test_secure_replan_invalidates_old_approval_and_waits_on_new_plan() -> None:
+    """重规划后的 dispatch 必须为 v2 新建 waiting checkpoint，再签 grant 恢复。"""
+
+    run_id = "run-p015-secure-replan-hitl"
+    base = _contract()
+    contract = base.model_copy(
+        update={"budgets": base.budgets.model_copy(update={"max_replans": 2, "max_retries": 2})}
+    )
+    store = InMemoryRuntimeStore()
+    hitl = InMemoryHITLStore(signing_secret="p015-secure-hitl-secret-more-than-32")
+    principal = Principal(subject="operator-p015", role=UserRole.OPERATOR)
+    registry = _ProductionFaultRegistry(
+        run_id,
+        category=ToolErrorCategory.UNSAFE_PLAN,
+        code="route_infeasible",
+        retryable=False,
+        failures=1,
+    )
+    runner = PEVRGraphRunner(
+        _ReplanAwareProvider(contract, _plan(contract), run_id),
+        registry=registry,
+        checkpoint_store=store,
+        hitl_store=hitl,
+        security_required=True,
+        clock=lambda: NOW,
+    )
+    request = PEVRRequest(
+        run_id=run_id,
+        raw_request="把 MAT-001 从 P1 运到 S3",
+        environment_ref=ENVIRONMENT_REF,
+        principal=principal,
+    )
+
+    with pytest.raises(PEVRInterrupt) as paused:
+        runner.run(request)
+    pending = hitl.get_request(paused.value.interrupt.approval_id)
+    assert pending is not None
+    assert pending.plan_version == 2
+    grant = hitl.approve(pending.approval_id, principal=principal, now=NOW)
+    result = runner.run(request.model_copy(update={"approval_grant": grant}))
+
+    assert result.run_state.status is RunStatus.COMPLETED
+    assert result.report.plan_version == 2
+    assert result.report.approval_id == pending.approval_id
+    assert result.report.approval_checkpoint_id == pending.checkpoint_id

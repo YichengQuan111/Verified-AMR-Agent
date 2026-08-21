@@ -12,7 +12,7 @@ from sqlalchemy import delete
 
 from agent.tools import UserRole
 from services.application import DocumentMetadataInput, DocumentService
-from services.config.settings import AppSettings
+from services.config.settings import load_settings
 from services.persistence import (
     DocumentRecord,
     create_database_runtime,
@@ -24,7 +24,7 @@ from services.retrieval import KnowledgeChunk, QdrantVectorStore
 def database_runtime() -> Iterator[object]:
     """复用已迁移 PostgreSQL；服务不可用时应真实失败。"""
 
-    runtime = create_database_runtime(AppSettings().database)
+    runtime = create_database_runtime(load_settings().database)
     yield runtime
     runtime.dispose()
 
@@ -125,9 +125,18 @@ def test_qdrant_rebuild_idempotency_and_payload_acl() -> None:
     """viewer 查询的 Qdrant response 中不能出现 operator-only points。"""
 
     collection = f"p007_test_{uuid4().hex}"
-    client = QdrantClient(url=AppSettings().retrieval.qdrant_url, timeout=10)
+    retrieval = load_settings().retrieval
+    # 发布 Compose 给 Qdrant 配了 API key 后，匿名客户端会被拒绝；测试必须
+    # 使用与 check_qdrant.py 相同的凭据来源，不能再直连默认无鉴权实例。
+    qdrant_key = (
+        retrieval.qdrant_api_key.get_secret_value()
+        if retrieval.qdrant_api_key is not None
+        else None
+    )
+    client = QdrantClient(url=retrieval.qdrant_url, api_key=qdrant_key, timeout=10)
     store = QdrantVectorStore(
-        url=AppSettings().retrieval.qdrant_url,
+        url=retrieval.qdrant_url,
+        api_key=qdrant_key,
         collection_name=collection,
         client=client,
     )

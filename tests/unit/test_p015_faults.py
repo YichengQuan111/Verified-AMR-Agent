@@ -36,6 +36,7 @@ NOW = datetime(2026, 8, 21, 12, 0, tzinfo=timezone.utc)
         ({"code": "workstation_capacity_exceeded", "workstation_id": "S3"}, FaultCategory.WORKSTATION_OCCUPIED, RecoveryAction.RETRY),
         ({"error": {"category": "timeout", "code": "tool_timeout", "message": "超时", "retryable": True}}, FaultCategory.TOOL_TIMEOUT, RecoveryAction.RETRY),
         ({"error": {"category": "unsafe_plan", "code": "route_infeasible", "message": "无解"}}, FaultCategory.PLAN_INFEASIBLE, RecoveryAction.REPLAN),
+        ({"code": "plan_validation_failed", "message": "plan_version_invalid"}, FaultCategory.PLAN_INFEASIBLE, RecoveryAction.REPLAN),
         ({"error": {"category": "conflict", "code": "idempotency_key_reused_with_different_request", "message": "冲突"}}, FaultCategory.STATE_CONFLICT, RecoveryAction.HUMAN),
     ],
 )

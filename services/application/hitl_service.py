@@ -102,6 +102,20 @@ class PostgresHITLStore(HITLStoreProtocol):
             record = ApprovalRepository(session).get(approval_id)
             return self._request_from_record(record) if record is not None else None
 
+    def get_grant(self, approval_id: str) -> ApprovalGrant | None:
+        """只返回数据库中 approved 行保存的完整签名票据。
+
+        调用方仍须在恢复时通过 ``verify_grant`` 绑定 Principal、run、task、计划与
+        Validator 摘要；此方法只是让 API 审批与 CLI 恢复可以跨进程交接票据。
+        """
+
+        with self._session_factory() as session:
+            record = ApprovalRepository(session).get(approval_id)
+            if record is None or record.status != HITLStatus.APPROVED.value:
+                return None
+            grant = self._grant_from_record(record)
+            return None if grant is None else grant.model_copy(deep=True)
+
     def approve(
         self,
         approval_id: str,

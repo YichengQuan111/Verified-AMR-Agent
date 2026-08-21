@@ -483,7 +483,7 @@ class FaultClassifier:
         )):
             return FaultCategory.CHANNEL_CLOSED
         if raw_category == ToolErrorCategory.UNSAFE_PLAN.value or any(token in resource_text for token in (
-            "infeasible", "plan_invalid", "validator_postcondition", "unsafe_plan", "route_not_planned", "vertex_conflict", "swap_edge_conflict", "safety_distance",
+            "infeasible", "plan_invalid", "plan_validation_failed", "validator_postcondition", "unsafe_plan", "route_not_planned", "vertex_conflict", "swap_edge_conflict", "safety_distance",
         )) or source_mapping.get("status") == "infeasible":
             return FaultCategory.PLAN_INFEASIBLE
         if raw_category == ToolErrorCategory.CONFLICT.value:

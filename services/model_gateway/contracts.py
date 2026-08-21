@@ -37,7 +37,11 @@ class TokenUsage(GatewayContract):
 
 
 class ModelVersionRecord(GatewayContract):
-    """启动门禁确认过的模型身份快照。"""
+    """启动门禁确认过的服务 alias 与本地字节制品身份快照。
+
+    artifact 字段为可选是为了读取旧 Trace/测试 fixture；发布配置强制校验 manifest，
+    因此新产生的真实 health、Trace 与报告会完整填充这些字段。
+    """
 
     provider: Literal["llama.cpp-openai-compatible"] = "llama.cpp-openai-compatible"
     profile: str
@@ -47,6 +51,26 @@ class ModelVersionRecord(GatewayContract):
     model_created: int | None = None
     model_owned_by: str | None = None
     openai_sdk_version: str
+    artifact_id: str | None = None
+    artifact_manifest_path: str | None = None
+    artifact_manifest_sha256: str | None = None
+    model_path: str | None = None
+    model_size_bytes: int | None = None
+    model_sha256: str | None = None
+    quantization: str | None = None
+    context_window: int | None = None
+    temperature: float | None = None
+    top_p: float | None = None
+    top_k: int | None = None
+    parallel_slots: int | None = None
+    reasoning_enabled: bool | None = None
+    llama_cpp_version: str | None = None
+    llama_cpp_build: int | None = None
+    llama_cpp_commit: str | None = None
+    runtime_binary_path: str | None = None
+    runtime_binary_sha256: str | None = None
+    launch_script_path: str | None = None
+    launch_script_sha256: str | None = None
     observed_at: datetime
 
 

@@ -10,7 +10,10 @@ from fastapi.testclient import TestClient
 from agent.context import PromptNodeName, build_node_context, get_prompt_definition
 from agent.planning import ExecutionBudgets
 from agent.runtime import (
+    ExternalExecutionSnapshot,
+    ExternalExecutionStatus,
     HITLController,
+    InMemoryExternalStateReconciler,
     InMemoryHITLStore,
     InMemoryRuntimeStore,
     PEVRGraphRunner,
@@ -81,7 +84,8 @@ def test_api_hitl_routes_are_run_scoped_and_operator_only() -> None:
     operator_headers = {
         "Authorization": f"Bearer {authenticator.issue_token(subject='operator-http', role=UserRole.OPERATOR)}"
     }
-    now = datetime(2026, 8, 21, 12, 0, tzinfo=timezone.utc)
+    # HTTP approve 走 store.approve() 的墙钟，不能用已经过期的固定 requested_at。
+    now = datetime.now(timezone.utc)
     pending = build_hitl_request(
         run_id="run-http-hitl",
         task_id="TASK-HTTP-HITL",
@@ -444,6 +448,34 @@ def test_pevr_interrupt_persists_and_resumes_exactly_once() -> None:
     )
     result = runner.run(request.model_copy(update={"approval_grant": grant}))
     assert result.run_state.status.value == "completed"
+    assert result.report.principal_subject == principal.subject
+    assert result.report.approval_id == interrupt.approval_id
+    assert result.report.approval_checkpoint_id == interrupt.checkpoint_id
+    assert [name for name, _ in registry.calls].count(ToolName.DISPATCH_SIMULATION) == 1
+
+    effect = checkpoints.list_effects(run_id)[0]
+    external = InMemoryExternalStateReconciler()
+    external.put(
+        effect.idempotency_key,
+        ExternalExecutionSnapshot(
+            status=ExternalExecutionStatus.COMPLETED,
+            source="security-replay-test",
+            observed_at=clock_time,
+            external_effect_id=effect.external_effect_id,
+            result=effect.result,
+        ),
+    )
+    replayed = PEVRGraphRunner(
+        _FakeProvider(_contract(), _plan(_contract()), run_id),
+        registry=registry,
+        snapshot_provider=DefaultWarehouseSnapshotProvider(),
+        checkpoint_store=checkpoints,
+        external_state_reconciler=external,
+        hitl_store=hitl,
+        security_required=True,
+        clock=lambda: clock_time,
+    ).run(request.model_copy(update={"approval_grant": grant}))
+    assert replayed.report.approval_id == interrupt.approval_id
     assert [name for name, _ in registry.calls].count(ToolName.DISPATCH_SIMULATION) == 1
 
     with pytest.raises(ValueError):

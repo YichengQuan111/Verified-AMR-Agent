@@ -192,6 +192,11 @@ class PEVRRunReport(PEVRContract):
     # 报告与 PEVRRunResult/验证报告共享同一 Trace 关联键；旧 Checkpoint 缺少该
     # 字段时仍允许读取 None，由新运行在入口处补齐。
     trace_id: str | None = Field(default=None, min_length=1, max_length=128)
+    # 安全发布运行必须能从报告直接定位“谁批准、批准哪条 waiting checkpoint”；
+    # legacy 离线 fixture 没有真实 HITL，因此保持可空以兼容历史报告。
+    principal_subject: str | None = Field(default=None, min_length=1, max_length=128)
+    approval_id: str | None = Field(default=None, min_length=1, max_length=128)
+    approval_checkpoint_id: str | None = Field(default=None, min_length=1, max_length=128)
     final_status: FinalReportStatus
     state_version: str
     plan_version: int = Field(ge=1)
@@ -223,6 +228,9 @@ class PEVRRunReport(PEVRContract):
             raise ValueError("evidence_refs 不能重复")
         if len(self.citations) != len(set(self.citations)):
             raise ValueError("citations 不能重复")
+        approval_fields = (self.approval_id, self.approval_checkpoint_id)
+        if any(approval_fields) and (not all(approval_fields) or self.principal_subject is None):
+            raise ValueError("HITL 报告必须同时记录 principal、approval_id 和 checkpoint_id")
         return self
 
 
@@ -274,6 +282,8 @@ class PEVRGraphState(TypedDict, total=False):
     model_call_count: int
     hitl_interrupt: HITLInterrupt | None
     approval_grant: ApprovalGrant | None
+    approval_id: str | None
+    approval_checkpoint_id: str | None
 
 
 __all__ = [

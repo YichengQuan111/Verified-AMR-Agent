@@ -400,20 +400,9 @@ std::array<Candidate, 4> candidates_for(const NormalizedRequest& normalized,
   std::array<Candidate, 4> output{};
   count = 0;
   if (current.time >= normalized.request.max_time) return output;
-
-  // release_time 之前只能等待，避免规划器提前占用资源并违反订单时间窗。
-  if (current.time < earliest_goal_time) {
-    append_candidate(
-        normalized,
-        reservations,
-        current,
-        SearchState{current.x, current.y, current.heading, current.time + 1},
-        RouteAction::kWait,
-        normalized.request.costs.wait_cost,
-        output,
-        count);
-    return output;
-  }
+  // earliest_goal_time 只约束 goal acceptance / pickup 事件，不禁止预定位。
+  // 订单 release_time 之前 AMR 仍可正常行驶并预约，提前到达后再等待。
+  (void)earliest_goal_time;
 
   const GridPosition forward = forward_cell(current);
   if (movement_allowed(normalized, GridPosition{current.x, current.y}, forward)) {

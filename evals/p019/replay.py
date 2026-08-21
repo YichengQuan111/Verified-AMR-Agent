@@ -331,7 +331,12 @@ def _mean(values: Sequence[float]) -> float:
     return round(float(statistics.fmean(values)), 6) if values else 0.0
 
 
-def _aggregate(strategy: P019Strategy, results: Sequence[StrategyCaseResult]) -> StrategySummary:
+def _aggregate(
+    strategy: P019Strategy,
+    results: Sequence[StrategyCaseResult],
+    *,
+    latency_source: str = "p018_trace",
+) -> StrategySummary:
     """完全从逐例策略结果重算汇总表，不接受外部预填数字。"""
 
     case_count = len(results)
@@ -406,9 +411,9 @@ def _aggregate(strategy: P019Strategy, results: Sequence[StrategyCaseResult]) ->
             p50_case_ms=_percentile(latencies, 50),
             p95_case_ms=_percentile(latencies, 95),
             max_case_ms=round(max(latencies, default=0.0), 6),
-            source="p018_trace",
+            source=latency_source,  # type: ignore[arg-type]
             wall_clock=False,
-            note=TRACE_DURATION_NOTE,
+            note=TRACE_DURATION_NOTE if latency_source == "p018_trace" else "延迟来自各策略独立离线 Trace，不是在线服务墙钟测量。",
         ),
         resource=resource,
         zero_tolerance=ZeroToleranceMetrics(**zero),

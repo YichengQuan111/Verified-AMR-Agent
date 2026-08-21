@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from services.config.settings import load_settings
+from services.config.settings import _read_dotenv, load_settings
 
 
 def test_environment_variables_have_highest_precedence() -> None:
@@ -95,3 +95,52 @@ def test_schema_repairs_can_never_exceed_one(tmp_path) -> None:
 
     with pytest.raises(ValidationError):
         load_settings(override, environ={})
+
+
+def test_compose_environment_rejects_all_public_development_secrets() -> None:
+    """只改环境名也不能让仓库默认 JWT/DB/dummy model key 进入发布。"""
+
+    with pytest.raises(ValidationError, match="发布环境禁止"):
+        load_settings(environ={"AMR_ENV": "compose"})
+
+
+def test_compose_environment_accepts_independent_strong_secrets() -> None:
+    """五个独立凭据与制品门禁齐全时，发布配置才可实例化。"""
+
+    settings = load_settings(
+        environ={
+            "AMR_ENV": "compose",
+            "POSTGRES_DSN": "postgresql://amr:secure-db-password@postgres/amr_agent",
+            "AMR_JWT_SECRET": "jwt-secret-0123456789-0123456789-ab",
+            "AMR_HITL_SIGNING_SECRET": "hitl-secret-0123456789-0123456789-a",
+            "OPENAI_API_KEY": "model-secret-0123456789-0123456789-a",
+            "QDRANT_API_KEY": "qdrant-secret-0123456789-0123456789",
+            "FAST_MODEL_VERIFY_ARTIFACT": "true",
+        }
+    )
+
+    assert settings.app.environment == "compose"
+    assert settings.model_gateway.artifact_verification_required is True
+    assert settings.retrieval.qdrant_api_key is not None
+
+
+def test_project_dotenv_supplies_rotated_dsn_without_process_env(tmp_path) -> None:
+    """轮换后的库密码只在 .env；显式空 environ 叠加 dotenv 必须能读到它。"""
+
+    (tmp_path / ".env").write_text(
+        "POSTGRES_DSN=postgresql://amr:rotated-local-secret@127.0.0.1:5432/amr_agent\n"
+        "# comment should be ignored\n"
+        "EMPTY_VALUE=\n",
+        encoding="utf-8",
+    )
+    parsed = _read_dotenv(tmp_path / ".env")
+    assert "EMPTY_VALUE" not in parsed
+    settings = load_settings(
+        project_root=tmp_path,
+        environ={},
+        load_dotenv_file=True,
+    )
+    assert (
+        settings.database.postgres_dsn.get_secret_value()
+        == "postgresql://amr:rotated-local-secret@127.0.0.1:5432/amr_agent"
+    )

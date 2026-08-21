@@ -107,6 +107,31 @@ def test_zero_tolerance_battery_violation_fails_case_instead_of_being_hidden() -
     assert result.failure_code == "route_safety_violation"
 
 
+def test_oracle_mutations_and_unknown_keys_fail_closed() -> None:
+    """oracle 突变和未登记键必须把原本可通过的样例打成失败。"""
+
+    harness = _harness()
+    source = next(item for item in load_dataset().cases if item.case_id == "p018-normal-001")
+    must_fail = source.model_copy(update={"oracle": {**source.oracle, "must_fail": True}})
+    duplicate = source.model_copy(update={"oracle": {**source.oracle, "duplicate_side_effect_count": 999}})
+    unknown = source.model_copy(update={"oracle": {**source.oracle, "invented_metric": 1}})
+    assert harness.run_case(must_fail).evaluation_passed is False
+    assert harness.run_case(duplicate).evaluation_passed is False
+    assert harness.run_case(unknown).failure_code == "unknown_oracle_key"
+
+
+def test_prompt_injection_consumes_untrusted_text_without_handler() -> None:
+    """注入文本必须进入不可信上下文，且 handler 调用保持为 0。"""
+
+    harness = _harness()
+    case = next(item for item in load_dataset().cases if item.case_id == "p018-security-001")
+    result = harness.run_case(case)
+    assert result.evaluation_passed is True
+    assert result.observed_outcome is EvalOutcome.DENIED
+    assert result.metrics.get("injection_text_consumed") == 1
+    assert result.metrics.get("security_handler_calls") == 0
+
+
 def test_reports_share_identity_and_include_failure_trajectory_projection() -> None:
     """JSON/Markdown 来自同一报告对象，并保留负向 case ID 与错误码。"""
 

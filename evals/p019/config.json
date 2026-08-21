@@ -1,7 +1,7 @@
 {
   "eval_config_id": "amr-p019-config",
-  "version": "p0-19.v1",
-  "execution_mode": "offline_trace_replay",
+  "version": "p0-19.v2",
+  "execution_mode": "offline_independent_oracle",
   "p018_dataset_path": "evals/p018/dataset.json",
   "p018_config_path": "evals/p018/config.json",
   "source_report_default": "tmp/p018_eval_final/p018_eval.json",
@@ -9,25 +9,26 @@
     "profile": "fast",
     "alias": "qwen3.6-fast",
     "family": "Qwen3.6",
-    "quantization": "GGUF",
-    "temperature": 0.0,
+    "quantization": "IQ4_NL",
+    "context_window": 16384,
+    "temperature": 0.1,
     "reasoning_enabled": false
   },
   "strategies": [
     {
       "id": "fixed_workflow",
       "production_path": false,
-      "description": "固定 guard→understand→retrieve→plan→validate→execute→verify→finish 顺序；只回放源 Trace。"
+      "description": "无恢复额度的固定线性流程：max_replans=0、max_retries=0；独立执行同一 60 例。"
     },
     {
       "id": "react",
       "production_path": false,
-      "description": "评测层 think→act→observe 控制流投影；不接入生产主链、不增加工具能力。"
+      "description": "评测层有限重试：max_retries=1、max_replans=0；不接入生产主链。"
     },
     {
       "id": "pevr",
       "production_path": true,
-      "description": "复用 P0-18 源 Trace 作为生产 PEVR 参考轨迹。"
+      "description": "完整 P0-15 恢复预算：max_replans=2、max_retries=2；独立执行同一 60 例。"
     }
   ],
   "smart_comparison": {

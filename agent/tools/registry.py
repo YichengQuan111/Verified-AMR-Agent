@@ -24,6 +24,7 @@ from typing import Any, Callable, Mapping
 
 from pydantic import BaseModel, ValidationError
 
+from agent.runtime.checkpoint import make_external_execution_id
 from agent.runtime.hitl import ApprovalGrant
 from agent.security.contracts import Principal
 from agent.security.rbac import AuthorizationError, assert_retrieval_scope, authorize_tool
@@ -678,15 +679,19 @@ def _validate_handler(dependencies: ToolDependencies) -> ToolHandler:
 
 
 def _dispatch_handler(dependencies: ToolDependencies) -> ToolHandler:
-    """通过 P0-11 执行仿真，并把成功结果写入共享状态存储。"""
+    """通过 P0-11 执行仿真，并把成功结果写入共享状态存储。
+
+    外部执行 ID 必须绑定 Effect 业务身份；仅对 plan/seed 求摘要会让不同 run 的
+    合法同构订单碰撞，最终导致恢复查询无法判断副作用归属。
+    """
 
     def handler(model: BaseModel, context: ToolInvocationContext) -> ToolHandlerResponse:
         request = DispatchSimulationInput.model_validate(model)
         plan = request.plan
-        simulation_key = _canonical_digest(
-            {"plan": plan, "seed": request.seed, "until_time": request.until_time}
+        simulation_id = make_external_execution_id(
+            context.idempotency_key or context.call_id,
+            context.input_digest,
         )
-        simulation_id = f"simulation-{simulation_key[:24]}"
         simulator = dependencies.simulator or AMRSimulator()
         try:
             result = simulator.run(

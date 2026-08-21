@@ -483,3 +483,83 @@
   实际端口绑定和风险，没有把 localhost 文档描述当作网络隔离证据。
 - 后续避免：数据服务默认只加入内部 network，缺强 secret 时 fail startup；部署反例必须从应用外
   直接探测数据库/Qdrant，并验证匿名、旧 secret、viewer 和 operator 四种路径。
+
+## 2026-08-21 · P0-18 oracle 必须独立于 runner 自生成证据
+
+- 现象：把 `oracle.must_fail` 或 `duplicate_side_effect_count=999` 写入样例后，旧 runner 仍全绿；注入文本未进入 Prompt 也被记为 blocked。
+- 原因：`run_case` 只比较 scenario 分支自己的 outcome；安全分支捕获自己抛出的 PermissionError。
+- 最终解决：新增 `evaluate_oracle()`，未知键 fail closed；注入路径调用 `PromptDefinition.build_messages()`，缺失安全边界记 FAILED 而不是 DENIED+passed。
+- 后续避免：每个 oracle 字段都要有消费覆盖和 mutation 测试；禁止用 catch 自己的异常制造安全成功。
+
+## 2026-08-21 · P0-19 不能把同一 Trace 投影写成三策略对照
+
+- 现象：180 条结果复制同一 `observed_outcome`，三策略都是 60/60。
+- 原因：replay 只改控制步标签，不改变恢复额度或工具调用。
+- 最终解决：默认 `offline_independent_oracle`，Workflow/ReAct/PEVR 各自跑 P0-18 Harness；replay 保留为 `--mode replay`。
+- 后续避免：策略对照报告必须证明至少一例终态可分离；缺失 Token/墙钟时保持 `observed=false`。
+
+## 2026-08-21 · 生产 VALIDATE 不能把首轮 version=1 规则套到重规划计划
+
+- 现象：七类故障生产图测试在第一次 replan 后 `plan_version=2` 即 FAILED；成功 replan 用例抛 `plan_version_invalid` / `task_has_runtime_evidence`，外层再被分类成未知故障 fail closed。
+- 原因：`_apply_production_replan` 已丢掉 VALIDATE/EXECUTE 轨迹并提交 v2 计划，但 `_validate_node` 仍调用 `validate_normal_pevr_plan(expected_plan_version=1)`，把合法的 completed 锚点和 pending 替换子图当成首轮非法计划。
+- 最终解决：`plan_version>1` 或存在 `completed_task_ids` 时改走 `validate_replanned_pevr_plan`；并将 `plan_validation_failed` 归入 `PLAN_INFEASIBLE` 作为安全网。
+- 后续避免：重跑 VALIDATE 必须与 LocalReplanner 使用同一套 completed/pending/version 不变量；不要用首轮门禁“顺便”复验 v2。
+
+## 2026-08-21 · `AppSettings()` 不会读取轮换后的 `.env`
+
+- 现象：C04 轮换 PostgreSQL 密码后，集成测试对 `amr` 认证失败，而 `check_postgres.py` 在启动脚本加载 `.env` 时可以连通。
+- 原因：测试夹具写 `create_database_runtime(AppSettings().database)`，只拿到代码/TOML 默认 `123456`；`load_settings()` 原先也不读 `.env`。
+- 最终解决：`load_settings()` 在调用方未传入 `environ` 时解析项目 `.env` 白名单键；集成测试和 worker 改为 `load_settings()`。
+- 后续避免：凡是要连真实 Compose 数据面的代码，用 `load_settings()` 而不是直接构造 `AppSettings()`。
+
+## 2026-08-21 · release_time CTest 夹具必须遵守代价与时间窗契约
+
+- 现象：预定位主例通过后，提前到达要求 `wait` 失败（A* 用更便宜的转向凑时间）；idle AMR 占用走廊时 `max_time=7` 不够绕行；`deadline==release_time` 在 normalize 阶段抛 `invalid_order` 而不是返回 infeasible。
+- 原因：默认 `turn_cost=0.25 < wait_cost=1`；未分配 AMR 会预约所在格至时域结束；订单契约要求 `deadline > release_time`。
+- 最终解决：等待例压低 `wait_cost`；冲突例放宽 `max_time/deadline`；反例改为 `deadline=6, max_time=5`。
+- 后续避免：验证 wait 语义时显式设置代价；构造“时间窗无解”时不要触碰非法订单字段。
+
+## 2026-08-21 · 当前 `put()` 已写 lookup_id，不能用来模拟历史 collision
+
+- 现象：遗留外部 ID 迁移测试 `migrated >= 2` 得到 0，尽管 `get(old_id)` 仍能因 JSONB `run_id` 冲突而报错。
+- 原因：新 `put()` 在写入快照时已经带上 `lookup_id` 与 `identity_version=p014.v2`，迁移循环会 skip。
+- 最终解决：测试直接向 Effect JSONB 写入无 lookup_id 的历史快照后再跑迁移。
+- 后续避免：回归“旧数据迁移”必须构造旧载荷，而不是调用已经修复的写入路径。
+
+## 2026-08-21 · Windows PowerShell 5.1 不能直接跑无 BOM 的 UTF-8 中文脚本
+
+- 现象：`start_local.ps1 -StartFast` 用 `powershell.exe` 隐藏启动 `start_fast_secure.ps1` 后，8080 永远不起来；前台用 5.1 解析会报中文字符串把引号吃掉。
+- 原因：Windows PowerShell 5.1 默认按系统代码页读脚本；UTF-8 中文 `throw "..."` 会变成乱码并拆掉字符串。
+- 解决：给启动器写 UTF-8 BOM，并优先用 `pwsh.exe`。
+- 避免：仓库里带中文的 `.ps1` 若仍可能被 5.1 调用，必须带 BOM 或避免在双引号字符串里放非 ASCII。
+
+## 2026-08-21 · HITL HTTP 测试的冻结时钟不能拿去对照墙钟 approve
+
+- 现象：`test_api_hitl_routes_are_run_scoped_and_operator_only` 在 12:15Z 之后变成 409。
+- 原因：请求用 `2026-08-21 12:00Z` 加上 900s TTL，`store.approve()` 用 `datetime.now(timezone.utc)`；过期也映射成 `HITL_NOT_PENDING`。
+- 解决：该用例改为墙钟构造 `requested_at`。
+- 避免：凡是走真实 `now()` 的存储路径，夹具时间必须未过期，或把 `now=` 注入到底层。
+
+## 2026-08-21 · Fast 19GB 哈希加 GPU 加载不能用 300s 父进程超时去“等健康”
+
+- 现象：即使子进程其实能起来，父脚本 300s 超时抛错，工具进程树可能把还在加载的 llama-server 一起杀掉。
+- 原因：`Get-FileHash` 大文件 + 35B IQ4_NL 上 GPU 经常超过 5 分钟。
+- 解决：健康等待改为 600s，并与编码修复一起保证子进程真的在跑。
+- 避免：不要把“没在超时内 /health”直接写成模型坏了，先看 18080/8080 监听和启动器日志。
+
+## 2026-08-21 · 演示启动不能默认扫描 19GB GGUF 哈希
+
+- 现象：`start_local.ps1 -StartFast` 在打印任何 `[ok]` 前静默 SHA-256，看起来像没反应。
+- 原因：`verify_fast_artifact.py` 和 `Get-FileHash` 会整文件扫描 IQ4_NL 权重；`check_model_gateway.py` 随后再扫一遍。
+- 解决：manifest `verify_sha256=false`；启动只检查存在和大小。需要发布级哈希时把该字段改回 true 再跑 `verify_fast_artifact.py`。
+- 避免：不要把报告里的 model_sha256 在关闭校验后写成“本次启动已重算”。
+
+## 2026-08-21 · Hidden 启动器空等 /health 不等于模型在加载
+
+- 现象：终端只打印“等待 /health”就回到提示符；任务管理器没有 llama-server。
+- 原因：父脚本 `Start-Process -WindowStyle Hidden` 后，子进程卡住或立刻失败都看不见；Ctrl+C 只停父进程，隐藏子进程可能还在。`Start-Process -ArgumentList` 给 `--model` 再套一层引号也会让 llama-server 起不来。
+- 解决：最小化窗口、写 `tmp/fast_secure.transcript.log`，子进程一退出就把日志尾抛给父脚本。
+- 避免：不要在没看到 `llama-server.exe` 之前把空等当成“正在加载”。
+
+
+

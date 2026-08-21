@@ -14,6 +14,9 @@ json = true
 profile = "fast"
 base_url = "http://127.0.0.1:8080/v1"
 api_key = "dummy"
+artifact_manifest_path = "config/fast_model_manifest.json"
+# 发布/Compose 会强制为 true；仓库默认也启用，确保真实 Provider 启动前核验制品。
+artifact_verification_required = true
 connect_timeout_seconds = 3.0
 generation_timeout_seconds = 120.0
 max_schema_repair_attempts = 1
@@ -25,8 +28,12 @@ validate_on_startup = true
 
 [model_gateway.profiles.fast]
 alias = "qwen3.6-fast"
-context_window = 8192
-temperature = 0.0
+context_window = 16384
+temperature = 0.1
+top_p = 0.95
+top_k = 20
+parallel_slots = 1
+quantization = "IQ4_NL"
 reasoning_enabled = false
 reasoning_budget_tokens = 0
 enabled = true
@@ -48,12 +55,15 @@ postgres_dsn = "postgresql://amr:123456@localhost:5432/amr_agent"
 [security]
 # 仅用于本地开发/冒烟；部署必须通过 AMR_JWT_SECRET 注入独立密钥。
 jwt_secret = "p016-development-only-change-this-jwt-secret-2026"
+hitl_signing_secret = "p016-development-only-change-this-hitl-secret-2026"
 issuer = "amr-agent"
 audience = "amr-agent-api"
 leeway_seconds = 0
 
 [retrieval]
 qdrant_url = "http://localhost:6333"
+# 开发者若使用无认证的临时 Qdrant 可保持为空；Compose/production 会拒绝空值。
+# qdrant_api_key = "由 QDRANT_API_KEY 注入"
 collection_name = "amr_warehouse_knowledge"
 # 本地模型路径是当前 P0 固定环境；维度由运行时模型动态读取，不在配置中写死。
 embedding_model_path = "E:\\Llama.cpp\\Embedding"

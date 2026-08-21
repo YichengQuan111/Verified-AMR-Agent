@@ -20,13 +20,15 @@ class QdrantVectorStore:
         self,
         *,
         url: str,
+        api_key: str | None = None,
         collection_name: str = "amr_warehouse_knowledge",
         client: QdrantClient | None = None,
     ) -> None:
         if not collection_name:
             raise ValueError("collection_name 不能为空")
         self.collection_name = collection_name
-        self.client = client or QdrantClient(url=url, timeout=30)
+        # API key 直接交给官方客户端，不进入 payload、异常或检索 Trace。
+        self.client = client or QdrantClient(url=url, api_key=api_key, timeout=30)
 
     def initialise_collection(self, dimension: int, *, rebuild: bool) -> None:
         """创建或验证 collection；rebuild 只删除精确命名的目标 collection。"""

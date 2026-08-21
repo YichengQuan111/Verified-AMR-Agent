@@ -81,7 +81,10 @@ top.vector_score >= 0.499
 
 阈值来自真实评测，不是模型名推断值。移除非证据 section 后，初始问题集的可答最低 hybrid 为 0.821220，不可答最高为 0.797038，中点约 0.809。加入更短的语义改写“AMR 当前电量 25% 属于哪个区间？”后，hybrid 单阈值不再可分；在 hybrid 未达标子集中，该可答问题 top vector 为 0.597388，3 个不可答问题为 0.320516～0.400358，中点为 0.498873，因此 vector 补充门禁取 0.499。
 
-这组数值只对当前冻结语料、模型、prompt、chunking 和融合公式有效。任何一项变化后都必须重新运行评测并检查完整 score 分布。
+阈值只允许从 `evals/rag/cases.json` 的 calibration 子集建议；对外发布的 Recall/MRR/
+citation/answerability/ACL 只在 test+attack holdout 上计算。CLI 在这些指标失败或
+`citation_total=0` 时必须非零退出。2026-08-20 的 20 例同集数字（MRR=0.970588 等）
+仅作为历史基线，不能再当作发布 holdout 指标。
 
 ## 5. 运行命令
 

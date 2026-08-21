@@ -26,8 +26,11 @@ from agent.runtime.checkpoint import (
     EffectLedgerEntry,
     EffectLedgerStatus,
     EffectReservation,
+    ExternalExecutionSnapshot,
+    ExternalExecutionStatus,
     RuntimePersistenceProtocol,
     canonical_json_digest,
+    make_external_execution_id,
     make_effect_idempotency_key,
     to_jsonable,
 )
@@ -422,11 +425,6 @@ class PostgresRuntimeStore(RuntimePersistenceProtocol):
         snapshot_payload = to_jsonable(snapshot)
         if not isinstance(snapshot_payload, Mapping):
             raise PersistenceConflictError("外部执行快照必须是 JSON 对象")
-        new_value = {
-            "run_id": run_id,
-            "snapshot": dict(snapshot_payload),
-            "snapshot_digest": canonical_json_digest(snapshot_payload),
-        }
         with self._session_factory() as session:
             with session.begin():
                 record = EffectRepository(session).get_by_idempotency_key(
@@ -438,6 +436,17 @@ class PostgresRuntimeStore(RuntimePersistenceProtocol):
                 payload = dict(record.payload_snapshot or {})
                 if payload.get("tool_name") != ToolName.DISPATCH_SIMULATION.value:
                     raise PersistenceConflictError("只有 dispatch_simulation 可写执行状态快照")
+                entry = self._effect_entry(record)
+                lookup_id = make_external_execution_id(entry.idempotency_key, entry.input_digest)
+                new_value = {
+                    "run_id": run_id,
+                    # lookup_id 由业务幂等键派生，保证跨 run 唯一；run_id 仍保存
+                    # 仿真器实际返回的执行身份，迁移不会改写历史 Trace 证据。
+                    "lookup_id": lookup_id,
+                    "identity_version": "p014.v2",
+                    "snapshot": dict(snapshot_payload),
+                    "snapshot_digest": canonical_json_digest(snapshot_payload),
+                }
                 existing = payload.get("external_execution")
                 if existing is not None:
                     if not isinstance(existing, Mapping) or canonical_json_digest(existing) != canonical_json_digest(new_value):
@@ -449,10 +458,15 @@ class PostgresRuntimeStore(RuntimePersistenceProtocol):
                 session.flush()
 
     def get(self, run_id: str) -> dict[str, JsonValue] | None:
-        """按仿真 ID 读取持久化外部快照；多条归属视为账本损坏。"""
+        """按唯一查询 ID 读取外部快照，并保守兼容未迁移的旧仿真 ID。"""
 
         with self._session_factory() as session:
-            records = EffectRepository(session).list_by_external_execution_id(run_id)
+            repository = EffectRepository(session)
+            records = repository.list_by_external_lookup_id(run_id)
+            if not records:
+                # 旧数据没有 lookup_id；只有外部 ID 本身唯一时才允许兼容读取，
+                # 冲突记录必须先做迁移或由 inspect 按 Effect 行读取。
+                records = repository.list_by_external_execution_id(run_id)
             if not records:
                 return None
             if len(records) != 1:
@@ -465,6 +479,167 @@ class PostgresRuntimeStore(RuntimePersistenceProtocol):
             if not isinstance(snapshot, Mapping) or digest != canonical_json_digest(snapshot):
                 raise PersistenceConflictError("Effect 外部执行快照摘要校验失败")
             return deepcopy(dict(snapshot))
+
+    def inspect(self, *, entry: EffectLedgerEntry) -> ExternalExecutionSnapshot:
+        """按唯一幂等键核对本 Effect 行，避免历史 simulation_id 冲突。
+
+        该读取路径是恢复的权威适配器：reserved 且尚无外部快照等价于
+        ``not_found``，可以安全继续；一旦快照存在，则摘要、工具身份和结果摘要
+        任一不一致都会 fail closed，绝不退回到跨 run 的全局扫描。
+        """
+
+        current = self.get_effect(entry.idempotency_key)
+        if current is None:
+            return ExternalExecutionSnapshot(
+                status=ExternalExecutionStatus.UNKNOWN,
+                source="postgres_effect_ledger_missing",
+                observed_at=self._clock(),
+                details={"idempotency_key": entry.idempotency_key},
+            )
+        if current.input_digest != entry.input_digest or current.tool_name is not entry.tool_name:
+            raise PersistenceConflictError("恢复请求与 Effect Ledger 身份不一致")
+        with self._session_factory() as session:
+            record = EffectRepository(session).get_by_idempotency_key(entry.idempotency_key)
+            if record is None:
+                raise PersistenceConflictError("恢复期间 Effect Ledger 行消失")
+            external = (record.payload_snapshot or {}).get("external_execution")
+        if external is None:
+            return ExternalExecutionSnapshot(
+                status=ExternalExecutionStatus.NOT_FOUND,
+                source="postgres_effect_ledger",
+                observed_at=self._clock(),
+                details={"ledger_status": current.status.value},
+            )
+        if not isinstance(external, Mapping):
+            raise PersistenceConflictError("Effect 外部执行载荷不是 JSON 对象")
+        snapshot = external.get("snapshot")
+        if not isinstance(snapshot, Mapping) or external.get("snapshot_digest") != canonical_json_digest(snapshot):
+            raise PersistenceConflictError("Effect 外部执行快照摘要校验失败")
+        external_id = external.get("run_id")
+        if not isinstance(external_id, str) or not external_id:
+            raise PersistenceConflictError("Effect 外部执行快照缺少真实执行 ID")
+        raw_status = str(snapshot.get("status", "unknown"))
+        if raw_status == "completed":
+            result = current.result
+            if result is None:
+                now = self._clock()
+                result = ToolResult(
+                    tool_name=ToolName.DISPATCH_SIMULATION,
+                    call_id=current.call_id,
+                    status="success",
+                    output=deepcopy(dict(snapshot)),
+                    error=None,
+                    started_at=now,
+                    finished_at=now,
+                    duration_ms=0,
+                    evidence_refs=[
+                        f"simulation://{external_id}",
+                        f"simulation://{external_id}/events",
+                    ],
+                    effect_id=external_id,
+                    tool_version="p0-12.v1",
+                    principal_role="operator",
+                    input_digest=current.input_digest,
+                    output_digest=canonical_json_digest(snapshot),
+                    idempotency_key=current.idempotency_key,
+                    audit_metadata={"reconciled": True, "source": "postgres_effect_ledger"},
+                )
+            return ExternalExecutionSnapshot(
+                status=ExternalExecutionStatus.COMPLETED,
+                source="postgres_effect_ledger",
+                observed_at=self._clock(),
+                external_effect_id=external_id,
+                result=result,
+                evidence_refs=list(result.evidence_refs),
+                details={"lookup_id": str(external.get("lookup_id") or "legacy")},
+            )
+        status = (
+            ExternalExecutionStatus.FAILED
+            if raw_status in {"blocked", "timeout", "failed"}
+            else ExternalExecutionStatus.IN_PROGRESS
+            if raw_status in {"running", "in_progress"}
+            else ExternalExecutionStatus.UNKNOWN
+        )
+        return ExternalExecutionSnapshot(
+            status=status,
+            source="postgres_effect_ledger",
+            observed_at=self._clock(),
+            external_effect_id=external_id,
+            details={"status": raw_status},
+        )
+
+    def migrate_external_execution_lookups(self) -> dict[str, int]:
+        """为历史外部快照补全唯一 lookup_id，保留原始仿真 ID 与报告证据。
+
+        迁移只增加查询元数据，不改写 SimulationResult、ToolResult、Trace 或最终
+        报告，因此历史摘要仍可复核。任何同一 Effect 上的既有 lookup 漂移都会
+        终止整个事务，避免静默把记录重新归属给另一运行。
+        """
+
+        examined = migrated = 0
+        external_counts: dict[str, int] = {}
+        with self._session_factory() as session:
+            with session.begin():
+                records = EffectRepository(session).list_with_external_execution()
+                for record in records:
+                    examined += 1
+                    payload = dict(record.payload_snapshot or {})
+                    external = payload.get("external_execution")
+                    if not isinstance(external, Mapping):
+                        raise PersistenceConflictError("历史 Effect 外部执行载荷不是 JSON 对象")
+                    value = dict(external)
+                    external_id = value.get("run_id")
+                    if not isinstance(external_id, str) or not external_id:
+                        raise PersistenceConflictError("历史 Effect 缺少外部执行 ID")
+                    external_counts[external_id] = external_counts.get(external_id, 0) + 1
+                    entry = self._effect_entry(record)
+                    lookup_id = make_external_execution_id(entry.idempotency_key, entry.input_digest)
+                    existing_lookup = value.get("lookup_id")
+                    if existing_lookup not in {None, lookup_id, external_id}:
+                        raise PersistenceConflictError("历史 Effect 的 lookup_id 与业务身份不一致")
+                    if existing_lookup == lookup_id and value.get("identity_version") == "p014.v2":
+                        continue
+                    value["lookup_id"] = lookup_id
+                    value["identity_version"] = "p014.v2"
+                    if external_id != lookup_id:
+                        value["legacy_external_execution_id"] = external_id
+                    payload["external_execution"] = value
+                    record.payload_snapshot = to_jsonable(payload)
+                    record.updated_at = self._clock()
+                    migrated += 1
+                session.flush()
+        return {
+            "examined": examined,
+            "migrated": migrated,
+            "legacy_collision_groups": sum(count > 1 for count in external_counts.values()),
+        }
+
+    def audit_external_execution_lookups(self) -> dict[str, int]:
+        """只读统计待迁移行和旧 ID 冲突组，供发布前预检。"""
+
+        examined = pending = 0
+        external_counts: dict[str, int] = {}
+        with self._session_factory() as session:
+            records = EffectRepository(session).list_with_external_execution()
+            for record in records:
+                examined += 1
+                payload = record.payload_snapshot or {}
+                external = payload.get("external_execution")
+                if not isinstance(external, Mapping):
+                    raise PersistenceConflictError("历史 Effect 外部执行载荷不是 JSON 对象")
+                external_id = external.get("run_id")
+                if not isinstance(external_id, str) or not external_id:
+                    raise PersistenceConflictError("历史 Effect 缺少外部执行 ID")
+                external_counts[external_id] = external_counts.get(external_id, 0) + 1
+                entry = self._effect_entry(record)
+                expected = make_external_execution_id(entry.idempotency_key, entry.input_digest)
+                if external.get("lookup_id") != expected or external.get("identity_version") != "p014.v2":
+                    pending += 1
+        return {
+            "examined": examined,
+            "pending": pending,
+            "legacy_collision_groups": sum(count > 1 for count in external_counts.values()),
+        }
 
     def complete_effect(
         self,

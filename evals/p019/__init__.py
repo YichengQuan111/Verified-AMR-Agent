@@ -10,6 +10,7 @@ from .contracts import (
     StrategySummary,
 )
 from .dataset import DEFAULT_CONFIG_PATH, DEFAULT_SOURCE_REPORT_PATH, load_config
+from .independent import run_independent_comparison
 from .replay import compare_source_report, load_source_report, run_comparison
 
 __all__ = [
@@ -26,4 +27,5 @@ __all__ = [
     "load_config",
     "load_source_report",
     "run_comparison",
+    "run_independent_comparison",
 ]

@@ -164,6 +164,32 @@ class EffectRepository:
             )
         )
 
+    def list_by_external_lookup_id(self, lookup_id: str) -> list[EffectRecord]:
+        """按迁移后的唯一查询 ID 读取 Effect，不改写历史仿真证据。"""
+
+        return list(
+            self.session.scalars(
+                select(EffectRecord)
+                .where(
+                    EffectRecord.payload_snapshot.contains(
+                        {"external_execution": {"lookup_id": lookup_id}}
+                    )
+                )
+                .order_by(EffectRecord.updated_at.desc(), EffectRecord.effect_id)
+            )
+        )
+
+    def list_with_external_execution(self) -> list[EffectRecord]:
+        """返回含外部快照的账本行，供一次性身份迁移逐行加锁处理。"""
+
+        return list(
+            self.session.scalars(
+                select(EffectRecord)
+                .where(EffectRecord.payload_snapshot.has_key("external_execution"))  # type: ignore[attr-defined]
+                .order_by(EffectRecord.run_id, EffectRecord.plan_version, EffectRecord.task_id)
+            )
+        )
+
 
 class ApprovalRepository:
     """approvals 表读写与待处理请求查询。"""

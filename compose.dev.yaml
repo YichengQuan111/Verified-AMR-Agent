@@ -1,0 +1,16 @@
+services:
+  postgres:
+    # 开发覆盖仅绑定 loopback，供本机迁移/集成测试访问；发布只使用 compose.yaml。
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+    networks:
+      - backend
+      - edge
+
+  qdrant:
+    ports:
+      - "127.0.0.1:${QDRANT_HTTP_PORT:-6333}:6333"
+      - "127.0.0.1:${QDRANT_GRPC_PORT:-6334}:6334"
+    networks:
+      - backend
+      - edge

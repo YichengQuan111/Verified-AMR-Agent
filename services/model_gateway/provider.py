@@ -19,6 +19,10 @@ from openai import APIConnectionError, APIStatusError, APITimeoutError, OpenAI
 from pydantic import BaseModel, ValidationError
 
 from services.config.settings import ModelGatewaySettings
+from services.model_gateway.artifacts import (
+    VerifiedFastArtifact,
+    load_and_verify_fast_artifact,
+)
 from services.model_gateway.contracts import (
     ChatMessage,
     GatewayHealth,
@@ -72,6 +76,9 @@ class ModelProvider:
         self._client = client or self._build_client(settings)
         # 只有启动门禁成功后才写入版本记录；None 表示模型身份尚未确认。
         self._version_record: ModelVersionRecord | None = None
+        # 与服务 alias 分开缓存制品证据；health_check 会同时清空并重新校验，
+        # 因而运行中替换 GGUF/二进制也会在下一次主动健康检查时被发现。
+        self._artifact_record: VerifiedFastArtifact | None = None
         # 防止多个线程同时首次调用 startup，造成重复的 /v1/models 请求。
         self._startup_lock = Lock()
         self._logger = get_logger(
@@ -122,6 +129,15 @@ class ModelProvider:
         with self._startup_lock:
             if self._version_record is not None:
                 return self._version_record
+            if self.settings.artifact_verification_required:
+                try:
+                    self._artifact_record = load_and_verify_fast_artifact(
+                        self.settings
+                    )
+                except ValueError as exc:
+                    raise ModelGatewayStartupError(
+                        f"Fast artifact verification failed: {exc}"
+                    ) from exc
             try:
                 # 启动阶段只需要确认连接和模型列表，因此使用较短的连接超时。
                 response = self._client.models.list(
@@ -159,6 +175,31 @@ class ModelProvider:
                 raise ModelAliasMismatchError(expected_alias, aliases)
 
             # 只有所有门禁通过后才保存版本证据，避免失败状态被误认为已验证。
+            artifact_fields: dict[str, Any] = {}
+            if self._artifact_record is not None:
+                artifact = self._artifact_record
+                artifact_fields = {
+                    "artifact_id": artifact.artifact_id,
+                    "artifact_manifest_path": artifact.manifest_path,
+                    "artifact_manifest_sha256": artifact.manifest_sha256,
+                    "model_path": artifact.model_path,
+                    "model_size_bytes": artifact.model_size_bytes,
+                    "model_sha256": artifact.model_sha256,
+                    "quantization": artifact.quantization,
+                    "context_window": artifact.context_window,
+                    "temperature": artifact.temperature,
+                    "top_p": artifact.top_p,
+                    "top_k": artifact.top_k,
+                    "parallel_slots": artifact.parallel_slots,
+                    "reasoning_enabled": artifact.reasoning_enabled,
+                    "llama_cpp_version": artifact.llama_cpp_version,
+                    "llama_cpp_build": artifact.llama_cpp_build,
+                    "llama_cpp_commit": artifact.llama_cpp_commit,
+                    "runtime_binary_path": artifact.runtime_binary_path,
+                    "runtime_binary_sha256": artifact.runtime_binary_sha256,
+                    "launch_script_path": artifact.launch_script_path,
+                    "launch_script_sha256": artifact.launch_script_sha256,
+                }
             self._version_record = ModelVersionRecord(
                 profile=self.settings.profile,
                 configured_alias=expected_alias,
@@ -168,6 +209,7 @@ class ModelProvider:
                 model_owned_by=_read_field(matching_model, "owned_by"),
                 openai_sdk_version=metadata.version("openai"),
                 observed_at=datetime.now(timezone.utc),
+                **artifact_fields,
             )
             self._logger.info(
                 "model_gateway_started",
@@ -180,6 +222,7 @@ class ModelProvider:
         """丢弃旧缓存并重新探测，用于 ``/health/model`` 主动健康检查。"""
 
         self._version_record = None
+        self._artifact_record = None
         return GatewayHealth(version=self.startup())
 
     def generate_text(self, messages: Sequence[MessageInput]) -> ModelCallResult:
@@ -387,6 +430,7 @@ class ModelProvider:
             "model": version.configured_alias,
             "messages": [message.model_dump() for message in messages],
             "temperature": self.settings.active_profile.temperature,
+            "top_p": self.settings.active_profile.top_p,
             "max_tokens": effective_output_tokens,
             "stream": False,
             # 这是 Provider 内部固定的 llama.cpp 模板参数：Fast 关闭思考；
@@ -397,6 +441,7 @@ class ModelProvider:
                     "enable_thinking": self.settings.active_profile.reasoning_enabled
                 },
                 "reasoning_budget": self.settings.active_profile.reasoning_budget_tokens,
+                "top_k": self.settings.active_profile.top_k,
             },
             "timeout": httpx.Timeout(
                 timeout=effective_timeout_seconds,

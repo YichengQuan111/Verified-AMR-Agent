@@ -1,0 +1,40 @@
+{
+  "schema_version": "amr.fast-model-manifest.v1",
+  "artifact_id": "qwen3.6-35b-a3b-hauhaucs-iq4_nl-b228c988",
+  "profile": "fast",
+  "alias": "qwen3.6-fast",
+  "quantization": "IQ4_NL",
+  "context_window": 16384,
+  "temperature": 0.1,
+  "top_p": 0.95,
+  "top_k": 20,
+  "parallel_slots": 1,
+  "reasoning_enabled": false,
+  "verify_sha256": false,
+  "llama_cpp": {
+    "version": "0.1.1-dev",
+    "build": 10472,
+    "commit": "60eeeb608"
+  },
+  "model": {
+    "path": "E:\\Llama.cpp\\models\\Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive-IQ4_NL.gguf",
+    "size_bytes": 19779278976,
+    "sha256": "B228C988C624DFFE0B57235A395FA79562D4362FED545820F9B7D78908F337E6"
+  },
+  "runtime_binary": {
+    "path": "E:\\Llama.cpp\\llama-server.exe",
+    "size_bytes": 9216,
+    "sha256": "76B0A5F72243CCB99079CA71EBD0332F123C52668D815C9D6716A89D46415668"
+  },
+  "launch_script": {
+    "path": "scripts/start_fast_secure.ps1",
+    "size_bytes": 8386,
+    "sha256": "8EC0360C30EA5CC9E17F4C7012EFDEF33C65DEB42D1F1F26DE168966F1693805"
+  },
+  "source_script": {
+    "path": "E:\\Llama.cpp\\start-qwen3.6-agent.cmd",
+    "size_bytes": 2194,
+    "sha256": "B1543FB46AA04E835E4BBD666F839567D4972AAD1BE3662F386F06842856F30F"
+  },
+  "observed_at": "2026-08-21T14:36:15+08:00"
+}

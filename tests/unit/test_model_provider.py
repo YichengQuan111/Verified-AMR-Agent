@@ -125,7 +125,8 @@ def test_structured_output_is_validated_without_exposing_tools() -> None:
     assert result.repaired is False
     request = client.completions.calls[0]
     assert request["model"] == "qwen3.6-fast"
-    assert request["temperature"] == 0.0
+    assert request["temperature"] == 0.1
+    assert request["top_p"] == 0.95
     assert request["stream"] is False
     assert request["response_format"]["type"] == "json_object"
     assert "tools" not in request
@@ -133,6 +134,7 @@ def test_structured_output_is_validated_without_exposing_tools() -> None:
     assert request["extra_body"] == {
         "chat_template_kwargs": {"enable_thinking": False},
         "reasoning_budget": 0,
+        "top_k": 20,
     }
     generation_timeout = request["timeout"]
     assert isinstance(generation_timeout, httpx.Timeout)

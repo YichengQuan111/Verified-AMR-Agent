@@ -51,6 +51,7 @@ from agent.planning.validator import (
     PlanValidationResult,
     canonicalize_normal_pevr_plan,
     validate_normal_pevr_plan,
+    validate_replanned_pevr_plan,
 )
 from agent.runtime.pevr import (
     PEVRGraphState,
@@ -83,6 +84,7 @@ from agent.runtime.checkpoint import (
     RecoveryDecision,
     RuntimePersistenceProtocol,
     canonical_json_digest,
+    make_external_execution_id,
     make_effect_idempotency_key,
     to_jsonable,
 )
@@ -93,7 +95,12 @@ from agent.runtime.state import (
     RunState,
     RunStatus,
 )
-from agent.runtime.faults import FaultClassifier, FaultSignal
+from agent.runtime.faults import (
+    FaultClassifier,
+    FaultRecoveryController,
+    FaultSignal,
+    RecoveryAction,
+)
 from agent.runtime.trace import TraceError, TraceEvent, new_trace_id
 from agent.tools import (
     ToolName,
@@ -151,7 +158,7 @@ class _RegistryExternalStateReconciler:
                 source="registry_query_unsupported",
                 observed_at=self._clock(),
             )
-        simulation_id = entry.external_effect_id or self._simulation_id(entry.arguments)
+        simulation_id = entry.external_effect_id or self._simulation_id(entry)
         if not simulation_id:
             return ExternalExecutionSnapshot(
                 status=ExternalExecutionStatus.UNKNOWN,
@@ -235,20 +242,13 @@ class _RegistryExternalStateReconciler:
         )
 
     @staticmethod
-    def _simulation_id(arguments: Mapping[str, Any]) -> str | None:
-        """按 P0-12 dispatch handler 的固定输入摘要推导仿真查询 ID。"""
+    def _simulation_id(entry: Any) -> str | None:
+        """按 Effect 身份推导新式外部 ID；历史 ID 只从账本原值读取。"""
 
-        plan = arguments.get("plan")
-        if not isinstance(plan, Mapping) or "seed" not in arguments:
+        try:
+            return make_external_execution_id(entry.idempotency_key, entry.input_digest)
+        except (AttributeError, TypeError, ValueError):
             return None
-        digest = canonical_json_digest(
-            {
-                "plan": plan,
-                "seed": arguments.get("seed"),
-                "until_time": arguments.get("until_time"),
-            }
-        )
-        return f"simulation-{digest[:24]}"
 
 
 class PEVRExecutionError(RuntimeError):
@@ -300,7 +300,7 @@ class PEVRGraphRunner:
     ENTRY_BUDGETS = {
         # P0-13 会调用 understand、plan、verify、compose_report 四个独立
         # Prompt；预算是整次运行的累计上限，而不是单次 llama.cpp 上下文窗口。
-        # Fast 的单次 context_window 仍由网关限制为 8192，这里只避免把多个
+        # Fast 的单次 context_window 由网关固定为 16384，这里只避免把多个
         # 合法节点的输入相加后误判为 fallback。
         "max_total_seconds": 300,
         "max_input_tokens": 30000,
@@ -324,6 +324,7 @@ class PEVRGraphRunner:
         hitl_store: HITLStoreProtocol | None = None,
         security_required: bool = False,
         hitl_ttl_seconds: int = 900,
+        fault_recovery_enabled: bool | None = None,
     ) -> None:
         self.provider = provider
         self.security_required = security_required
@@ -341,11 +342,29 @@ class PEVRGraphRunner:
             self.registry.approval_verifier = self._registry_approval_verifier
         self.snapshot_provider = snapshot_provider or DefaultWarehouseSnapshotProvider()
         self.checkpoint_store = checkpoint_store
+        # 自动恢复必须有可重启事实；无 Store 的纯单测继续暴露原异常，生产组装
+        # 只要注入 Checkpoint Store 就默认启用 P0-15 有界控制器。
+        self.fault_recovery_enabled = (
+            checkpoint_store is not None
+            if fault_recovery_enabled is None
+            else fault_recovery_enabled
+        )
+        if self.fault_recovery_enabled and checkpoint_store is None:
+            raise ValueError("启用 P0-15 自动恢复必须配置 checkpoint_store")
         # 默认使用当前注册表的只读状态查询；若调用方提供真实仿真/工具适配器，
         # RecoveryCoordinator 会优先使用它。没有适配器时仍返回 unknown 并转安全
         # 分支，绝不把旧 Checkpoint 当作外部真相。
+        # PostgreSQL Store 能按唯一幂等键读取本行的外部快照，优先于全局按
+        # simulation_id 扫描；这同时为旧版本的跨 run 冲突记录提供安全兼容读取。
+        store_reconciler = (
+            checkpoint_store
+            if checkpoint_store is not None and callable(getattr(checkpoint_store, "inspect", None))
+            else None
+        )
         self._recovery = RecoveryCoordinator(
-            external_state_reconciler or _RegistryExternalStateReconciler(self.registry, clock)
+            external_state_reconciler
+            or store_reconciler
+            or _RegistryExternalStateReconciler(self.registry, clock)
         )
         self._clock = clock
         self.graph = self._build_graph()
@@ -421,18 +440,27 @@ class PEVRGraphRunner:
         checkpoint = self._load_checkpoint(resolved_request.run_id)
         if checkpoint is not None:
             self._validate_resume_request(checkpoint, resolved_request)
-            self._reconcile_checkpoint(checkpoint)
+            recovered_state: PEVRGraphState | None = None
             try:
-                restored = self._restore_graph_state(checkpoint.graph_state)
-                self._merge_persisted_trace_events(restored, resolved_request.run_id)
-            except (TypeError, ValueError, ValidationError) as exc:
-                # 损坏 JSONB 不允许通过过滤坏项“自愈”；恢复必须停在确定性边界，
-                # 同时不给调用方泄漏整份持久化载荷。
-                raise PEVRExecutionError(
-                    PEVRStage.GUARD,
-                    "checkpoint_corrupt",
-                    f"Checkpoint 无法通过当前图状态契约: {type(exc).__name__}",
-                ) from exc
+                self._reconcile_checkpoint(checkpoint)
+            except Exception as exc:
+                if not self.fault_recovery_enabled:
+                    raise
+                recovered_state = self._recover_graph_failure(resolved_request, exc)
+            if recovered_state is not None:
+                restored = recovered_state
+            else:
+                try:
+                    restored = self._restore_graph_state(checkpoint.graph_state)
+                    self._merge_persisted_trace_events(restored, resolved_request.run_id)
+                except (TypeError, ValueError, ValidationError) as exc:
+                    # 损坏 JSONB 不允许通过过滤坏项“自愈”；恢复必须停在确定性边界，
+                    # 同时不给调用方泄漏整份持久化载荷。
+                    raise PEVRExecutionError(
+                        PEVRStage.GUARD,
+                        "checkpoint_corrupt",
+                        f"Checkpoint 无法通过当前图状态契约: {type(exc).__name__}",
+                    ) from exc
             trace_id = str(restored.get("trace_id") or resolved_request.trace_id or new_trace_id(resolved_request.run_id))
             resolved_request = resolved_request.model_copy(update={"trace_id": trace_id})
             restored["trace_id"] = trace_id
@@ -469,6 +497,8 @@ class PEVRGraphRunner:
             "model_call_count": 0,
             "hitl_interrupt": None,
             "approval_grant": resolved_request.approval_grant,
+            "approval_id": None,
+            "approval_checkpoint_id": None,
         }
         # 当前进程仍需重新确认模型身份；这不会覆盖已持久化的工具/状态事实。
         initial["request"] = resolved_request
@@ -476,7 +506,7 @@ class PEVRGraphRunner:
         initial.setdefault("trace_events", [])
         initial["model_version"] = model_version
         initial["approval_grant"] = resolved_request.approval_grant or initial.get("approval_grant")
-        state = self.graph.invoke(initial, config={"recursion_limit": 32})
+        state = self._invoke_graph_with_recovery(initial, resolved_request)
         report = state.get("final_report")
         run_state = state.get("run_state")
         verification = state.get("verification")
@@ -496,6 +526,370 @@ class PEVRGraphRunner:
             resource_provenance=list(state.get("resource_provenance", [])),
             trace_events=list(state.get("trace_events", [])),
         )
+
+    def _invoke_graph_with_recovery(
+        self,
+        initial: PEVRGraphState,
+        request: PEVRRequest,
+    ) -> PEVRGraphState:
+        """执行固定图，并把失败交给唯一的 P0-15 有界控制器。
+
+        LangGraph 节点异常不会返回半成品 state，因此恢复只从最后一次已提交的
+        Checkpoint 和独立 Trace 流重建事实。retry/replan 会生成新 Checkpoint 后
+        重新进入同一固定八节点图；human/fallback/fatal 则先把 RunState 持久化为
+        failed 再向调用方抛出稳定异常，数据库不会永久停在 planning。
+        """
+
+        current = initial
+        recovery_cycles = 0
+        while True:
+            try:
+                return cast(
+                    PEVRGraphState,
+                    self.graph.invoke(current, config={"recursion_limit": 32}),
+                )
+            except PEVRInterrupt:
+                raise
+            except Exception as exc:
+                if not self.fault_recovery_enabled:
+                    raise
+                recovery_cycles += 1
+                if recovery_cycles > 16:
+                    # 该硬保险不替代合同预算；理论上 retry+replan 最多 4 次便会
+                    # 终止。若状态机未来改动形成环，unknown/fatal 仍会落终态。
+                    exc = PEVRExecutionError(
+                        PEVRStage.EXECUTE,
+                        "recovery_loop_guard",
+                        "恢复循环超过硬上限，强制 fail closed",
+                    )
+                current = self._recover_graph_failure(request, exc)
+
+    def _recover_graph_failure(
+        self,
+        request: PEVRRequest,
+        error: Exception,
+    ) -> PEVRGraphState:
+        """从最近 Checkpoint 分类一次失败并返回 retry/replan 状态或持久化终态。"""
+
+        checkpoint = self._load_checkpoint(request.run_id)
+        if checkpoint is None:
+            # understand 之前尚无 TaskContract，无法合法构造恢复预算或 RunState；
+            # 保留原始异常，不能伪造一份“已恢复”合同。
+            raise error
+        try:
+            restored = self._restore_graph_state(checkpoint.graph_state)
+            self._merge_persisted_trace_events(restored, request.run_id)
+        except Exception as restore_error:
+            raise PEVRExecutionError(
+                PEVRStage.GUARD,
+                "recovery_checkpoint_corrupt",
+                "失败恢复时 Checkpoint 无法通过当前契约",
+            ) from restore_error
+        contract = restored.get("contract")
+        run_state = restored.get("run_state")
+        plan = restored.get("plan")
+        if not isinstance(contract, TaskContract) or not isinstance(run_state, RunState):
+            raise error
+        if run_state.status in {RunStatus.COMPLETED, RunStatus.FAILED, RunStatus.CANCELLED}:
+            # 业务终态不能因迟到的报告/Trace 错误被重新打开；此时数据库已经
+            # 明确不在 planning，保留原异常供调用方修复报告边界。
+            raise error
+        controller = FaultRecoveryController(
+            contract,
+            usage=restored.get("budget_usage"),
+            run_state=run_state,
+            clock=self._clock,
+        )
+        decision = controller.handle_failure(error)
+        if decision.action is RecoveryAction.REPLAN and isinstance(plan, PlanTasksOutput):
+            try:
+                return self._apply_production_replan(
+                    restored,
+                    controller=controller,
+                    decision=decision,
+                    run_state=run_state,
+                    plan=plan,
+                    request=request,
+                )
+            except Exception as replan_error:
+                # LocalReplanner/完整门禁拒绝候选时不能沿用旧计划继续；把原始
+                # replan 决策和新的 deterministic failure 一并写入 fatal 终态。
+                preparing = controller.record_on_run_state(run_state, decision)
+                terminal_controller = FaultRecoveryController(
+                    contract,
+                    usage=decision.budget_usage,
+                    run_state=preparing,
+                    clock=self._clock,
+                )
+                terminal = terminal_controller.handle_failure(
+                    {
+                        "code": "local_replan_invalid",
+                        "message": f"局部重规划未通过完整门禁: {type(replan_error).__name__}",
+                    },
+                    stage=PEVRStage.EXECUTE.value,
+                )
+                terminal_state = terminal_controller.record_on_run_state(preparing, terminal)
+                self._persist_recovery_decision(
+                    restored,
+                    run_state=terminal_state,
+                    decision=terminal,
+                    stage=PEVRStage.EXECUTE,
+                )
+                raise PEVRExecutionError(
+                    PEVRStage.EXECUTE,
+                    "recovery_fatal",
+                    terminal.reason,
+                    fault=terminal.fault,
+                ) from replan_error
+
+        recorded = controller.record_on_run_state(run_state, decision)
+        stage = self._fault_stage(decision.fault)
+        self._persist_recovery_decision(
+            restored,
+            run_state=recorded,
+            decision=decision,
+            stage=stage,
+        )
+        if decision.action is RecoveryAction.RETRY:
+            restored["run_state"] = recorded
+            restored["budget_usage"] = decision.budget_usage.to_budget_usage()
+            restored["stage"] = stage
+            return restored
+        raise PEVRExecutionError(
+            stage,
+            f"recovery_{decision.action.value}",
+            decision.reason,
+            fault=decision.fault,
+        ) from error
+
+    def _apply_production_replan(
+        self,
+        restored: PEVRGraphState,
+        *,
+        controller: FaultRecoveryController,
+        decision: Any,
+        run_state: RunState,
+        plan: PlanTasksOutput,
+        request: PEVRRequest,
+    ) -> PEVRGraphState:
+        """克隆唯一受影响未完成子图，经 LocalReplanner 完整复验后写新版本。"""
+
+        state_tasks = {task.task_id: task for task in run_state.plan_tasks}
+        synchronized_plan = plan.model_copy(
+            update={
+                "tasks": [state_tasks.get(task.task_id, task) for task in plan.tasks]
+            }
+        )
+        analysis = controller.replanner.analyze(
+            synchronized_plan,
+            completed_task_ids=run_state.completed_task_ids,
+            affected_entities=decision.fault.affected_entities,
+            failed_task_id=decision.fault.task_id,
+            failed_tool_name=decision.fault.tool_name,
+            runtime_resources=restored.get("resource_provenance", []),
+        )
+        if not analysis.invalidated_task_ids:
+            raise ValueError("故障没有定位到可替换的未完成任务")
+        replacements = self._clone_replan_subgraph(
+            synchronized_plan,
+            invalidated_task_ids=analysis.invalidated_task_ids,
+            new_plan_version=synchronized_plan.plan_version + 1,
+        )
+        recovery = controller.apply_replan(
+            run_state,
+            synchronized_plan,
+            decision,
+            replacements,
+            tool_specs=self.registry.specs(),
+            expected_seed=request.seed,
+            runtime_resources=restored.get("resource_provenance", []),
+        )
+        completed = set(recovery.state.completed_task_ids)
+        kept_results: list[ToolResult] = []
+        kept_task_ids: list[str | None] = []
+        for task_id, result in zip(
+            restored.get("tool_task_ids", []),
+            restored.get("tool_results", []),
+        ):
+            if task_id is None or task_id in completed:
+                kept_task_ids.append(task_id)
+                kept_results.append(result)
+        route_retained = any(
+            task.task_id in completed and task.tool_name is ToolName.PLAN_MULTI_AMR_ROUTES
+            for task in recovery.replan_result.plan.tasks
+        )
+        # 计划版本变化后旧审批摘要必然失效；即使故障发生在审批之后，也必须
+        # 回到新的 waiting checkpoint，不能把旧 grant 带到新计划。
+        stored_request = restored["request"].model_copy(
+            update={
+                "approval_grant": None,
+                "approval_granted": (
+                    restored["request"].approval_granted
+                    if not self.security_required and restored["request"].principal is None
+                    else False
+                ),
+            }
+        )
+        kept_stages = {
+            PEVRStage.GUARD,
+            PEVRStage.UNDERSTAND,
+            PEVRStage.RETRIEVE,
+            PEVRStage.PLAN,
+        }
+        restored.update(
+            {
+                "request": stored_request,
+                "stage": PEVRStage.VALIDATE,
+                "stage_trace": [
+                    item
+                    for item in restored.get("stage_trace", [])
+                    if item.stage in kept_stages
+                ],
+                "run_state": recovery.state,
+                "plan": recovery.replan_result.plan,
+                "plan_validation": recovery.replan_result.plan_validation,
+                "plan_normalization_notes": [
+                    *restored.get("plan_normalization_notes", []),
+                    f"p015_replan:{recovery.replan_result.new_plan_version}",
+                ],
+                "derived_plan": restored.get("derived_plan") if route_retained else None,
+                "tool_results": kept_results,
+                "tool_task_ids": kept_task_ids,
+                "resource_provenance": [
+                    item
+                    for item in restored.get("resource_provenance", [])
+                    if item.task_id in completed
+                ],
+                "observations": [
+                    item
+                    for item in restored.get("observations", [])
+                    if item.task_id is None or item.task_id in completed
+                ],
+                "budget_usage": decision.budget_usage.to_budget_usage(),
+                "hitl_interrupt": None,
+                "approval_grant": None,
+                "approval_id": None,
+                "approval_checkpoint_id": None,
+                "verification": None,
+                "final_report": None,
+            }
+        )
+        self._persist_recovery_decision(
+            restored,
+            run_state=recovery.state,
+            decision=decision,
+            stage=PEVRStage.EXECUTE,
+        )
+        return restored
+
+    @staticmethod
+    def _clone_replan_subgraph(
+        plan: PlanTasksOutput,
+        *,
+        invalidated_task_ids: list[str],
+        new_plan_version: int,
+    ) -> list[PlanTask]:
+        """确定性克隆失效子图，替换 ID/依赖/$ref 并清除旧执行证据。"""
+
+        invalidated = set(invalidated_task_ids)
+        id_map: dict[str, str] = {}
+        for task_id in invalidated_task_ids:
+            candidate = f"{task_id}-R{new_plan_version}"
+            if len(candidate) > 128:
+                digest = hashlib.sha256(candidate.encode("utf-8")).hexdigest()[:32]
+                candidate = f"TASK-REPLAN-{new_plan_version}-{digest}"
+            id_map[task_id] = candidate
+
+        def replace_refs(value: Any) -> Any:
+            """只替换结构化 task 引用字符串，不解释或执行其余文本。"""
+
+            if isinstance(value, Mapping):
+                return {str(key): replace_refs(item) for key, item in value.items()}
+            if isinstance(value, list):
+                return [replace_refs(item) for item in value]
+            if isinstance(value, str):
+                for old, new in id_map.items():
+                    value = value.replace(f"task:{old}/", f"task:{new}/")
+                return value
+            return value
+
+        replacements: list[PlanTask] = []
+        for task in plan.tasks:
+            if task.task_id not in invalidated:
+                continue
+            replacements.append(
+                task.model_copy(
+                    update={
+                        "task_id": id_map[task.task_id],
+                        "dependencies": [id_map.get(item, item) for item in task.dependencies],
+                        "tool_arguments": replace_refs(task.tool_arguments),
+                        "status": PlanTaskStatus.PENDING,
+                        "evidence_refs": [],
+                        "effect_id": None,
+                    }
+                )
+            )
+        return replacements
+
+    def _persist_recovery_decision(
+        self,
+        state: PEVRGraphState,
+        *,
+        run_state: RunState,
+        decision: Any,
+        stage: PEVRStage,
+    ) -> None:
+        """写恢复 Trace 与 Checkpoint；继续动作和终态使用同一审计格式。"""
+
+        now = self._clock()
+        terminal = bool(decision.terminal)
+        error = (
+            TraceError(
+                category=decision.fault.category.value,
+                code=f"recovery_{decision.action.value}",
+                message=decision.reason,
+                retryable=False,
+                details={"fault_id": decision.fault.fault_id},
+            )
+            if terminal
+            else None
+        )
+        event = TraceEvent(
+            trace_id=str(state.get("trace_id") or state["request"].trace_id or ""),
+            run_id=run_state.run_id,
+            sequence=len(state.get("trace_events", [])) + 1,
+            event_type="node",
+            status="failed" if terminal else "completed",
+            node="recovery",
+            task_id=decision.fault.task_id,
+            started_at=now,
+            finished_at=now,
+            latency_ms=0,
+            error=error,
+            evidence_refs=list(decision.fault.evidence_refs),
+            metadata={
+                "fault_id": decision.fault.fault_id,
+                "fault_category": decision.fault.category.value,
+                "recovery_action": decision.action.value,
+                "retry_count": decision.retry_count,
+                "replan_count": decision.replan_count,
+                "terminal": terminal,
+            },
+        )
+        state["run_state"] = run_state
+        state["budget_usage"] = decision.budget_usage.to_budget_usage()
+        state["trace_events"] = self._append_trace_events(state, [event])
+        state["stage"] = stage
+        self._persist_checkpoint(state, stage=stage)
+
+    @staticmethod
+    def _fault_stage(fault: FaultSignal) -> PEVRStage:
+        """未知或旧版 stage 统一落 execute，确保终态仍可持久化。"""
+
+        try:
+            return PEVRStage(fault.stage) if fault.stage is not None else PEVRStage.EXECUTE
+        except ValueError:
+            return PEVRStage.EXECUTE
 
     def _checkpointed_node(
         self,
@@ -777,10 +1171,32 @@ class PEVRGraphRunner:
         payload = checkpoint.graph_state.get("request")
         if not isinstance(payload, Mapping):
             raise PEVRExecutionError(PEVRStage.GUARD, "checkpoint_request_missing", "Checkpoint 缺少原始请求")
+        stored_principal = payload.get("principal")
+        principal_identity = (
+            {
+                "subject": request.principal.subject,
+                "role": request.principal.role.value,
+                "issuer": request.principal.issuer,
+                "audience": request.principal.audience,
+            }
+            if request.principal is not None
+            else None
+        )
+        stored_identity = (
+            {
+                "subject": stored_principal.get("subject"),
+                "role": stored_principal.get("role"),
+                "issuer": stored_principal.get("issuer"),
+                "audience": stored_principal.get("audience"),
+            }
+            if isinstance(stored_principal, Mapping)
+            else None
+        )
         if (
             payload.get("raw_request") != request.raw_request
             or payload.get("environment_ref") != request.environment_ref
             or payload.get("seed") != request.seed
+            or stored_identity != principal_identity
             or (
                 request.trace_id is not None
                 and payload.get("trace_id") is not None
@@ -942,6 +1358,11 @@ class PEVRGraphRunner:
             restored["approval_grant"] = None
         else:
             raise ValueError("Checkpoint approval_grant 必须是对象或 null")
+        for key in ("approval_id", "approval_checkpoint_id"):
+            value = payload.get(key)
+            if value is not None and (not isinstance(value, str) or not value.strip()):
+                raise ValueError(f"Checkpoint {key} 必须是非空字符串或 null")
+            restored[key] = value
 
         rag_payload = require_list("rag_evidence")
         result_payload = require_list("tool_results")
@@ -1518,12 +1939,25 @@ class PEVRGraphRunner:
         request = state["request"]
         contract = cast(TaskContract, state["contract"])
         plan = cast(PlanTasksOutput, state["plan"])
-        validation = validate_normal_pevr_plan(
-            contract,
-            plan,
-            tool_specs=self.registry.specs(),
-            expected_seed=request.seed,
-        )
+        run_state = cast(RunState, state["run_state"])
+        # 首轮计划固定 version=1；LocalReplanner 产出的 v2+ 必须走重规划门禁，
+        # 否则会把合法替换子图误判为 plan_version_invalid / 预填证据。
+        if plan.plan_version > 1 or run_state.completed_task_ids:
+            validation = validate_replanned_pevr_plan(
+                contract,
+                plan,
+                completed_task_ids=run_state.completed_task_ids,
+                tool_specs=self.registry.specs(),
+                expected_seed=request.seed,
+                expected_plan_version=plan.plan_version,
+            )
+        else:
+            validation = validate_normal_pevr_plan(
+                contract,
+                plan,
+                tool_specs=self.registry.specs(),
+                expected_seed=request.seed,
+            )
         if not validation.valid:
             detail = "; ".join(f"{item.code}: {item.message}" for item in validation.errors)
             raise PEVRExecutionError(
@@ -1539,7 +1973,7 @@ class PEVRGraphRunner:
                     stage=PEVRStage.VALIDATE.value,
                 ),
             )
-        run_state = self._replace_run_state(cast(RunState, state["run_state"]), status=RunStatus.VALIDATING)
+        run_state = self._replace_run_state(run_state, status=RunStatus.VALIDATING)
         return {
             "stage": PEVRStage.VALIDATE,
             "stage_trace": self._mark_stage(state, PEVRStage.VALIDATE),
@@ -1754,6 +2188,8 @@ class PEVRGraphRunner:
                 "run_state": waiting_state,
                 "hitl_interrupt": interrupt,
                 "approval_grant": None,
+                "approval_id": interrupt.approval_id,
+                "approval_checkpoint_id": interrupt.checkpoint_id,
             },
             stage=PEVRStage.EXECUTE,
         )
@@ -1964,12 +2400,25 @@ class PEVRGraphRunner:
                 plan_version=plan.plan_version,
                 arguments=arguments,
             )
+            retry_suffix = (
+                f":retry:{run_state.retry_count}"
+                if run_state.retry_count > 0 and not spec.has_side_effects
+                else ""
+            )
+            invocation_key = (
+                idempotency_key + retry_suffix
+                if not spec.has_side_effects
+                else idempotency_key
+            )
             result = recovered_result or self._registry_execute(
                 task.tool_name,
                 arguments,
                 role=request.principal_role,
-                call_id=f"{request.run_id}:plan:{plan.plan_version}:task:{task.task_id}",
-                idempotency_key=idempotency_key,
+                call_id=(
+                    f"{request.run_id}:plan:{plan.plan_version}:task:{task.task_id}"
+                    f"{retry_suffix}"
+                ),
+                idempotency_key=invocation_key,
                 principal=request.principal,
                 approval_grant=approved_grant,
             )
@@ -2106,6 +2555,10 @@ class PEVRGraphRunner:
             "resource_provenance": resource_provenance,
             "observations": observations,
             "budget_usage": usage,
+            "hitl_interrupt": None,
+            "approval_grant": None,
+            "approval_id": state.get("approval_id"),
+            "approval_checkpoint_id": state.get("approval_checkpoint_id"),
         }
 
     def _verify_node(self, state: PEVRGraphState) -> dict[str, Any]:
@@ -2267,6 +2720,11 @@ class PEVRGraphRunner:
         report = PEVRRunReport(
             run_id=request.run_id,
             trace_id=state.get("trace_id") or request.trace_id,
+            principal_subject=(request.principal.subject if request.principal is not None else None),
+            approval_id=state.get("approval_id") or (
+                request.approval_grant.approval_id if request.approval_grant is not None else None
+            ),
+            approval_checkpoint_id=state.get("approval_checkpoint_id"),
             final_status=normalized_report.final_status,
             state_version=normalized_report.state_version,
             plan_version=normalized_report.plan_version,

@@ -22,7 +22,15 @@ def main() -> int:
     """执行真实 API 请求；连接或协议错误直接返回非零退出码。"""
 
     settings = load_settings()
-    client = QdrantClient(url=settings.retrieval.qdrant_url, timeout=10)
+    client = QdrantClient(
+        url=settings.retrieval.qdrant_url,
+        api_key=(
+            settings.retrieval.qdrant_api_key.get_secret_value()
+            if settings.retrieval.qdrant_api_key is not None
+            else None
+        ),
+        timeout=10,
+    )
     try:
         collections = client.get_collections().collections
         print(

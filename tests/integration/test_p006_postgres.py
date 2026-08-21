@@ -20,7 +20,7 @@ from services.application import (
     PersistenceConflictError,
     RunService,
 )
-from services.config.settings import AppSettings
+from services.config.settings import AppSettings, load_settings
 from services.persistence import (
     ApprovalRecord,
     Base,
@@ -42,7 +42,7 @@ from tests.unit.test_p004_contracts import plan_task_payload, task_contract_payl
 def database_runtime() -> Iterator[DatabaseRuntime]:
     """连接已经迁移的本地 PostgreSQL；缺表时测试必须失败而不是伪通过。"""
 
-    runtime = create_database_runtime(AppSettings().database)
+    runtime = create_database_runtime(load_settings().database)
     existing = set(inspect(runtime.engine).get_table_names(schema="public"))
     assert set(Base.metadata.tables).issubset(existing), "请先执行 P0-06 Alembic upgrade"
     yield runtime

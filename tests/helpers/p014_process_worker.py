@@ -23,7 +23,7 @@ from agent.runtime.graph import PEVRGraphRunner  # noqa: E402
 from agent.runtime.pevr import PEVRRequest  # noqa: E402
 from agent.tools import ToolName, ToolResult, UserRole, build_tool_registry  # noqa: E402
 from services.application import PostgresRuntimeStore  # noqa: E402
-from services.config.settings import AppSettings  # noqa: E402
+from services.config.settings import load_settings  # noqa: E402
 from services.persistence import create_database_runtime  # noqa: E402
 from tests.unit.test_p013_pevr import (  # noqa: E402
     ENVIRONMENT_REF,
@@ -116,7 +116,7 @@ class ProcessRecoveryRegistry:
 def run_worker(run_id: str) -> int:
     """执行到故障窗口；正常返回表示故障钩子没有命中，应判测试失败。"""
 
-    runtime = create_database_runtime(AppSettings().database)
+    runtime = create_database_runtime(load_settings().database)
     try:
         contract = _contract()
         store = KillAfterExternalWriteStore(runtime.session_factory, clock=_now)

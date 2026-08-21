@@ -62,7 +62,7 @@ def create_app(
     checkpoint_store = PostgresRuntimeStore(resolved_session_factory)
     hitl_store = PostgresHITLStore(
         resolved_session_factory,
-        signing_secret=resolved_settings.security.jwt_secret.get_secret_value(),
+        signing_secret=resolved_settings.security.hitl_signing_secret.get_secret_value(),
     )
 
     @asynccontextmanager

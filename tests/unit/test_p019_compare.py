@@ -89,6 +89,41 @@ def test_p019_reports_unobserved_tokens_resources_and_deferred_smart(tmp_path) -
     assert report.report_id == run_comparison(source_report_path=source_path).report_id
 
 
+def test_p019_independent_runners_separate_recovery_outcomes() -> None:
+    """三种策略必须独立执行；Workflow 不能复制 PEVR 的异常恢复终态。"""
+
+    from evals.p019 import P019ExecutionMode, run_independent_comparison
+
+    report = run_independent_comparison()
+    assert report.execution_mode is P019ExecutionMode.INDEPENDENT_ORACLE
+    assert report.status == "passed"
+    assert len(report.raw_results) == 180
+    fixed = next(item for item in report.strategies if item.strategy is P019Strategy.FIXED_WORKFLOW)
+    react = next(item for item in report.strategies if item.strategy is P019Strategy.REACT)
+    pevr = next(item for item in report.strategies if item.strategy is P019Strategy.PEVR)
+    assert pevr.evaluation_pass_count == 60
+    assert fixed.evaluation_pass_count < pevr.evaluation_pass_count
+    assert react.evaluation_pass_count < pevr.evaluation_pass_count
+    workflow_low_battery = next(
+        item
+        for item in report.raw_results
+        if item.strategy is P019Strategy.FIXED_WORKFLOW and item.case_id == "p018-exception-001"
+    )
+    pevr_low_battery = next(
+        item
+        for item in report.raw_results
+        if item.strategy is P019Strategy.PEVR and item.case_id == "p018-exception-001"
+    )
+    assert workflow_low_battery.observed_outcome != pevr_low_battery.observed_outcome
+    assert pevr_low_battery.evaluation_passed is True
+    assert workflow_low_battery.evaluation_passed is False
+    assert {item.strategy_trace_id for item in report.raw_results if item.case_id == "p018-exception-001"} == {
+        "trace-p019-fixed_workflow-p018-exception-001",
+        "trace-p019-react-p018-exception-001",
+        "trace-p019-pevr-p018-exception-001",
+    }
+
+
 def test_tampered_p018_source_digest_is_rejected(tmp_path) -> None:
     """原始轨迹被修改后必须在进入策略比较前失败。"""
 

@@ -2,15 +2,15 @@ name: amr_agent
 
 services:
   postgres:
-    image: postgres:17
+    image: postgres:17@sha256:e38411452a464af89e5adadb8d223bf53b898d47d6ef918b2d58c08707350449
     container_name: amr-postgres
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-amr}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-123456}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
       POSTGRES_DB: ${POSTGRES_DB:-amr_agent}
-    ports:
-      - "5432:5432"
+    networks:
+      - backend
     volumes:
       - postgres_data:/var/lib/postgresql/data
     # API 只在数据库接受连接后启动；pg_isready 不执行写操作。
@@ -22,12 +22,13 @@ services:
       start_period: 5s
 
   qdrant:
-    image: qdrant/qdrant:v1.19.0
+    image: qdrant/qdrant:v1.19.0@sha256:057ee3a8da769fe7310dd3537b4dc7583bf87a95ce8ac43c0af5a46bc580d1fc
     container_name: amr-qdrant
     restart: unless-stopped
-    ports:
-      - "6333:6333"
-      - "6334:6334"
+    environment:
+      QDRANT__SERVICE__API_KEY: ${QDRANT_API_KEY:?QDRANT_API_KEY is required}
+    networks:
+      - backend
     volumes:
       - qdrant_data:/qdrant/storage
     # Qdrant 镜像不内置 curl；使用 bash 的 TCP 流读取 /readyz HTTP 状态。
@@ -58,21 +59,32 @@ services:
     environment:
       AMR_ENV: compose
       LOG_JSON: "true"
-      POSTGRES_DSN: postgresql://${POSTGRES_USER:-amr}:${POSTGRES_PASSWORD:-123456}@postgres:5432/${POSTGRES_DB:-amr_agent}
+      POSTGRES_DSN: postgresql://${POSTGRES_USER:-amr}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/${POSTGRES_DB:-amr_agent}
       QDRANT_URL: http://qdrant:6333
+      QDRANT_API_KEY: ${QDRANT_API_KEY:?QDRANT_API_KEY is required}
       # Fast 模型仍由 Windows 脚本启动；该地址只用于 API 的主动模型检查。
       OPENAI_BASE_URL: http://host.docker.internal:8080/v1
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-dummy}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:?OPENAI_API_KEY is required}
       LLM_PROFILE: fast
       LLM_MODEL: qwen3.6-fast
       # 当前 Fast 脚本绑定 Windows 127.0.0.1，API 容器默认先做自身健康检查。
       # 真正模型联调仍必须在主机执行 check_model_gateway.py；可显式改为 true 做严格门禁。
       MODEL_GATEWAY_VALIDATE_ON_STARTUP: ${MODEL_GATEWAY_VALIDATE_ON_STARTUP:-false}
-      AMR_JWT_SECRET: ${AMR_JWT_SECRET:-p016-development-only-change-this-jwt-secret-2026}
+      FAST_MODEL_VERIFY_ARTIFACT: "true"
+      FAST_MODEL_PATH: /opt/amr-fast/models/Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive-IQ4_NL.gguf
+      LLAMA_SERVER_PATH: /opt/amr-fast/llama-server.exe
+      AMR_JWT_SECRET: ${AMR_JWT_SECRET:?AMR_JWT_SECRET is required}
+      AMR_HITL_SIGNING_SECRET: ${AMR_HITL_SIGNING_SECRET:?AMR_HITL_SIGNING_SECRET is required}
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    networks:
+      - backend
+      - edge
+    volumes:
+      # 只读挂载让容器内 Provider 能独立重算 GGUF/llama-server 哈希；模型不复制进镜像。
+      - ${FAST_ARTIFACT_ROOT:?FAST_ARTIFACT_ROOT is required}:/opt/amr-fast:ro
     ports:
-      - "8000:8000"
+      - "127.0.0.1:${AMR_API_PORT:-8000}:8000"
     # 容器启动时只执行幂等前向迁移；迁移失败会阻止 API 接受请求。
     command:
       - sh
@@ -94,3 +106,9 @@ services:
 volumes:
   postgres_data:
   qdrant_data:
+
+networks:
+  # 数据面只连接内部网络；宿主和同一局域网无法直接绕过 API/RAG ACL。
+  backend:
+    internal: true
+  edge:

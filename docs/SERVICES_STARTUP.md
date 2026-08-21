@@ -43,7 +43,7 @@ Set-Location 'C:\Users\QYC\Documents\AMR_Agent'
 .\scripts\start_local.ps1 -StartFast
 ```
 
-脚本会依次检查 Docker Engine，启动 `postgres`、`qdrant`、`api`，等待 `/readyz` 和 `/health`，运行 PostgreSQL/Qdrant 检查；`-StartFast` 还会启动 `E:\Llama.cpp\start-qwen3.6-agent.cmd` 并运行模型网关预检。Compose API 默认将 `MODEL_GATEWAY_VALIDATE_ON_STARTUP=false`，因为容器中的 `host.docker.internal:8080` 与宿主机回环地址不是可靠的启动期依赖；真正需要模型的链路必须在宿主机执行 Fast 网关预检。若要测试 API 的严格模型门禁，应显式设置 `MODEL_GATEWAY_VALIDATE_ON_STARTUP=true` 并先让 Fast 健康。
+脚本会依次检查 Docker Engine，启动 `postgres`、`qdrant`、`api`，等待 `/readyz` 和 `/health`，运行 PostgreSQL/Qdrant 检查；`-StartFast` 会调用仓库内 `scripts/start_fast_secure.ps1`（校验 GGUF 哈希后启动 `127.0.0.1:18080` llama-server，再在 `127.0.0.1:8080` 提供强制 Bearer 代理），并运行模型网关预检。不要把开放 CORS 的旧 `E:\Llama.cpp\start-qwen3.6-agent.cmd` 当作发布入口。Compose API 默认将 `MODEL_GATEWAY_VALIDATE_ON_STARTUP=false`，因为容器中的 `host.docker.internal:8080` 与宿主机回环地址不是可靠的启动期依赖；真正需要模型的链路必须在宿主机执行 Fast 网关预检。若要测试 API 的严格模型门禁，应显式设置 `MODEL_GATEWAY_VALIDATE_ON_STARTUP=true` 并先让 Fast 健康。
 
 一键脚本不启动 Smart；Smart 的 `qwen3.8-smart` 仍处于硬禁用状态。
 
@@ -91,9 +91,9 @@ docker compose -f .\compose.yaml ps
 | Port | `5432` |
 | Database | `amr_agent` |
 | User | `amr` |
-| Password | `123456` |
+| Password | 从仓库根目录 gitignore 的 `.env` 读取 `POSTGRES_PASSWORD`；禁止继续使用已公开的 `123456` |
 
-当前密码只适用于本机开发。项目共享、远程部署或提交公开仓库前，应改为从 `.env` 或密钥服务读取。
+本地连通性以 `scripts/check_postgres.py` 为准，该脚本通过 `load_settings()` 读取 `.env` 与 `POSTGRES_DSN`，不会在输出中打印密码。
 
 执行只读连通性检查：
 
@@ -284,10 +284,10 @@ API 文档：
 
 ```powershell
 $env:OPENAI_BASE_URL = 'http://127.0.0.1:8080/v1'
-$env:OPENAI_API_KEY = 'dummy'
+$env:OPENAI_API_KEY = 'dummy'  # 发布/Compose 必须换成 .env 中至少 32 字符的独立密钥
 $env:LLM_PROFILE = 'fast'  # Smart 当前硬禁用，不得改为 smart
 $env:LLM_MODEL = 'qwen3.6-fast'
-$env:POSTGRES_DSN = 'postgresql://amr:123456@localhost:5432/amr_agent'
+# POSTGRES_DSN / QDRANT_API_KEY 从 .env 加载，不要把已公开的 123456 写回文档或脚本
 $env:QDRANT_URL = 'http://localhost:6333'
 $env:RAG_EMBEDDING_MODEL_PATH = 'E:\Llama.cpp\Embedding'
 $env:RAG_MINIMUM_HYBRID_SCORE = '0.809'

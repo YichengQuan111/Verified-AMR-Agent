@@ -89,13 +89,14 @@ JSON/Markdown 报告按 Agent、RAG、AMR、安全、恢复、验证六个域汇
 
 ## 当前验收结果
 
-2026-08-21 最新实测（`tmp/p018_eval_final`）：60/60 例符合预期，顶层失败列表为空，
-观察到 16 例正确负向终态，当前源报告 digest 为
-`6e52da4252d83a147d48ce27db4932ab5288d72045db27c0a287b416a56fa3d8`。六个指标域通过率
-均为 `1.0`；Agent `model_call_count=0`、Trace 完整率 `1.0`；RAG Recall@K/MRR/
-citation/answerability 均为 `1.0` 且 ACL leak 为 `0`；AMR 正常/充电完成率 `1.0`；安全
-注入/越权阻断率 `1.0` 且 handler blocked 为 `0`；恢复预期终止/重规划成功率 `1.0`；
-验证 5/5。七个零容忍计数全部为 `0`。
+2026-08-21 发布审计确认：旧 `tmp/p018_eval_final` / `tmp/p018_eval_p020_final` 的 60/60
+**不能作为发布验收**，因为当时 runner 不消费 `case.oracle`，注入样例也未把攻击文本送进
+Prompt。本步已改为独立 `evals/p018/oracle.py`：未知键 fail closed，`must_fail` 与重复副作用
+突变必须失败；注入文本进入 `plan_tasks` 的不可信 RAG 上下文。
+
+P0-18 仍然是 `offline_deterministic_oracle`。新的 60/60 只证明离线契约/安全/恢复回归，
+`model_call_count=0`，不能写成 60 例在线 Fast 质量分。重新生成的 report digest 以本步实际
+命令为准，废止引用 `p018-415f0b3f59574772`。
 
 P0-18 专项测试为：
 

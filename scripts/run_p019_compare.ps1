@@ -1,5 +1,7 @@
 param(
     [string]$Python = "E:\Anaconda\envs\torch128\python.exe",
+    [ValidateSet("independent", "replay")]
+    [string]$Mode = "independent",
     [string]$SourceReport = "tmp\p018_eval_final\p018_eval.json",
     [string]$Config = "evals\p019\config.json",
     [string]$OutputDir = "tmp\p019_strategy_compare"
@@ -9,8 +11,9 @@ $ErrorActionPreference = "Stop"
 $ProjectRoot = Split-Path -Parent $PSScriptRoot
 Set-Location $ProjectRoot
 
-# P0-19 只消费已经生成的 P0-18 源报告；模型服务由本入口明确不启动，Smart 也不进入路径。
+# 默认独立对照三种恢复策略；replay 只做可视化，不作为发布验收。
 & $Python -m evals.p019.run_compare `
+    --mode $Mode `
     --source-report $SourceReport `
     --config $Config `
     --output-dir $OutputDir

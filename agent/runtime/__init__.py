@@ -26,6 +26,7 @@ from agent.runtime.checkpoint import (
     RecoveryAssessment,
     RecoveryCoordinator,
     RecoveryDecision,
+    make_external_execution_id,
     make_effect_idempotency_key,
 )
 from agent.runtime.hitl import (
@@ -59,6 +60,7 @@ __all__ = [
     "RecoveryAssessment",
     "RecoveryCoordinator",
     "RecoveryDecision",
+    "make_external_execution_id",
     "make_effect_idempotency_key",
     "ApprovalGrant",
     "HITLInterrupt",

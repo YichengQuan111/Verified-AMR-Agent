@@ -1,8 +1,8 @@
 # AMR Agent 项目交接上下文
 
 最后更新：2026-08-21
-当前实现里程碑记录：仓库文档曾登记 P0-00～P0-20 已实现；2026-08-21 发布前全仓审查结论为 **FAIL**，该历史登记不再等同于发布验收完成。
-当前下一步：先按 `docs/P0_AUDIT_TODO.md` 修复 4 个 P0-Critical（审批旁路、外部执行 ID/恢复、生产故障路由、Compose 安全默认值）及发布最小 High 集合，再重跑真实 HITL 三连、强杀恢复、七类异常、可信 P0-18/P0-19 和全量回归。Smart 继续硬禁用且不计本次 P0 缺陷。
+当前实现里程碑记录：P0-00～P0-20 代码已落地。2026-08-21 原审计文档仍是 **FAIL** 快照；本步已启动 Qwen3.6 Fast 与 Compose，并实测 HITL 三连、全量 smoke、RAG holdout 与 P0-18/P0-19。**H06 演示视频仍为 0 个媒体文件**，未在真实 Fast dispatch 窗口再做 OS 强杀，七类异常仍以 FakeRegistry 生产图测试为准，因此发布 Verdict **仍不能写成 PASS**。
+当前下一步：由艺诚按 `docs/DEMO_SCRIPT.md` 录制 3 分钟演示视频并登记 SHA-256。本地 Fast 启动已按 manifest `verify_sha256=false` 跳过 19GB 哈希，只检查文件存在和大小。Smart 继续硬禁用。
 
 ## 1. 文档用途与维护要求
 
@@ -49,9 +49,8 @@
   均 healthy，API 8000、PostgreSQL 5432、Qdrant 6333/6334 保持运行；Fast 已按精确 PID 停止，
   8080 无监听；Smart launcher 未运行。API 重启后 `/health` 为 `model_validated=false`，无 Fast 时
   `/health/model` 实测 HTTP 503 `MODEL_CONNECTION_FAILED`。
-- Git 仍在 `main`，基线提交为 `e6a4f07 Initial commit: AMR Agent P0-06`；工作树包含
-  P0-07～P0-14 与本次审计修复的既有未提交/未跟踪文件。本次没有 stage、commit、reset、
-  删除或移动用户变更。
+- 2026-08-21 收口复验：Compose `amr-api`/`amr-postgres`/`amr-qdrant` 均为 healthy，端口只发布到 `127.0.0.1`。Fast 由 `scripts/start_fast_secure.ps1` 拉起：`127.0.0.1:18080` 为 llama-server，`127.0.0.1:8080` 为强制 Bearer 代理；`check_model_gateway.py --profile fast` 返回 alias `qwen3.6-fast`、IQ4_NL、ctx=16384、GGUF SHA-256=`B228C988…F337E6`。Smart launcher 未运行。本步结束时 Fast **仍在运行**，未执行停止。
+- Git 仍在 `main`，基线提交为 `e6a4f07`；工作树含审计修复与本步启动器编码/超时修正。本次没有 stage、commit、reset 或删除用户变更。
 
 ## 4. 已完成能力与关键决策
 
@@ -67,7 +66,7 @@
 
 - Python 包骨架：`apps`、`agent`、`domains`、`services`、`evals`、`tests`。
 - 分层配置入口：`services/config/settings.py`。
-- 配置优先级：代码默认值 → `config/default.toml` → 环境 TOML → 显式 TOML → 环境变量。
+- 配置优先级：代码默认值 → `config/default.toml` → 环境 TOML → 显式 TOML → 项目 `.env` 白名单键 → 进程环境变量。
 - 结构化日志入口：`services/observability/logging.py`。
 - C++17/CMake/CTest 骨架：顶层 `CMakeLists.txt` 和 `services/planner_cpp/`。
 - MSVC 必须使用 `/utf-8`，否则 UTF-8 中文注释可能被代码页 936 错误解析。
@@ -1178,3 +1177,103 @@ DAG 使用 `agent.planning.dag.topological_sort()` 中的 Kahn 算法：计算�
   `docs/LESSONS_LEARNED.md`，没有覆盖或回退用户既有修改。
 - 下一任务必须先读 `docs/P0_AUDIT_TODO.md`，按 Critical 顺序修复并采用“实现→失败路径测试→
   回归→真实在线复验→文档事实校正”闭环；未经复验不得把顶部状态改回完成。
+
+### 2026-08-21 · 按 P0_AUDIT_TODO 继续修复（前一 Agent 崩溃后续作）
+
+#### 本步完成与未完成
+
+- 完成（代码已落地；发布复验未全部关闭）：
+  - C01：`run_p013_e2e.py` 删除 `--approve-dispatch`，强制 JWT + Postgres HITL + `security_required=True`。
+  - C02：`make_external_execution_id(idempotency_key, input_digest)`；`PostgresRuntimeStore.put` 用该 lookup_id；遗留 collision 用无 lookup_id 的 JSONB 种子验证迁移。
+  - C03：生产图 `_invoke_graph_with_recovery`；**VALIDATE 对 v2+ 走 `validate_replanned_pevr_plan`**，七类故障 InMemory 生产轨迹可跑到 `replan, replan, human` / `retry, retry, replan, replan, human`。
+  - C04：Compose 必填 secrets；`load_settings()` 读取 `.env`，集成测试不再用 `AppSettings()` 默认 `123456`。
+  - H01–H04、H07、M01–M03：保持前序实现。
+  - H05：A* 允许 release_time 前移动；CTest 4 个 release_time 用例通过。
+- 未完成：
+  - H06 演示视频仍为 0 个媒体文件。
+  - 未启动 Fast，因此没有真实 HITL 三连在线 run、没有 RAG holdout 在线 CLI、没有整段 `run_smoke.ps1`。
+  - 七类异常的“真实 C++/仿真器”注入仍只在 FakeRegistry 生产图测试中证明，不能写成现场设备/在线模型 E2E。
+  - 不得把 Release Verdict 改成 PASS。
+
+#### 公共接口变化
+
+- `PEVRGraphRunner._validate_node`：`plan_version>1` 或 `completed_task_ids` 非空时调用 `validate_replanned_pevr_plan`。
+- `FaultClassifier`：`plan_validation_failed` → `PLAN_INFEASIBLE`。
+- `load_settings(..., load_dotenv_file=None)`：默认在 `environ is None` 时读取项目 `.env` 白名单键；测试传入 `environ={}` 时不读磁盘。
+
+#### 设计决策
+
+- 重规划后必须复用 LocalReplanner 的门禁（允许 completed 锚点带证据、替换任务 pending 且 version≠1），不能把首轮 `expected_plan_version=1` 套到 v2。
+- `.env` 只作为 `load_settings` 的一层，进程环境变量仍可覆盖；`AppSettings()` 仍是纯 Python 默认值，集成测试必须走 `load_settings()`。
+- P0-18 仍保持离线 oracle，与“真实 PEVR 在线 60 例”分开命名。
+
+#### 验证命令
+
+- `E:\Anaconda\envs\torch128\python.exe -m pytest tests\integration\test_p015_fault_recovery.py tests\unit\test_p015_faults.py tests\unit\test_p013_pevr.py -q -p no:cacheprovider` → **49 passed**。
+- `E:\Anaconda\envs\torch128\python.exe -m pytest -q -p no:cacheprovider` → **272 passed, 2 warnings**（含 PostgreSQL/Qdrant 集成、进程强杀恢复、七类生产图故障）。
+- VsDevCmd 后 `cmake --build build\cpp`；`ctest --test-dir build\cpp -R release_time --output-on-failure` → **4/4**；全量 CTest → **38/38**。
+- `python scripts\check_postgres.py` → `status=ok`；`python scripts\check_qdrant.py` → `status=ok`，collection `amr_warehouse_knowledge`。
+- 未执行：整段 `.\scripts\run_smoke.ps1`、Fast 在线 HITL CLI、RAG `--minimum-hybrid-score 1` 在线评测。不得推断为通过。
+
+#### 下一工作包直接复用
+
+- 在线复验必须使用新 HITL CLI，禁止 `--approve-dispatch`。
+- 独立 P0-19 报告 status=passed 只表示 PEVR 离线 60/60 且公平性通过，不表示 Workflow 也是 60/60。
+- RAG CLI 把 `--minimum-hybrid-score 1 --minimum-vector-score 1` 必须非零。
+- 生产 VALIDATE 已按计划版本分流；不要再改回只调用 `validate_normal_pevr_plan`。
+
+### 2026-08-21 · 收口发布：启动 Fast/数据库并跑完整验收
+
+#### 本步完成与未完成
+
+- 完成（均有本步实际命令）：
+  - Fast 安全启动：UTF-8 BOM + `pwsh`，避免 Windows PowerShell 5.1 把中文脚本解析坏；健康检查超时改为 600s。
+  - `.\scripts\run_smoke.ps1`：pytest **272 passed**、CTest **38/38**。
+  - HITL 三连：`p020-release-hitl-{1,2,3}-20260821-2028` 均先退出码 3（`waiting_approval`），再 `--approve-and-resume` 退出码 0、`completed`、8/8 阶段、5/5 工具、Validator 0、`ORDER-001`。PostgreSQL 每 run `approval_count=1`、`effect_count=1`。`--approve-dispatch` 被 argparse 拒绝（退出码 2）。
+  - RAG holdout：Recall@K=1、MRR=1、citation=1（58/58）、answerability=1、ACL=0；坏阈值命令退出码 **2**。
+  - P0-18：60/60，`report_id=p018-85eaad378d39c29d`。P0-19 independent：Workflow 52/60、ReAct 53/60、PEVR 60/60，`report_id=p019-cf6986ed9cc65f8e`。
+  - Schema 51 份与导出 **0 diffs**。匿名 Qdrant 401、无/坏 JWT GET run 401、Fast 无 key 401。
+- 未完成：
+  - **H06 演示视频仍为 0**。本环境不能代替操作者录屏，故停在这里请艺诚补。
+  - 未在本步 HITL dispatch 窗口做真实 OS 强杀；跨进程恢复仍以 pytest P0-14 为准。
+  - 七类异常未再注入真实 C++/仿真器主链，仍以 FakeRegistry 生产图测试为准。
+
+#### 公共接口变化
+
+- 无新 Pydantic/DB 字段。`scripts/start_local.ps1 -StartFast` 改为优先 `pwsh.exe`，Fast 健康等待 600s；`config/fast_model_manifest.json` 的 launcher size/sha256 随 UTF-8 BOM 更新。
+
+#### 设计决策
+
+- 发布 Fast 入口继续是 `scripts/start_fast_secure.ps1`（18080 后端 + 8080 代理），不是开放 CORS 的旧 `start-qwen3.6-agent.cmd`。
+- HITL HTTP 单测必须用墙钟 `datetime.now(timezone.utc)` 构造请求；冻结的 `2026-08-21 12:00Z` 会在 15 分钟 TTL 后对 `store.approve()` 过期。
+- 收口复验通过不等于 Release PASS：H06 仍是 P0-20 明确交付物。
+
+#### 验证命令
+
+- `.\scripts\start_local.ps1 -StartFast`：首次因 `powershell.exe` 解析无 BOM UTF-8 失败（300s 空等）；修复后 `pwsh` 启动，`/health` 200。
+- `python scripts\check_model_gateway.py --profile fast`：`status=ok`，artifact_id=`qwen3.6-35b-a3b-hauhaucs-iq4_nl-b228c988`。
+- `.\scripts\run_smoke.ps1`：退出码 0；中间曾因 HITL HTTP 夹具过期 **1 failed / 271 passed**，把 `now` 改为墙钟后复测 **272 passed, 2 warnings**，CTest **38/38**。
+- HITL CLI 三连见上；DB 查询三 run 均为 completed / approval=1 / effect=1。
+- `python -m evals.rag.run_eval --output tmp\p020_release_rag_eval.json`：退出码 0，holdout 指标全 1、ACL=0。
+- 同一 CLI `--minimum-hybrid-score 1 --minimum-vector-score 1`：退出码 **2**，`citation_total=0`。
+- `.\scripts\run_p018_eval.ps1 -OutputDir .\tmp\p020_release_p018`：退出码 0，60/60，零容忍全 0。
+- `.\scripts\run_p019_compare.ps1 -Mode independent -OutputDir .\tmp\p020_release_p019`：退出码 0，180 条，PEVR 60、Workflow 52、ReAct 53。
+- 未运行：演示视频播放核验、Fast dispatch 窗口真实强杀、带真实 C++ 的七类故障在线注入。不得推断为通过。
+
+#### 环境与服务状态
+
+- Fast 仍在：llama-server PID 监听 18080，Python 代理监听 8080。停止前不要再开旧 `start-qwen3.6-agent.cmd`。
+- Compose 三服务保持 healthy。JWT 写在 gitignore 的 `tmp/operator.jwt`，不要提交。
+
+#### 下一工作包直接复用
+
+- 录视频时复用本步三个 HITL `run_id` 的 JSON（`tmp/p020_release_hitl_*_done.json`）或再开新 run_id；不要用 Approval=0 的历史 `p014-fast-online-*`。
+- 若需停止 Fast：只杀本步的 8080 代理与 18080 `llama-server`，不要按进程名误杀其他模型。
+
+### 2026-08-21 · 启动脚本跳过 Fast SHA-256
+
+- 完成：`config/fast_model_manifest.json` 增加 `verify_sha256=false`；`start_local.ps1` / `start_fast_secure.ps1` 与 `load_and_verify_fast_artifact` 启动时不再扫描 19GB GGUF。仍检查文件存在和 `size_bytes`。启动器记录更新为 size=7289、sha256=`CDBC7D8E…ADBDCA`。
+- 未完成：H06 视频仍缺。关闭哈希后，运行报告里的 model_sha256 只是 manifest 记录，不能写成启动时重新核验。
+- 验证：`tests/unit/test_model_artifacts.py` 本步会实际运行。
+
+

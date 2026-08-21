@@ -27,8 +27,13 @@ class P019Contract(BaseModel):
 
 
 class P019ExecutionMode(str, Enum):
-    """P0-19 当前唯一允许的执行模式。"""
+    """P0-19 允许的执行模式。
 
+    ``offline_independent_oracle`` 是发布验收：三种策略各自执行同一 60 例。
+    ``offline_trace_replay`` 仅保留为可视化/步数投影，不能再当作策略质量对照。
+    """
+
+    INDEPENDENT_ORACLE = "offline_independent_oracle"
     TRACE_REPLAY = "offline_trace_replay"
 
 
@@ -83,7 +88,7 @@ class LatencySummary(P019Contract):
     p50_case_ms: float = Field(ge=0)
     p95_case_ms: float = Field(ge=0)
     max_case_ms: float = Field(ge=0)
-    source: Literal["p018_trace"] = "p018_trace"
+    source: Literal["p018_trace", "p018_independent_oracle"] = "p018_trace"
     wall_clock: bool = False
     note: str = Field(min_length=1, max_length=1000)
 
@@ -261,8 +266,8 @@ class P019Report(P019Contract):
     """P0-19 完整报告，包含原始 180 条策略轨迹和汇总结论。"""
 
     report_id: str = Field(min_length=1, max_length=128)
-    report_version: Literal["p0-19.v1"] = "p0-19.v1"
-    execution_mode: P019ExecutionMode = P019ExecutionMode.TRACE_REPLAY
+    report_version: Literal["p0-19.v1", "p0-19.v2"] = "p0-19.v1"
+    execution_mode: P019ExecutionMode = P019ExecutionMode.INDEPENDENT_ORACLE
     status: Literal["passed", "failed"]
     generated_at: str = Field(min_length=1)
     source_report: dict[str, JsonValue]

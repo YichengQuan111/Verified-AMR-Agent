@@ -13,9 +13,7 @@
   → 带引用的证据报告
 ```
 
-当前代码范围已完成 **P0-00～P0-20**。P0-16 已把签名身份、两级 RBAC、文档 ACL、
-工具白名单和 HITL/Checkpoint 审批接入安全边界；Smart Profile 因真实 P0-05 在线验收仅通过 2/5，现为硬禁用，
-只有收到用户日后的明确指示并重新完成在线验收后才能启用。
+当前代码范围覆盖 **P0-00～P0-20** 的实现与 2026-08-21 发布审计修复。发布入口已强制验签 Principal 与 HITL；Compose 默认不再公开数据库/Qdrant 端口或弱密钥。本机已复验 HITL 三连、全量 smoke、RAG holdout 与 P0-18/P0-19；**正式演示视频仍缺失**，因此不能写成 Release PASS。Smart Profile 仍为硬禁用。
 
 部署、架构、HTTP 契约、最终验证和演示入口见：[启动手册](docs/SERVICES_STARTUP.md)、[架构图](docs/ARCHITECTURE.md)、[API 文档](docs/API.md)、[测试报告](docs/TEST_REPORT.md)、[3 分钟演示脚本](docs/DEMO_SCRIPT.md)。
 
@@ -48,14 +46,14 @@
 | P0-10 | 已完成 | 独立 C++17 `fleet_plan_validator`、稳定错误字典/证据、严格 JSON CLI 和 14 个正反例 CTest 场景。 |
 | P0-11 | 已完成 | Python 固定时间步仿真、P0-10 前置门禁、P0-09 时间戳路径执行、Observation/事件日志、充电和 Eval 故障注入。 |
 | P0-12 | 已完成 | 九个统一白名单工具、Pydantic 输入/输出 Schema、角色/超时/错误/审计/幂等门禁、固定 C++ JSON 适配器、状态/审批/验证封装。 |
-| P0-13 | 已完成 | 固定 `guard→understand→retrieve→plan→validate→execute→verify→finish` 主图、真实 Fast LLM/RAG/C++/仿真/Observation 成功闭环、带引用和工具证据的报告。 |
-| P0-14 | 已完成 | PostgreSQL Checkpoint、由 `run_id + plan_version + task_id` 规范三元组摘要生成的 Effect Ledger 幂等键、真实状态核对后的中断恢复，以及只替换受影响未完成 DAG 子图的 Local Replanner。 |
-| P0-15 | 已完成 | 覆盖低电量、AMR 离线、通道封闭、工位占用、工具超时、计划不可行和状态冲突的稳定故障分类；有限 retry/replan/fallback/human/fatal 策略；默认最多两次局部重规划、全局步骤/时长/Token/重试门禁，以及与 Checkpoint/Effect Ledger 一致的恢复测试。 |
-| P0-16 | 已完成 | JWT 验签、viewer/operator 两级 RBAC、工具级权限、检索期文档 ACL、Prompt Injection 不可信输入边界、禁止任意代码/SQL/Shell/外部 HTTP、PostgreSQL/内存 HITL 审批和 waiting Checkpoint 恢复；越权、注入、审批绕过和 ACL 泄漏反例全部阻断。 |
-| P0-17 | 已完成 | 严格 TraceEvent（run/trace/node/task、模型/Prompt/工具版本、Token、延迟、错误、摘要和证据引用）、只允许预注册 CTest/pytest/smoke/仿真入口的受控验证、日志失败结构化解析，以及由真实退出码重算的 JSON/Markdown 验证报告。 |
-| P0-18 | 已完成 | 统一 Eval Harness、固定 25/10/10/5/10 共 60 例、地图/订单/seed/模型/Prompt/工具指纹、Agent/RAG/AMR/安全/恢复/验证指标、负向轨迹和 JSON/Markdown 报告；七项零容忍指标必须为 0。 |
-| P0-19 | 已完成（离线 Trace Replay） | 在同一 P0-18 60 例、工具、Prompt/配置和 `qwen3.6-fast` 身份下对照固定 Workflow、ReAct、PEVR；输出 180 条原始策略轨迹、完成/合法/恢复/工具错误/步数/Trace P95 汇总和公平性指纹。ReAct 不进入生产主链；Smart 对照延期而非完成。 |
-| P0-20 | 已完成 | Docker Compose 编排 API/PostgreSQL/Qdrant，Fast 继续由宿主机 Windows 脚本启动；补齐一键启动、健康检查、故障排查、架构/API/测试/Eval/策略/演示文档，并固化 3 次正式独立真实 Fast 闭环证据及最终 smoke/regression/Eval。 |
+| P0-13 | 已实现；HITL 三连已复验 | 固定八阶段 PEVR 图；正式 CLI 强制 JWT Principal、HITL Store 与签名 ApprovalGrant，不再接受 `--approve-dispatch` 布尔旁路。 |
+| P0-14 | 已实现；发布复验未关闭 | Checkpoint/Effect Ledger；外部仿真 ID 绑定幂等键与输入摘要，并提供冲突记录迁移。 |
+| P0-15 | 已实现；发布复验未关闭 | 生产图接入 `FaultRecoveryController` 与 LocalReplanner；replan 后重跑 validate/execute。七类异常真实 E2E 仍待复验。 |
+| P0-16 | 已实现；发布复验未关闭 | JWT/RBAC/ACL/HITL；发布入口不再可达 legacy 布尔审批。 |
+| P0-17 | 已完成 | Trace/受控验证报告。 |
+| P0-18 | 离线 oracle 回归 | 固定 60 例现消费独立 oracle（含 mutation fail-closed）。这是离线契约回归，不是 60 例在线 LLM 质量分。 |
+| P0-19 | 独立离线对照 | Workflow/ReAct/PEVR 各自执行同一 60 例并比较恢复额度；Trace Replay 仅可视化。Token/墙钟未观测。Smart 延期。 |
+| P0-20 | 部署已加固；演示视频缺失 | Compose 需要外部 secrets，数据面仅内部网络，API 绑定 loopback。正式演示视频仍不存在。 |
 
 明确尚未实现：真实 ROS/底盘接入；P0-15 不注册任意自动补偿工具，副作用未知
 状态仍必须人工核对。单独构造 `ToolRegistry` 时状态/审批仍默认使用进程内适配器；
@@ -208,19 +206,17 @@ Fast 仍由 `E:\Llama.cpp\start-qwen3.6-agent.cmd` 在 Windows 宿主机启动�
 .\scripts\run_smoke.ps1 -SkipCpp
 ```
 
-最近一次完整验证基线（2026-08-21，P0-20 完成后）：
+最近一次完整验证基线（2026-08-21 收口复验）：
 
-- pytest：238/238 通过；明确集成回归另跑 18/18 通过；唯一警告为既有 `jieba/pkg_resources` 弃用警告。
-- CTest：34/34 通过；新增反例确认未分配/空闲 AMR 的初始位置仍会阻断冲突路线。
+- pytest：272/272 通过；唯一警告为既有 `jieba/pkg_resources` 弃用警告，以及 Qdrant HTTP+api_key 提示。
+- CTest：38/38 通过，含 4 个 `release_time` 用例。
 - Alembic：`0001_p006_core (head)`，8 张核心表缺失数 0。
-- Qdrant：健康检查通过，`amr_warehouse_knowledge` 保留 70 个正式 points。
-- Compose：`amr-api`、`amr-postgres`、`amr-qdrant` 均通过 healthcheck；API 镜像使用最小锁定依赖，
-  Fast/Embedding 不进入镜像。
-- Fast Qwen：alias 门禁、20/20 结构化和 P0-05 五节点 5/5 通过；正式审计的三个独立真实 PEVR
-  `p014-fast-online-1/2/3-20260821` 均 `completed`，每次 8/8 阶段、5/5 工具、Validator
-  error=0、仿真完成。P0-20 追加 fresh 尝试的长上下文超时未计入成功；验收后 8080 已释放。
-- Smart Qwen：未启动；禁用门禁实测返回 `MODEL_PROFILE_DISABLED`。历史在线 P0-05
-  节点仅 2/5，因此未把 Smart 记为通过。
+- Qdrant：健康检查通过；匿名访问实测 HTTP 401。
+- Compose：`amr-api`、`amr-postgres`、`amr-qdrant` 均 healthy，端口只发布到 `127.0.0.1`。
+- Fast Qwen：由 `scripts/start_fast_secure.ps1` 启动；`check_model_gateway.py --profile fast` 通过。
+  HITL 三连 `p020-release-hitl-{1,2,3}-20260821-2028` 均 `waiting_approval` 后再批准恢复为 `completed`，
+  每次 8/8 阶段、5/5 工具、Validator error=0、Approval=1、Effect=1。历史 `p014-fast-online-*` 为 Approval=0，不再作为发布证据。
+- Smart Qwen：未启动。历史在线 P0-05 节点仅 2/5，因此未把 Smart 记为通过。
 
 ### 7.4 模型与 API
 
@@ -351,15 +347,22 @@ Validator，再由 Executor 通过 P0-12 九工具注册表调用 Hungarian、A*
 Validator 和 Python 仿真。`dispatch_simulation` 的 `requires_approval=true` 不会
 被 Planner 自己满足，CLI 必须显式提供 operator 的可信审批上下文。
 
-真实 Fast 验收入口（先启动 `E:\Llama.cpp\start-qwen3.6-agent.cmd`）：
+真实 Fast 验收入口（先 `.\scripts\start_local.ps1 -StartFast`，并准备 operator JWT）：
 
 ```powershell
-& 'E:\Anaconda\envs\torch128\python.exe' scripts\run_p013_e2e.py --approve-dispatch
+& 'E:\Anaconda\envs\torch128\python.exe' scripts\run_p013_e2e.py `
+  --run-id p020-demo-live `
+  --jwt-token-file .\tmp\operator.jwt `
+  --output .\tmp\p013_e2e_wait.json
+# 首次必须退出码 3 / waiting_approval；再用同一 run_id 与 approval_id：
+& 'E:\Anaconda\envs\torch128\python.exe' scripts\run_p013_e2e.py `
+  --run-id p020-demo-live `
+  --jwt-token-file .\tmp\operator.jwt `
+  --approve-and-resume <approval_id> `
+  --output .\tmp\p013_e2e_result.json
 ```
 
-运行报告写入 `tmp/p013_e2e_result.json`；报告包含 RAG citations、plan version、
-工具 call/evidence、阶段和仿真指标、预算用量及未解决风险。详细边界见
-[docs/P013_PEVR.md](docs/P013_PEVR.md)。
+不要再使用 `--approve-dispatch`。报告包含 RAG citations、plan version、工具证据、阶段和仿真指标。详细边界见 [docs/P013_PEVR.md](docs/P013_PEVR.md)。
 
 ## 15. P0-14 Checkpoint、幂等与局部重规划
 
@@ -466,10 +469,10 @@ GGUF、Prompt、九个 ToolSpec 和输入文件 SHA-256；正确拒绝和意外�
 
 ## 20. P0-19 策略对照实验
 
-P0-19 复用 P0-18 的 60 例和逐例 Trace，在同一 Prompt/ToolSpec/配置及
-`qwen3.6-fast` 身份下对照固定 Workflow、ReAct 和 PEVR。当前是
-`offline_trace_replay`：ReAct 只作为测评投影，不进入生产主链；Token/资源没有源样本时
-显示为未观测，不能把离线结果写成在线模型质量验收。
+P0-19 复用 P0-18 的 60 例，在同一 Prompt/ToolSpec/配置及
+`qwen3.6-fast` 身份下对照固定 Workflow、ReAct 和 PEVR。默认是
+`offline_independent_oracle`：三种策略各自执行；`offline_trace_replay` 只作可视化。
+Token/资源没有源样本时显示为未观测，不能把离线结果写成在线模型质量验收。
 
 ```powershell
 .\scripts\run_p019_compare.ps1
