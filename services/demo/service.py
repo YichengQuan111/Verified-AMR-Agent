@@ -166,9 +166,19 @@ class WarehouseDemoService:
         """
 
         snapshot = self._snapshot()
-        extraction = self._extract_order(request_text, model_provider)
-        order = self._build_nl_order(extraction)
+        order = self.prepare_dynamic_order(request_text, model_provider=model_provider)
         return self._execute_order_chain(snapshot, order, route_orders=[order])
+
+    def prepare_dynamic_order(
+        self,
+        request_text: str,
+        *,
+        model_provider: ModelProviderProtocol,
+    ) -> TransportOrder:
+        """LLM 抽四要素后按地点白名单重建订单；供轻量链与闭环链共用。"""
+
+        extraction = self._extract_order(request_text, model_provider)
+        return self._build_nl_order(extraction)
 
     def _execute_order_chain(
         self,

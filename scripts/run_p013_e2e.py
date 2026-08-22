@@ -24,8 +24,16 @@ from agent.runtime.graph import PEVRGraphRunner, PEVRInterrupt  # noqa: E402
 from agent.runtime.pevr import PEVRRequest  # noqa: E402
 from agent.security import JWTAuthenticator, authorize_operator  # noqa: E402
 from agent.tools import build_tool_registry  # noqa: E402
-from agent.tools.snapshots import DefaultWarehouseSnapshotProvider  # noqa: E402
+from agent.tools.snapshots import (  # noqa: E402
+    DefaultWarehouseSnapshotProvider,
+    DynamicOrderSnapshotProvider,
+)
+from domains.amr_warehouse import TransportOrder  # noqa: E402
 from services.config import load_settings  # noqa: E402
+from services.demo.order_json import (  # noqa: E402
+    load_demo_nl_order_json,
+    resolve_demo_nl_order_json_path,
+)
 from services.model_gateway.provider import ModelProvider  # noqa: E402
 from services.application import PostgresHITLStore, PostgresRuntimeStore  # noqa: E402
 from services.persistence import create_database_runtime  # noqa: E402
@@ -45,7 +53,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--request",
         default="请把 MAT-001 从 P1 运到 S3，并在截止时间前完成。",
-        help="自然语言运输订单；应指向固定 orders_seed_v1.json 中的订单",
+        help="自然语言运输订单；动态订单由 --order-json 注入快照，不再要求命中种子",
+    )
+    parser.add_argument(
+        "--order-json",
+        type=Path,
+        default=None,
+        help="服务端生成的动态订单 JSON（仅 tmp/demo_nl_order_*.json）",
     )
     parser.add_argument("--environment-ref", default="warehouse_v1@seed-v1")
     parser.add_argument("--seed", type=int, default=7)
@@ -109,6 +123,13 @@ def main() -> int:
     authorize_operator(principal)
     provider = ModelProvider(settings.model_gateway)
     snapshot_provider = DefaultWarehouseSnapshotProvider()
+    if args.order_json is not None:
+        order_path = resolve_demo_nl_order_json_path(args.order_json, repository_root=PROJECT_ROOT)
+        dynamic_order: TransportOrder = load_demo_nl_order_json(order_path)
+        snapshot_provider = DynamicOrderSnapshotProvider(
+            [dynamic_order],
+            base=snapshot_provider,
+        )
     database_runtime = create_database_runtime(settings.database)
     checkpoint_store = PostgresRuntimeStore(database_runtime.session_factory)
     hitl_store = PostgresHITLStore(

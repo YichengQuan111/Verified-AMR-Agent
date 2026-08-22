@@ -101,6 +101,21 @@ def get_current_principal(
         ) from exc
 
 
+def get_anonymous_demo_operator() -> Principal:
+    """演示闭环 HITL 审批用的内部 operator 身份。
+
+    2026-08-22 用户明确指令：演示闭环完全不考虑安全，审批匿名开放。
+    任何能访问 API 的进程都能放行副作用。本函数不验 JWT，只给 HITL Store
+    一个可留痕的 subject；Effect Ledger 幂等机制保持不变。
+    """
+
+    return Principal(
+        subject="demo-anonymous-approver",
+        role=UserRole.OPERATOR,
+        auth_method="internal",
+    )
+
+
 def get_operator_principal(
     principal: Principal = Depends(get_current_principal),
 ) -> Principal:
@@ -117,6 +132,7 @@ def get_operator_principal(
 
 
 __all__ = [
+    "get_anonymous_demo_operator",
     "get_checkpoint_store",
     "get_current_principal",
     "get_demo_launcher",

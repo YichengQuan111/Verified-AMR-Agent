@@ -161,6 +161,36 @@ class DefaultWarehouseSnapshotProvider:
         return payload
 
 
+class DynamicOrderSnapshotProvider:
+    """请求级快照包装器：在固定 seed 地图上注入服务端重建的动态订单。
+
+    不修改 ``orders_seed_v1.json``，也不根据用户输入拼接路径；地点、障碍、
+    AMR 位姿仍来自 ``DefaultWarehouseSnapshotProvider``。``orders`` 用动态
+    订单**替换**种子订单表——若只追加，Hungarian 会同时分配 ORDER-001 等
+    种子单，演示「任意下一单」的轨迹会被污染。``injected_orders`` 供 PEVR
+    understand 把 LLM 合同强制对齐到这些真值订单。
+    """
+
+    def __init__(
+        self,
+        orders: list[TransportOrder],
+        *,
+        base: SnapshotProviderProtocol | None = None,
+    ) -> None:
+        if not orders:
+            raise ValueError("动态订单快照至少需要一份服务端重建的订单")
+        self._base = base or DefaultWarehouseSnapshotProvider()
+        self.injected_orders = [item.model_copy(deep=True) for item in orders]
+
+    def get_snapshot(self, environment_ref: str) -> EnvironmentSnapshot:
+        """深拷贝基础快照后写入动态订单；未知 environment_ref 仍由 base 拒绝。"""
+
+        snapshot = self._base.get_snapshot(environment_ref)
+        return snapshot.model_copy(
+            update={"orders": [item.model_copy(deep=True) for item in self.injected_orders]},
+        )
+
+
 class ExecutionStateStoreProtocol(Protocol):
     """查询工具和仿真工具共享的最小状态仓储接口。"""
 
@@ -213,6 +243,7 @@ class InMemoryExecutionStateStore:
 
 __all__ = [
     "DefaultWarehouseSnapshotProvider",
+    "DynamicOrderSnapshotProvider",
     "EnvironmentSnapshot",
     "ExecutionStateStoreProtocol",
     "InMemoryExecutionStateStore",

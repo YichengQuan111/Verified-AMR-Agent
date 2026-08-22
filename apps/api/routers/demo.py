@@ -2,11 +2,10 @@
 
 编排约束：浏览器只调这里的 HTTP 接口，绝不直接接触 C++ CLI 或仿真器；
 仿真必须先通过 C++ Validator，Validator 拒绝时返回 422 + C++ 证据且不带轨迹。
-权限矩阵（2026-08-22 晚调整，用户明确选择本机演示免 Token）：/demo 页面、
-地图快照、轻量自然语言下单链与受控启动器匿名可用（启动器仍只允许白名单
-脚本 scripts/start_local.ps1 + 至多一个 -StartFast 开关，无法选择其他脚本）；
-/demo/simulate 与 /demo/nl/* 完整 PEVR 闭环仍走 JWT（写入口 operator、
-读入口 viewer+），发布证据链的安全姿态不变。所有响应不含 .env、JWT 或密码。
+权限矩阵（2026-08-22 用户指令：演示闭环完全不考虑安全）：/demo 页面、
+地图快照、轻量自然语言下单链、受控启动器、完整 PEVR 闭环 ``/demo/nl/*``
+以及 HITL 审批/拒绝端点一律匿名。``POST /demo/order`` 接口保留给既有测试；
+演示页唯一提交入口走 ``/demo/nl/run``。所有响应不含 .env、JWT 或密码。
 """
 
 from __future__ import annotations
@@ -18,7 +17,6 @@ from fastapi.responses import HTMLResponse
 
 from agent.security import Principal
 from apps.api.dependencies import (
-    get_current_principal,
     get_demo_launcher,
     get_demo_nl_runner,
     get_demo_service,
@@ -59,7 +57,7 @@ def _raise_http(exc: DemoServiceError) -> None:
     include_in_schema=False,
 )
 def demo_page() -> HTMLResponse:
-    """托管单文件演示页；页面本身匿名可读，所有数据接口仍走 JWT 门禁。"""
+    """托管单文件演示页；页面与闭环接口均匿名（2026-08-22 用户指令）。"""
 
     page_path = Path(__file__).resolve().parents[1] / "static" / "demo.html"
     return HTMLResponse(page_path.read_text(encoding="utf-8"))
@@ -145,42 +143,39 @@ def get_demo_launcher_status(
 @router.post("/demo/nl/run", response_model=DemoNLRunStatus)
 def post_demo_nl_run(
     payload: DemoNLRunRequest,
-    principal: Principal = Depends(get_operator_principal),
     runner: ControlledNLRunner = Depends(get_demo_nl_runner),
+    service: WarehouseDemoService = Depends(get_demo_service),
+    model_provider: ModelProviderProtocol = Depends(get_model_provider),
 ) -> DemoNLRunStatus:
-    """operator 提交自然语言订单：拉起 PEVR 闭环，预期停在 waiting_approval。
+    """匿名提交自然语言订单：先服务端重建动态订单，再拉起完整 PEVR 闭环。
 
-    需要 Fast 模型在线（先走受控启动器）；审批决定不由本端点做出，
-    前端应在 waiting 后调受保护 API 批准，再调 /demo/nl/resume。
+    抽取失败（地点不在白名单 / Schema 失败）在占槽前返回 422，不启动 CLI。
+    审批在 waiting_approval 后由页面匿名调用 HITL 接口完成。
     """
 
-    del principal
     try:
-        return runner.start(request_text=payload.request)
+        order = service.prepare_dynamic_order(payload.request, model_provider=model_provider)
+        return runner.start(request_text=payload.request, order=order)
     except DemoServiceError as exc:
         _raise_http(exc)
 
 
 @router.get("/demo/nl/active", response_model=DemoNLRunStatus | None)
 def get_demo_nl_active(
-    principal: Principal = Depends(get_current_principal),
     runner: ControlledNLRunner = Depends(get_demo_nl_runner),
 ) -> DemoNLRunStatus | None:
-    """viewer 及以上角色查询当前槽位；无运行时返回 null（页面刷新恢复用）。"""
+    """匿名查询当前槽位；无运行时返回 null。"""
 
-    del principal
     return runner.active()
 
 
 @router.get("/demo/nl/status/{run_id}", response_model=DemoNLRunStatus)
 def get_demo_nl_status(
     run_id: str,
-    principal: Principal = Depends(get_current_principal),
     runner: ControlledNLRunner = Depends(get_demo_nl_runner),
 ) -> DemoNLRunStatus:
-    """viewer 及以上角色轮询运行状态；API 重启后仍可从产物重建。"""
+    """匿名轮询运行状态；API 重启后仍可从产物重建。"""
 
-    del principal
     try:
         return runner.status(run_id)
     except DemoServiceError as exc:
@@ -190,12 +185,10 @@ def get_demo_nl_status(
 @router.post("/demo/nl/resume", response_model=DemoNLRunStatus)
 def post_demo_nl_resume(
     payload: DemoNLResumeRequest,
-    principal: Principal = Depends(get_operator_principal),
     runner: ControlledNLRunner = Depends(get_demo_nl_runner),
 ) -> DemoNLRunStatus:
-    """operator 在受保护 API 批准之后恢复运行；本端点不签发审批。"""
+    """匿名恢复；调用前页面须已匿名批准 HITL，本端点不签发审批。"""
 
-    del principal
     try:
         return runner.resume(payload.run_id)
     except DemoServiceError as exc:
@@ -205,12 +198,10 @@ def post_demo_nl_resume(
 @router.post("/demo/nl/dismiss", response_model=DemoNLRunStatus)
 def post_demo_nl_dismiss(
     payload: DemoNLDismissRequest,
-    principal: Principal = Depends(get_operator_principal),
     runner: ControlledNLRunner = Depends(get_demo_nl_runner),
 ) -> DemoNLRunStatus:
-    """operator 清理演示槽位；不改写 PostgreSQL 中的运行/审批事实。"""
+    """匿名清理演示槽位；不改写 PostgreSQL 中的运行/审批事实。"""
 
-    del principal
     try:
         return runner.dismiss(payload.run_id)
     except DemoServiceError as exc:
@@ -220,12 +211,10 @@ def post_demo_nl_dismiss(
 @router.get("/demo/nl/result/{run_id}", response_model=DemoNLResultResponse)
 def get_demo_nl_result(
     run_id: str,
-    principal: Principal = Depends(get_current_principal),
     runner: ControlledNLRunner = Depends(get_demo_nl_runner),
 ) -> DemoNLResultResponse:
-    """viewer 及以上角色读取 PEVR 证据摘要与轨迹子集；未完成返回 409。"""
+    """匿名读取 PEVR 证据摘要与轨迹子集；未完成返回 409。"""
 
-    del principal
     try:
         return runner.result(run_id)
     except DemoServiceError as exc:

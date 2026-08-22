@@ -4,9 +4,12 @@
 
 ## 1. 运行边界
 
-- `/health` 与 `/health/model` 匿名可访问；业务路由必须携带 Bearer JWT。
-- JWT 由外部受信身份系统签发，当前项目不提供 token minting；角色只取自验签后的 `Principal`。
-- `viewer` 只能读取允许的运行/事件/文档；`operator` 才能创建运行、上传文档、评测登记和处理审批。
+- `/health` 与 `/health/model` 匿名可访问。
+- **2026-08-22 用户指令**：演示闭环链路匿名开放——`/demo/nl/*` 与
+  `POST /agent/runs/{run_id}/hitl/{approval_id}/approve|reject` 不要求 JWT。
+  其余业务路由仍须 Bearer JWT。
+- JWT 由外部受信身份系统签发，当前项目不提供面向浏览器的 token minting；角色只取自验签后的 `Principal`。
+- `viewer` 只能读取允许的运行/事件/文档；`operator` 才能创建运行、上传文档、评测登记和处理 **P0-06 合同级** `/agent/runs/{run_id}/approve`。HITL 演示审批按用户指令匿名。
 - 请求体、Prompt、RAG 正文和工具参数不能提升角色或绕过 Validator/HITL。
 - `/evals/runs` 只把评测请求持久化为 `run_kind=eval`，不在 API 进程内执行 P0-18/P0-19 Harness。
 - 自然语言 → RAG → DAG → C++ → 仿真的完整真实演示入口仍是 Windows 主机脚本 `scripts/run_p013_e2e.py`，不是一个未实现的 `/plan` HTTP 路由。
@@ -22,8 +25,8 @@
 | GET | `/agent/runs/{run_id}/plan` | viewer/operator | 查询最新或指定计划版本 | 200 / 404 |
 | GET | `/agent/runs/{run_id}/events` | viewer/operator | 以 SSE 返回已持久化事件快照 | 200 / 404 |
 | POST | `/agent/runs/{run_id}/approve` | operator | 处理 P0-06 合同/计划审批 | 200 / 404 / 409 |
-| POST | `/agent/runs/{run_id}/hitl/{approval_id}/approve` | operator | 签发绑定 run/task/plan 的 HMAC ApprovalGrant | 200 / 404 / 409 |
-| POST | `/agent/runs/{run_id}/hitl/{approval_id}/reject` | operator | 拒绝 pending HITL 请求 | 200 / 404 / 409 |
+| POST | `/agent/runs/{run_id}/hitl/{approval_id}/approve` | 匿名 | 签发绑定 run/task/plan 的 HMAC ApprovalGrant（2026-08-22 用户指令豁免 JWT） | 200 / 404 / 409 |
+| POST | `/agent/runs/{run_id}/hitl/{approval_id}/reject` | 匿名 | 拒绝 pending HITL 请求（同上豁免） | 200 / 404 / 409 |
 | POST | `/documents` | operator | 上传不超过 10 MiB 的文档元数据与正文 | 201 / 422 |
 | GET | `/documents/{document_id}` | viewer/operator | 查询 ACL 允许的文档元数据，不返回正文 | 200 / 404 |
 | POST | `/evals/runs` | operator | 登记一个评测运行请求 | 201 |
@@ -33,12 +36,12 @@
 | POST | `/demo/simulate` | operator | C++ 计划 → Validator 门禁 → Python 仿真的演示链路 | 200 / 404 / 422 / 503 |
 | POST | `/demo/launcher/start` | 匿名 | 受控启动白名单脚本 `scripts/start_local.ps1`（2026-08-22 晚起免 Token） | 200 / 503 |
 | GET | `/demo/launcher/status` | 匿名 | 启动器状态与日志尾部 | 200 |
-| POST | `/demo/nl/run` | operator | 提交自然语言订单，拉起 PEVR 闭环（单并发槽位） | 200 / 409 / 503 |
-| GET | `/demo/nl/active` | viewer/operator | 当前自然语言运行槽位（无则 null） | 200 |
-| GET | `/demo/nl/status/{run_id}` | viewer/operator | 运行状态轮询（running/waiting_approval/completed/failed） | 200 / 404 |
-| POST | `/demo/nl/resume` | operator | 审批已由受保护 API 签发后恢复运行 | 200 / 404 / 409 |
-| POST | `/demo/nl/dismiss` | operator | 清理演示槽位（不改写运行/审批事实） | 200 / 404 |
-| GET | `/demo/nl/result/{run_id}` | viewer/operator | PEVR 证据摘要 + path_step 轨迹子集 | 200 / 404 / 409 |
+| POST | `/demo/nl/run` | 匿名 | 抽取四要素、重建动态订单并拉起 PEVR 闭环（单并发槽位） | 200 / 409 / 422 / 503 |
+| GET | `/demo/nl/active` | 匿名 | 当前自然语言运行槽位（无则 null） | 200 |
+| GET | `/demo/nl/status/{run_id}` | 匿名 | 运行状态轮询（running/waiting_approval/completed/failed） | 200 / 404 |
+| POST | `/demo/nl/resume` | 匿名 | HITL grant 已签发后恢复运行 | 200 / 404 / 409 |
+| POST | `/demo/nl/dismiss` | 匿名 | 清理演示槽位（不改写运行/审批事实） | 200 / 404 |
+| GET | `/demo/nl/result/{run_id}` | 匿名 | PEVR 证据摘要 + 动态订单真值 + path_step 轨迹子集 | 200 / 404 / 409 |
 
 所有未列出的路径都不是 P0 公共接口。未知 JSON 字段在请求模型层拒绝。
 
@@ -51,17 +54,17 @@
 - `POST /demo/simulate`：请求体 `DemoSimulateRequest`（只有 `order_id`，默认 `ORDER-001`，必须是种子订单）。服务端依次调用真实 C++ Hungarian → A* → Validator，仅在 `valid=true` 后运行 Python `AMRSimulator`。响应 `DemoSimulateResponse`（[Schema](schemas/DemoSimulateResponse.schema.json)）包含内嵌地图、对照用 `routes`、`result`（SimulationResult 稳定子集：status/events/最终快照）、按 `(time, amr_id)` 排序的 `path_steps` 轨迹子集和 `summary`（order/order_id、validator_valid、error_count、completed_order_ids、simulation_status）。
 - Validator 拒绝时返回 HTTP 422 且 `detail.code=fleet_plan_invalid`，`detail.errors` 是 C++ 原始错误证据，响应不含任何轨迹字段；订单不存在返回 404 `demo_order_not_found`；C++ 进程不可用/超时返回 503。
 - 启动器只接受 `{"start_fast": bool}` 一个开关：脚本路径固定为仓库内 `scripts\start_local.ps1`，`-StartFast` 仅当显式传 `true`；Smart 没有入口。启动器只在 Windows 主机可用，日志尾部写入 gitignore 的 `tmp/demo_launcher.log`。**2026-08-22 晚起匿名可用**（用户明确决策，与演示页免 Token 一致）；白名单约束不变——若 API 绑定非回环地址，应恢复 operator 门禁。
-- 演示页（`GET /demo`）2026-08-22 晚重写为极简形态：左栏为「自然语言下单」输入框、「服务启动」卡（启动本地服务 / 启动服务+Fast，匿名调 `/demo/launcher/*`，启动后轮询状态与 `/health`）和「历史轨迹」选择器；每成功规划一次自动加一条历史（纯浏览器内存，刷新即清空）；Token 输入、种子订单仿真与 PEVR 审批卡已从页面撤下（对应后端端点保留，供受保护场景使用）。UI 不展示 `.env`、JWT 全文或密码。
+- 演示页（`GET /demo`）唯一提交入口是完整 PEVR 闭环：左栏自然语言框提交 `POST /demo/nl/run`，轮询进度，到达 `waiting_approval` 后匿名批准/拒绝 HITL，完成后渲染轨迹并写入内存历史。轻量链 `POST /demo/order` **接口保留**（既有测试与快速验证），已从页面撤下。
 
 ### 2.2 自然语言下单闭环（PEVR 接入演示页）
 
-`/demo/nl/*` 把 P0-13 正式闭环（不是可视化-only 链路）接到演示页：浏览器提交自然语言 → 服务端以受控子进程运行 `scripts/run_p013_e2e.py`（与 P0-20 实测入口完全一致）→ 在 dispatch 前停于 `waiting_approval` → **审批决定由浏览器 operator 本人 JWT 调 `POST /agent/runs/{run_id}/hitl/{approval_id}/approve`（或 `/reject`）签发** → 再调 `/demo/nl/resume` 用 `--resume-approved` 从 Checkpoint 恢复 → 完成后 `/demo/nl/result/{run_id}` 返回报告摘要与轨迹。这条链**写 Effect Ledger、需要 HITL、可作为发布证据**，与 `/demo/simulate` 的可视化-only 链路互不混用。
+`/demo/nl/*` 把 P0-13 正式闭环接到演示页（2026-08-22 用户指令：演示闭环完全不考虑安全）。浏览器匿名提交自然语言 → 服务端 LLM 只抽四要素并按地点白名单重建动态订单 → 写入 `tmp/demo_nl_order_<run_id>.json` → 受控子进程运行 `scripts/run_p013_e2e.py --order-json` → 在 dispatch 前停于 `waiting_approval` → **页面匿名调** `POST /agent/runs/{run_id}/hitl/{approval_id}/approve`（或 `/reject`）签发 grant → 再调 `/demo/nl/resume` 用 `--resume-approved` 恢复 → 完成后 `/demo/nl/result/{run_id}` 返回报告、订单真值与轨迹。这条链**写 Effect Ledger**；副作用仍只执行一次（幂等是正确性机制，不是门禁）。
 
-- `POST /demo/nl/run`：请求体 `DemoNLRunRequest`（[Schema](schemas/DemoNLRunRequest.schema.json)），只有 `request`（1–500 字符，纯空白拒绝）。自然语言只作为 `--request` 独立 argv 元素传递（无 Shell）；服务端每次拉起现铸 1 小时 operator JWT 落盘到 gitignore 的 `tmp/demo_nl_<run_id>.jwt`，浏览器不可见。单并发槽位：已有 running/waiting_approval 运行时返回 409 `demo_nl_busy`。需要 Fast 模型在线，否则子进程失败并以 `failed` + 日志尾部呈现。
-- `GET /demo/nl/status/{run_id}`：返回 `DemoNLRunStatus`（[Schema](schemas/DemoNLRunStatus.schema.json)）；waiting 时携带 `approval_id`/`approval_reason_code`/`approval_expires_at`（取自 CLI 落盘的 waiting artifact）。API 重启后仍可从 `tmp/demo_nl_*.json` 产物重建状态。
-- `POST /demo/nl/resume`：请求体只有 `run_id`；仅 `waiting_approval` 可恢复（否则 409 `demo_nl_not_waiting`）。本端点**不签发审批**，只传 `--resume-approved`；grant 不存在（未批准或已拒绝）时 CLI 失败并如实呈现。
-- `POST /demo/nl/dismiss`：清理演示槽位；running 进程先 terminate。PostgreSQL 中的 run/审批事实保持原样，rejected 仍是不可恢复终态。
-- `GET /demo/nl/result/{run_id}`：返回 `DemoNLResultResponse`（[Schema](schemas/DemoNLResultResponse.schema.json)）：`report`（final_status、summary、completed_order_ids、approval_id、principal_subject、model_alias、simulation_status/end_time）+ `path_steps`（从 dispatch_simulation 工具结果内嵌的 SimulationResult 原样截取，与 `/demo/simulate` 轨迹语义一致）。未完成返回 409 `demo_nl_not_completed`。
+- `POST /demo/nl/run`：请求体 `DemoNLRunRequest`。先 `prepare_dynamic_order`（地点非法 422 `unknown_location`，抽取失败 422 `nl_extract_failed`，Fast 离线 503），再拉起 CLI。动态订单经 `--order-json` 独立 argv 传入（无 Shell）；文件名必须是 `tmp/demo_nl_order_*.json`。单并发槽位：已有 running/waiting_approval 时 409 `demo_nl_busy`。
+- `GET /demo/nl/status/{run_id}`：返回 `DemoNLRunStatus`；waiting 时携带 `approval_id`/`approval_reason_code`/`approval_expires_at`。
+- `POST /demo/nl/resume`：仅 `waiting_approval` 可恢复（否则 409 `demo_nl_not_waiting`）。本端点不签发审批。
+- `POST /demo/nl/dismiss`：清理演示槽位；running 先 terminate。
+- `GET /demo/nl/result/{run_id}`：返回 `DemoNLResultResponse`：`order`（服务端重建的 TransportOrder）、`report`、`path_steps`。未完成 409 `demo_nl_not_completed`。
 
 
 ## 3. 健康检查

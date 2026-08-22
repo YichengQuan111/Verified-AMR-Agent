@@ -861,3 +861,24 @@ Dockerfile、依赖锁和报告属于配置/文档/数据契约，本步无核�
 | 修改 | `apps/api/static/demo.html` | 左栏 NL 卡与历史卡之间加回「服务启动」卡：启动本地服务 / 启动服务+Fast 两按钮 + 状态行 + 日志尾部，启动后轮询 `/demo/launcher/status` 与 `/health`。 | 演示页可自助拉起依赖服务。 |
 | 修改 | `tests/unit/test_demo_api.py` | `test_demo_launcher_auth_and_whitelist` 更名 `test_demo_launcher_anonymous_and_whitelist`（断言匿名 200 + 白名单 argv 不变）；脚本选择拒绝测试去 headers。 | 与新权限矩阵一致。 |
 
+## 2026-08-22：演示页自然语言任意下单走完整 PEVR 闭环（匿名审批）
+
+**用户明确指令（最高优先级）**：本机回环演示闭环完全不考虑安全；HITL 审批匿名开放；页面只保留完整闭环链。任何能访问 API 的进程都能放行副作用。
+
+| 变更 | 文件 | 作用 | 下游影响 |
+|---|---|---|---|
+| 新建 | `agent/tools/snapshots.py` 中 `DynamicOrderSnapshotProvider` | 请求级快照包装器：深拷贝 seed 地图后用服务端重建的动态订单替换 `orders`（不写 seed 文件、不按用户输入拼路径）。 | `scripts/run_p013_e2e.py --order-json` 与图 understand 对齐。 |
+| 修改 | `agent/runtime/graph.py` | understand 在 `injected_orders` 存在时先把合同订单/环境约束覆盖为快照真值并清零 `missing_information`，再走原逐字段相等校验。 | 任意 NL 订单可进正式链；种子路径行为不变。 |
+| 新建 | `services/demo/order_json.py` | `tmp/demo_nl_order_*.json` 文件名门禁、信封读写；CLI 只接受仓库 `tmp/` 根目录。 | 防路径穿越（代码质量，不是认证门禁）。 |
+| 修改 | `scripts/run_p013_e2e.py` | 新增 `--order-json`；合法文件则包装 `DynamicOrderSnapshotProvider`。 | 演示闭环与种子 E2E 共用同一 CLI。 |
+| 修改 | `services/demo/service.py` | 抽出 `prepare_dynamic_order` 供轻量链与闭环链共用。 | `/demo/order` 与 `/demo/nl/run` 同一抽取/白名单。 |
+| 修改 | `services/demo/nl_runner.py` | `start(..., order=)` 写订单 JSON 并传 `--order-json`；`result` 返回订单真值。 | 受控子进程路径与动态订单对齐。 |
+| 修改 | `services/demo/contracts.py` | `DemoNLResultResponse` 增加 `order: TransportOrder`。 | Schema 已重导。 |
+| 修改 | `apps/api/dependencies.py` | `get_anonymous_demo_operator`：内部 operator 身份，不验 JWT。 | HITL HTTP 留痕 subject=`demo-anonymous-approver`。 |
+| 修改 | `apps/api/routers/runs.py` | HITL approve/reject 改匿名。 | 页面无需 token 即可放行副作用。 |
+| 修改 | `apps/api/routers/demo.py` | `/demo/nl/*` 全部匿名；`/demo/nl/run` 先抽取再建图。 | 演示页唯一提交入口。 |
+| 修改 | `apps/api/static/demo.html` | 提交走 `/demo/nl/run`；阶段进度；HITL 匿名批准/拒绝；完成后入内存历史。轻量链从页面撤下。 | 开箱即用闭环演示。 |
+| 新建 | `tests/unit/test_demo_nl_closed_loop.py` | 动态快照、合同规范化、waiting_approval、匿名批准+Ledger 幂等、order-json 路径门禁、地点/抽取 422、匿名 HITL HTTP。 | 闭环回归。 |
+| 修改 | `tests/unit/test_demo_nl.py`、`test_p016_security.py`、`test_demo_api.py` | 权限矩阵改为匿名；HITL 测试注明用户指令豁免。 | 与新决策一致。 |
+| 修改 | `docs/API.md`、`docs/HANDOFF_CONTEXT.md`、`docs/LESSONS_LEARNED.md`、`docs/FILE_PURPOSES.md`、`docs/schemas/DemoNLResultResponse.schema.json` | 记录豁免决策、接口与 Schema。 | 后续 Agent 交接。 |
+

@@ -5,14 +5,14 @@
 - 全仓库只允许本模块从 HTTP 触发 ``scripts/run_p013_e2e.py``；python 解释器取
   API 进程自身的 ``sys.executable``，脚本路径由仓库布局固定推导，请求体里的
   自然语言只作为 ``--request`` 的独立 argv 元素传递（无 Shell，无注入面）。
-- 每次拉起子进程前由服务端现铸一枚短期 operator JWT 写入 ``tmp/demo_nl_*.jwt``；
-  浏览器永远看不到这枚令牌，令牌也不进日志、不进响应。
-- 单并发槽位：本地只有一个 Fast 模型实例，同时跑多个 PEVR 闭环只会互相拖垮；
-  运行中或等待审批时拒绝新运行（409），dismiss 可清理终态/放弃等待。
-- 状态可从产物重建：CLI 把 waiting/完成事实落盘到 ``tmp/demo_nl_*.json``，
-  meta 边车保存原始请求文本；API 进程重启后 status/resume 仍然可用。
-- 审批决定不在本模块内发生：浏览器 operator 调受保护 API 签发 grant 后，
-  本模块只用 ``--resume-approved`` 恢复，与 P0-20 实测的 HITL 路径一致。
+- 动态订单经服务端抽取/重建后写入 ``tmp/demo_nl_order_<run_id>.json``，再以
+  ``--order-json`` 独立 argv 传给 CLI；CLI 只接受该文件名模式。
+- 每次拉起子进程前由服务端现铸一枚短期 operator JWT 写入 ``tmp/demo_nl_*.jwt``
+  （CLI 组装 PEVR Principal 仍需要它；浏览器审批已按 2026-08-22 用户指令匿名）。
+- 单并发槽位：本地只有一个 Fast 模型实例；running/waiting_approval 时拒绝新运行。
+- 状态可从产物重建：CLI 把 waiting/完成事实落盘到 ``tmp/demo_nl_*.json``。
+- 审批决定不在本模块内发生：页面匿名调 HITL 签发 grant 后，本模块只用
+  ``--resume-approved`` 恢复。
 """
 
 from __future__ import annotations
@@ -32,7 +32,13 @@ from services.demo.contracts import (
     DemoNLRunStatus,
 )
 from services.demo.launcher import LauncherProcessProtocol, ProcessStarterProtocol
+from services.demo.order_json import (
+    demo_nl_order_json_filename,
+    dump_demo_nl_order_json,
+    load_demo_nl_order_json,
+)
 from services.demo.service import DemoServiceError, WarehouseDemoService
+from domains.amr_warehouse import TransportOrder
 
 
 class ControlledNLRunner:
@@ -71,8 +77,12 @@ class ControlledNLRunner:
     # 公共入口
     # ------------------------------------------------------------------
 
-    def start(self, *, request_text: str) -> DemoNLRunStatus:
-        """拉起首次 PEVR 运行；预期以退出码 3 停在 waiting_approval。"""
+    def start(self, *, request_text: str, order: TransportOrder | None = None) -> DemoNLRunStatus:
+        """拉起首次 PEVR 运行；预期以退出码 3 停在 waiting_approval。
+
+        ``order`` 为服务端重建的动态订单。演示闭环必须传入；缺省仅留给
+        既有种子订单回归测试。
+        """
 
         self._ensure_script_available()
         current = self._current_status()
@@ -84,9 +94,16 @@ class ControlledNLRunner:
                 evidence={"run_id": current.run_id, "state": current.state},
             )
         run_id = f"{self.RUN_ID_PREFIX}{uuid.uuid4().hex[:12]}"
-        self._write_meta(run_id, request_text)
+        self._write_meta(run_id, request_text, order=order)
+        if order is not None:
+            self._write_order_json(run_id, order)
         token_path = self._mint_token_file(run_id)
-        argv = self._build_argv(run_id=run_id, request_text=request_text, token_path=token_path)
+        argv = self._build_argv(
+            run_id=run_id,
+            request_text=request_text,
+            token_path=token_path,
+            order_json=self._order_json_path(run_id) if order is not None else None,
+        )
         self._spawn(run_id, argv)
         return self.status(run_id, message="PEVR 闭环已启动；LLM 理解与规划中")
 
@@ -103,7 +120,7 @@ class ControlledNLRunner:
             default_message = "PEVR 闭环运行中（LLM 理解 → 规划 → C++ 校验）"
         elif output is not None and output.get("status") == "waiting_approval":
             state = "waiting_approval"
-            default_message = "计划在 dispatch 前暂停，等待 operator 审批"
+            default_message = "计划在 dispatch 前暂停，等待匿名审批"
         elif exit_code == 0 and output is not None and "report" in output:
             state = "completed"
             default_message = "闭环完成"
@@ -153,7 +170,7 @@ class ControlledNLRunner:
         return self._current_status()
 
     def resume(self, run_id: str) -> DemoNLRunStatus:
-        """用 ``--resume-approved`` 恢复；grant 必须已由受保护 API 签发。"""
+        """用 ``--resume-approved`` 恢复；grant 必须已由 HITL 审批接口签发。"""
 
         self._ensure_script_available()
         current = self.status(run_id)
@@ -182,11 +199,13 @@ class ControlledNLRunner:
                 evidence={"run_id": run_id},
             )
         token_path = self._mint_token_file(run_id)
+        order_json = self._order_json_path(run_id) if self._order_json_path(run_id).is_file() else None
         argv = self._build_argv(
             run_id=run_id,
             request_text=request_text,
             token_path=token_path,
             resume_approval_id=approval_id,
+            order_json=order_json,
         )
         self._spawn(run_id, argv)
         return self.status(run_id, message="已批准，正在从 Checkpoint 恢复执行")
@@ -237,10 +256,25 @@ class ControlledNLRunner:
         report = output["report"]
         simulation = self._extract_simulation(run_id, output)
         path_steps = WarehouseDemoService._extract_path_steps(simulation)
+        order = self._read_order(run_id)
+        if order is None:
+            # 旧产物没有边车订单时，不能伪造 TransportOrder；结果仍返回轨迹。
+            raise DemoServiceError(
+                f"运行 {run_id} 缺少动态订单边车，无法展示订单真值",
+                status_code=500,
+                code="demo_nl_artifact_corrupt",
+                evidence={"run_id": run_id},
+            )
         metrics = report.get("metrics") or {}
         model = report.get("model") or {}
+        tool_names: list[str] = []
+        for item in report.get("tool_evidence") or output.get("tool_results") or []:
+            name = item.get("tool_name") if isinstance(item, dict) else None
+            if name and name not in tool_names:
+                tool_names.append(name)
         return DemoNLResultResponse(
             run_id=run_id,
+            order=order,
             report=DemoNLReportSummary(
                 final_status=report["final_status"],
                 summary=report["summary"],
@@ -250,6 +284,8 @@ class ControlledNLRunner:
                 model_alias=model.get("served_alias"),
                 simulation_status=str(metrics.get("simulation_status", simulation.status.value)),
                 simulation_end_time=int(metrics.get("simulation_end_time", simulation.end_time)),
+                evidence_refs=list(report.get("evidence_refs") or []),
+                tool_names=tool_names,
             ),
             path_steps=path_steps,
         )
@@ -265,8 +301,9 @@ class ControlledNLRunner:
         request_text: str,
         token_path: Path,
         resume_approval_id: str | None = None,
+        order_json: Path | None = None,
     ) -> list[str]:
-        """构造固定 argv；自然语言只是 ``--request`` 的独立元素，无 Shell 拼接。"""
+        """构造固定 argv；自然语言与订单路径都是独立元素，无 Shell 拼接。"""
 
         argv = [
             self._python_exe,
@@ -280,9 +317,11 @@ class ControlledNLRunner:
             "--jwt-token-file",
             str(token_path),
         ]
+        if order_json is not None:
+            argv.extend(["--order-json", str(order_json)])
         if resume_approval_id is not None:
-            # 恢复路径对应 P0-20 实测的「API 批准 + CLI --resume-approved」组合；
-            # 本模块不提供 --approve-and-resume，审批决定必须留在受保护 API。
+            # 恢复路径对应「HITL 批准 + CLI --resume-approved」；
+            # 本模块不提供 --approve-and-resume。
             argv.extend(["--resume-approved", resume_approval_id])
         return argv
 
@@ -347,6 +386,21 @@ class ControlledNLRunner:
     def _log_path(self, run_id: str) -> Path:
         return self._tmp_dir / f"demo_nl_{run_id}.log"
 
+    def _order_json_path(self, run_id: str) -> Path:
+        return self._tmp_dir / demo_nl_order_json_filename(run_id)
+
+    def _write_order_json(self, run_id: str, order: TransportOrder) -> None:
+        dump_demo_nl_order_json(self._order_json_path(run_id), order)
+
+    def _read_order(self, run_id: str) -> TransportOrder | None:
+        path = self._order_json_path(run_id)
+        if not path.is_file():
+            return None
+        try:
+            return load_demo_nl_order_json(path)
+        except (OSError, ValueError, json.JSONDecodeError):
+            return None
+
     def _token_path(self, run_id: str) -> Path:
         return self._tmp_dir / f"demo_nl_{run_id}.jwt"
 
@@ -359,21 +413,25 @@ class ControlledNLRunner:
         path.write_text(token, encoding="utf-8")
         return path
 
-    def _write_meta(self, run_id: str, request_text: str) -> None:
+    def _write_meta(
+        self,
+        run_id: str,
+        request_text: str,
+        *,
+        order: TransportOrder | None = None,
+    ) -> None:
         """meta 边车保存原始请求文本，供 API 重启后 resume 重建 argv。"""
 
         self._tmp_dir.mkdir(parents=True, exist_ok=True)
+        payload: dict[str, Any] = {
+            "run_id": run_id,
+            "request": request_text,
+            "started_at": datetime.now(timezone.utc).isoformat(),
+        }
+        if order is not None:
+            payload["order_id"] = order.order_id
         self._meta_path(run_id).write_text(
-            json.dumps(
-                {
-                    "run_id": run_id,
-                    "request": request_text,
-                    "started_at": datetime.now(timezone.utc).isoformat(),
-                },
-                ensure_ascii=False,
-                indent=2,
-            )
-            + "\n",
+            json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
             encoding="utf-8",
         )
 

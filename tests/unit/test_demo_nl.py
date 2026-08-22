@@ -11,13 +11,13 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
 from fastapi.testclient import TestClient
 
 from agent.security import JWTAuthenticator
 from agent.tools import UserRole
-from apps.api.dependencies import get_demo_nl_runner
+from apps.api.dependencies import get_demo_nl_runner, get_model_provider
 from apps.api.main import create_app
+from domains.amr_warehouse import AMRState, GridPosition
 from services.amr_simulator import (
     SimulationEvent,
     SimulationOrderState,
@@ -27,9 +27,18 @@ from services.amr_simulator import (
 )
 from services.config.settings import AppSettings
 from services.demo import ControlledNLRunner
-from domains.amr_warehouse import AMRState, GridPosition
+from services.demo.contracts import DemoOrderExtraction
+from tests.unit.test_demo_order import _FakeProvider as _ExtractProvider
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
+
+
+def _extract_provider() -> _ExtractProvider:
+    """HTTP /demo/nl/run 现在会先抽取四要素；单测注入固定 P3→S3。"""
+
+    return _ExtractProvider(
+        value=DemoOrderExtraction(material_id="MAT-001", pickup="P3", dropoff="S3", deadline=120)
+    )
 
 
 def _make_app_and_tokens() -> tuple[TestClient, dict[str, str], dict[str, str]]:
@@ -204,6 +213,8 @@ def _final_artifact(run_id: str) -> dict:
             "principal_subject": "demo-nl-runner",
             "model": {"served_alias": "qwen3.6-fast"},
             "metrics": {"simulation_status": "completed", "simulation_end_time": 2},
+            "evidence_refs": ["rag://warehouse_transport_sop#1", "tool://dispatch"],
+            "tool_evidence": [{"tool_name": "retrieve_knowledge"}, {"tool_name": "dispatch_simulation"}],
         },
         "tool_results": [
             {
@@ -221,24 +232,27 @@ def _write_output(tmp_path: Path, run_id: str, payload: dict) -> None:
     )
 
 
-def test_nl_auth_matrix(tmp_path: Path) -> None:
-    """匿名 401；viewer 只读（active 200），写入口（run/resume/dismiss）403。"""
+def test_nl_auth_matrix_is_anonymous(tmp_path: Path) -> None:
+    """2026-08-22 用户指令豁免：/demo/nl/* 匿名开放；viewer JWT 不再构成门禁。"""
 
-    client, viewer, operator = _make_app_and_tokens()
+    client, viewer, _operator = _make_app_and_tokens()
     started: list[_FakeProcess] = []
     runner = _make_runner(tmp_path, started)
     client.app.dependency_overrides[get_demo_nl_runner] = lambda: runner
+    client.app.dependency_overrides[get_model_provider] = lambda: _extract_provider()
     with client:
-        assert client.post("/demo/nl/run", json={"request": "x"}).status_code == 401
-        assert client.post("/demo/nl/resume", json={"run_id": "r"}).status_code == 401
-        assert client.post("/demo/nl/dismiss", json={"run_id": "r"}).status_code == 401
-        assert client.get("/demo/nl/active").status_code == 401
-        assert client.post("/demo/nl/run", json={"request": "x"}, headers=viewer).status_code == 403
-        assert client.post("/demo/nl/resume", json={"run_id": "r"}, headers=viewer).status_code == 403
-        assert client.post("/demo/nl/dismiss", json={"run_id": "r"}, headers=viewer).status_code == 403
-        active = client.get("/demo/nl/active", headers=viewer)
-        assert active.status_code == 200
-        assert active.json() is None
+        assert client.get("/demo/nl/active").status_code == 200
+        assert client.get("/demo/nl/active").json() is None
+        assert client.post("/demo/nl/run", json={"request": "请把 MAT-001 从 P3 运到 S3。"}).status_code == 200
+        assert started
+        # 带 viewer JWT 的写入口同样 200，说明门禁已撤而不是改成 viewer。
+        client.post("/demo/nl/dismiss", json={"run_id": started[0].argv[started[0].argv.index("--run-id") + 1]})
+        again = client.post(
+            "/demo/nl/run",
+            json={"request": "请把 MAT-001 从 P3 运到 S3。"},
+            headers=viewer,
+        )
+        assert again.status_code == 200
 
 
 def test_nl_run_rejects_unknown_fields(tmp_path: Path) -> None:
@@ -248,12 +262,13 @@ def test_nl_run_rejects_unknown_fields(tmp_path: Path) -> None:
     started: list[_FakeProcess] = []
     runner = _make_runner(tmp_path, started)
     client.app.dependency_overrides[get_demo_nl_runner] = lambda: runner
+    client.app.dependency_overrides[get_model_provider] = lambda: _extract_provider()
     with client:
         assert client.post(
-            "/demo/nl/run", json={"request": "x", "script": "evil"}, headers=operator
+            "/demo/nl/run", json={"request": "x", "script": "evil"}
         ).status_code == 422
         assert client.post(
-            "/demo/nl/run", json={"request": "   "}, headers=operator
+            "/demo/nl/run", json={"request": "   "}
         ).status_code == 422
         assert not started
 
@@ -265,13 +280,13 @@ def test_nl_happy_path_waiting_approve_resume_result(tmp_path: Path) -> None:
     started: list[_FakeProcess] = []
     runner = _make_runner(tmp_path, started)
     client.app.dependency_overrides[get_demo_nl_runner] = lambda: runner
+    client.app.dependency_overrides[get_model_provider] = lambda: _extract_provider()
 
     with client:
         # 1) 提交：单并发槽位占用，argv 白名单证据。
         resp = client.post(
             "/demo/nl/run",
-            json={"request": "请把 MAT-001 从 P1 运到 S3。"},
-            headers=operator,
+            json={"request": "请把 MAT-001 从 P3 运到 S3。"},
         )
         assert resp.status_code == 200, resp.text
         st = resp.json()
@@ -282,49 +297,57 @@ def test_nl_happy_path_waiting_approve_resume_result(tmp_path: Path) -> None:
         argv = started[0].argv
         assert argv[0] == "python-test"
         assert Path(argv[1]) == (REPOSITORY_ROOT / "scripts" / "run_p013_e2e.py").resolve()
-        assert argv[argv.index("--request") + 1] == "请把 MAT-001 从 P1 运到 S3。"
+        assert argv[argv.index("--request") + 1] == "请把 MAT-001 从 P3 运到 S3。"
         assert argv[argv.index("--run-id") + 1] == run_id
         token_file = Path(argv[argv.index("--jwt-token-file") + 1])
         assert token_file.read_text(encoding="utf-8") == "test-operator-token"
         assert "--approve-and-resume" not in argv  # 本模块永不自动批准
+        order_json = Path(argv[argv.index("--order-json") + 1])
+        assert order_json.name.startswith("demo_nl_order_")
+        assert order_json.is_file()
 
         # 2) 运行中再次提交 → 409。
-        busy = client.post("/demo/nl/run", json={"request": "再来一单"}, headers=operator)
+        busy = client.post("/demo/nl/run", json={"request": "再来一单"})
         assert busy.status_code == 409
         assert busy.json()["detail"]["code"] == "demo_nl_busy"
 
         # 3) CLI 退出码 3 + waiting 产物 → waiting_approval，审批信息透出。
         _write_output(tmp_path, run_id, _waiting_artifact(run_id, "appr-1"))
         started[0].exit_code = 3
-        st = client.get(f"/demo/nl/status/{run_id}", headers=operator).json()
+        st = client.get(f"/demo/nl/status/{run_id}").json()
         assert st["state"] == "waiting_approval"
         assert st["approval_id"] == "appr-1"
         assert st["approval_reason_code"] == "high_risk_write"
 
-        # 4) 恢复：argv 必须携带 --resume-approved appr-1 且复用同一 run_id/原文。
-        resume = client.post("/demo/nl/resume", json={"run_id": run_id}, headers=operator)
+        # 4) 恢复：argv 必须携带 --resume-approved appr-1 且复用同一 run_id/原文/订单文件。
+        resume = client.post("/demo/nl/resume", json={"run_id": run_id})
         assert resume.status_code == 200, resume.text
         assert len(started) == 2
         argv2 = started[1].argv
         assert argv2[argv2.index("--resume-approved") + 1] == "appr-1"
         assert argv2[argv2.index("--run-id") + 1] == run_id
-        assert argv2[argv2.index("--request") + 1] == "请把 MAT-001 从 P1 运到 S3。"
+        assert argv2[argv2.index("--request") + 1] == "请把 MAT-001 从 P3 运到 S3。"
+        assert Path(argv2[argv2.index("--order-json") + 1]) == order_json
 
         # 5) CLI 退出码 0 + 最终产物 → completed；结果含真实轨迹子集。
         _write_output(tmp_path, run_id, _final_artifact(run_id))
         started[1].exit_code = 0
-        st = client.get(f"/demo/nl/status/{run_id}", headers=operator).json()
+        st = client.get(f"/demo/nl/status/{run_id}").json()
         assert st["state"] == "completed"
         assert st["final_status"] == "completed"
 
-        result = client.get(f"/demo/nl/result/{run_id}", headers=operator)
+        result = client.get(f"/demo/nl/result/{run_id}")
         assert result.status_code == 200, result.text
         body = result.json()
         assert body["run_id"] == run_id
+        assert body["order"]["pickup"] == "P3"
+        assert body["order"]["dropoff"] == "S3"
         assert body["report"]["completed_order_ids"] == ["ORDER-001"]
         assert body["report"]["approval_id"] == "appr-1"
         assert body["report"]["model_alias"] == "qwen3.6-fast"
         assert body["report"]["simulation_end_time"] == 2
+        assert body["report"]["evidence_refs"] == ["rag://warehouse_transport_sop#1", "tool://dispatch"]
+        assert body["report"]["tool_names"] == ["retrieve_knowledge", "dispatch_simulation"]
         steps = body["path_steps"]
         assert [(s["time"], s["action"], s["position"]) for s in steps] == [
             (0, "start", {"x": 1, "y": 2}),
@@ -332,10 +355,10 @@ def test_nl_happy_path_waiting_approve_resume_result(tmp_path: Path) -> None:
         ]
 
         # 6) dismiss 清理槽位后可开新运行。
-        dismiss = client.post("/demo/nl/dismiss", json={"run_id": run_id}, headers=operator)
+        dismiss = client.post("/demo/nl/dismiss", json={"run_id": run_id})
         assert dismiss.status_code == 200
-        assert client.get("/demo/nl/active", headers=operator).json() is None
-        again = client.post("/demo/nl/run", json={"request": "下一单"}, headers=operator)
+        assert client.get("/demo/nl/active").json() is None
+        again = client.post("/demo/nl/run", json={"request": "把 MAT-001 从 P3 运到 S3"})
         assert again.status_code == 200
 
 
@@ -346,14 +369,15 @@ def test_nl_resume_requires_waiting(tmp_path: Path) -> None:
     started: list[_FakeProcess] = []
     runner = _make_runner(tmp_path, started)
     client.app.dependency_overrides[get_demo_nl_runner] = lambda: runner
+    client.app.dependency_overrides[get_model_provider] = lambda: _extract_provider()
     with client:
-        resp = client.post("/demo/nl/run", json={"request": "订单"}, headers=operator)
+        resp = client.post("/demo/nl/run", json={"request": "请把 MAT-001 从 P3 运到 S3。"})
         run_id = resp.json()["run_id"]
-        resume = client.post("/demo/nl/resume", json={"run_id": run_id}, headers=operator)
+        resume = client.post("/demo/nl/resume", json={"run_id": run_id})
         assert resume.status_code == 409
         assert resume.json()["detail"]["code"] == "demo_nl_not_waiting"
-        assert client.get("/demo/nl/status/demo-nl-unknown", headers=operator).status_code == 404
-        result = client.get(f"/demo/nl/result/{run_id}", headers=operator)
+        assert client.get("/demo/nl/status/demo-nl-unknown").status_code == 404
+        result = client.get(f"/demo/nl/result/{run_id}")
         assert result.status_code == 409
         assert result.json()["detail"]["code"] == "demo_nl_not_completed"
 
@@ -365,12 +389,13 @@ def test_nl_failed_exit_reports_log_tail(tmp_path: Path) -> None:
     started: list[_FakeProcess] = []
     runner = _make_runner(tmp_path, started)
     client.app.dependency_overrides[get_demo_nl_runner] = lambda: runner
+    client.app.dependency_overrides[get_model_provider] = lambda: _extract_provider()
     with client:
-        resp = client.post("/demo/nl/run", json={"request": "订单"}, headers=operator)
+        resp = client.post("/demo/nl/run", json={"request": "请把 MAT-001 从 P3 运到 S3。"})
         run_id = resp.json()["run_id"]
         started[0].log_path.write_text("line1\n模型连接失败\n", encoding="utf-8")
         started[0].exit_code = 1
-        st = client.get(f"/demo/nl/status/{run_id}", headers=operator).json()
+        st = client.get(f"/demo/nl/status/{run_id}").json()
         assert st["state"] == "failed"
         assert st["exit_code"] == 1
         assert "模型连接失败" in st["log_tail"]

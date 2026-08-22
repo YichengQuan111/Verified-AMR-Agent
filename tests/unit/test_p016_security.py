@@ -65,25 +65,14 @@ def test_api_authentication_and_operator_gate() -> None:
     assert response.status_code == 403
 
 
-def test_api_hitl_routes_are_run_scoped_and_operator_only() -> None:
-    """HTTP HITL approve/reject 只能由 operator 执行，且不能跨 run 复用审批 ID。"""
+def test_api_hitl_routes_are_run_scoped_and_anonymous() -> None:
+    """2026-08-22 用户指令豁免：HTTP HITL approve/reject 匿名开放，仍禁止跨 run 复用审批 ID。"""
 
     settings = AppSettings()
     settings.model_gateway.validate_on_startup = False
     app = create_app(settings=settings)
     hitl_store = InMemoryHITLStore(signing_secret="h" * 40)
     app.dependency_overrides[get_hitl_store] = lambda: hitl_store
-    authenticator = JWTAuthenticator(
-        settings.security.jwt_secret.get_secret_value(),
-        issuer=settings.security.issuer,
-        audience=settings.security.audience,
-    )
-    viewer_headers = {
-        "Authorization": f"Bearer {authenticator.issue_token(subject='viewer-http', role=UserRole.VIEWER)}"
-    }
-    operator_headers = {
-        "Authorization": f"Bearer {authenticator.issue_token(subject='operator-http', role=UserRole.OPERATOR)}"
-    }
     # HTTP approve 走 store.approve() 的墙钟，不能用已经过期的固定 requested_at。
     now = datetime.now(timezone.utc)
     pending = build_hitl_request(
@@ -102,19 +91,13 @@ def test_api_hitl_routes_are_run_scoped_and_operator_only() -> None:
 
     with TestClient(app) as client:
         assert client.post(
-            f"/agent/runs/run-http-hitl/hitl/{pending.approval_id}/approve",
-            headers=viewer_headers,
-        ).status_code == 403
-        assert client.post(
             f"/agent/runs/another-run/hitl/{pending.approval_id}/approve",
-            headers=operator_headers,
         ).status_code == 404
         approved = client.post(
             f"/agent/runs/run-http-hitl/hitl/{pending.approval_id}/approve",
-            headers=operator_headers,
         )
         assert approved.status_code == 200
-        assert approved.json()["approved_by"] == "operator-http"
+        assert approved.json()["approved_by"] == "demo-anonymous-approver"
 
         rejected = build_hitl_request(
             run_id="run-http-hitl",
@@ -131,7 +114,6 @@ def test_api_hitl_routes_are_run_scoped_and_operator_only() -> None:
         hitl_store.request_approval(rejected)
         rejected_response = client.post(
             f"/agent/runs/run-http-hitl/hitl/{rejected.approval_id}/reject",
-            headers=operator_headers,
         )
     assert rejected_response.status_code == 200
     assert rejected_response.json()["status"] == "rejected"

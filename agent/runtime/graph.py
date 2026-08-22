@@ -1673,6 +1673,10 @@ class PEVRGraphRunner:
         result = understand_goal(self.provider, context)
         self._append_model_trace(state, result, node=PromptNodeName.UNDERSTAND_GOAL.value)
         contract = cast(TaskContract, self._node_output_or_fail(result, PEVRStage.UNDERSTAND, "understand_goal"))
+        # 动态订单快照：LLM 合同对齐到服务端重建的订单真值后再做逐字段相等校验，
+        # 不放松 order_snapshot_mismatch。种子默认 Provider 没有 injected_orders。
+        if getattr(self.snapshot_provider, "injected_orders", None):
+            contract = self._canonicalize_contract_against_snapshot(contract, snapshot)
         self._validate_contract_against_snapshot(contract, snapshot)
         now = self._clock()
         run_state = RunState(
@@ -1706,8 +1710,42 @@ class PEVRGraphRunner:
         }
 
     @staticmethod
+    def _canonicalize_contract_against_snapshot(
+        contract: TaskContract,
+        snapshot: EnvironmentSnapshot,
+    ) -> TaskContract:
+        """把 LLM 合同订单/环境约束强制覆盖为快照真值，并清零 missing_information。
+
+        沿用 plan 侧 canonicalize 先例：这些字段由服务端按地点白名单重建，
+        LLM 没有合法选择权。覆盖后仍走 ``_validate_contract_against_snapshot``
+        的逐字段相等校验。快照订单为空时拒绝而不是猜一份订单。
+        """
+
+        if not snapshot.orders:
+            raise PEVRExecutionError(
+                PEVRStage.UNDERSTAND,
+                "dynamic_order_missing",
+                "动态订单快照没有可对齐的订单真值",
+            )
+        constraints = contract.constraints.model_copy(
+            update={
+                "map_width": snapshot.map_width,
+                "map_height": snapshot.map_height,
+                "blocked_cells": list(snapshot.blocked_cells),
+            }
+        )
+        return contract.model_copy(
+            update={
+                "orders": [item.model_copy(deep=True) for item in snapshot.orders],
+                "environment_ref": snapshot.environment_ref,
+                "constraints": constraints,
+                "missing_information": [],
+            }
+        )
+
+    @staticmethod
     def _validate_contract_against_snapshot(contract: TaskContract, snapshot: EnvironmentSnapshot) -> None:
-        """确认 LLM 没有篡改固定 seed 的订单、地点和环境身份。"""
+        """确认合同订单与当前快照逐字段相等，且没有未解决的执行必需信息。"""
 
         if contract.environment_ref != snapshot.environment_ref:
             raise PEVRExecutionError(PEVRStage.UNDERSTAND, "environment_ref_mismatch", "合同环境与固定快照不一致")

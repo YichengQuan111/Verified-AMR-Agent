@@ -280,6 +280,8 @@ class DemoNLReportSummary(DemoContract):
     model_alias: str | None
     simulation_status: str
     simulation_end_time: int = Field(ge=0)
+    evidence_refs: list[str] = Field(default_factory=list)
+    tool_names: list[str] = Field(default_factory=list)
 
 
 class DemoNLResultResponse(DemoContract):
@@ -287,9 +289,11 @@ class DemoNLResultResponse(DemoContract):
 
     path_steps 从 dispatch_simulation 工具结果内嵌的 SimulationResult 原样截取，
     与 ``POST /demo/simulate`` 的轨迹语义完全一致，前端复用同一渲染器。
+    ``order`` 是服务端重建的动态订单真值，不是 LLM 原文。
     """
 
     run_id: str
+    order: TransportOrder
     report: DemoNLReportSummary
     path_steps: list[DemoPathStep]
 

@@ -601,7 +601,15 @@
 - 现象：演示页提交「把 MAT-001 从 P3 运到 S3」失败，`understand` 阶段抛 `missing_information`——MAT-001 在种子里属于 ORDER-001（P1→S3），P3 是 ORDER-003 的取货点，请求与三份种子订单都对不上。
 - 原因：这是 fail-closed 设计而非 bug：`_validate_contract_against_snapshot` 要求合同订单与固定快照逐字节一致（`order_snapshot_mismatch`），prompt 又明确禁止 LLM 编造订单，于是 LLM 只能填 `missing_information`，校验门禁如实拒绝。失败的 understand 运行甚至不落库（`ensure_run` 在校验通过后才调用），排查时 PostgreSQL 里查不到记录是正常的。
 - 最终解决：用户要的效果是「任意下单」，但没有要求为此放开 PEVR 闭环的审批/Ledger 语义。正确做法不是放宽 `order_snapshot_mismatch`（那会动摇发布证据链），而是新增轻量演示链 `POST /demo/order`：LLM 只抽 material_id/pickup/dropoff/deadline 四要素，订单 ID、地点白名单、deadline 下限全部由服务端对照快照重建/校验，再走与 `/demo/simulate` 完全相同的 C++ 链。闭环保持 fail-closed，演示获得任意性，两者互不混用。
-- 后续避免：遇到「演示想要 X，但生产闭环按设计拒绝 X」时，先确认 X 是否属于证据链语义；演示需求优先在可视化-only 链路解决，证据链的 fail-closed 门禁默认不动。
+- 后续避免：遇到「演示想要 X，但生产闭环按设计拒绝 X」时，先确认 X 是否属于证据链语义；**但若用户明确要求演示闭环也要 X 并豁免安全**，应按用户指令改快照注入/规范化，而不是继续把需求赶到轻量链。
+
+## 2026-08-22 · 演示闭环按用户指令匿名审批；任意订单用快照包装而不是放宽逐字段校验
+
+- 现象：轻量链能跑任意 P/S，正式链 understand 对非种子订单报 `missing_information`/`order_snapshot_mismatch`；演示页又需要完整 PEVR（HITL + Ledger）。
+- 原因：合同必须与快照订单逐字段相等，而默认快照只读 `orders_seed_v1.json`。
+- 最终解决：`DynamicOrderSnapshotProvider` 把服务端重建的动态订单写入快照；understand 先 canonicalize 再校验；CLI `--order-json` 只读 `tmp/demo_nl_order_*.json`。HITL HTTP 与 `/demo/nl/*` 按 2026-08-22 用户指令去 JWT。
+- 后续避免：不要把「追加种子订单」当成注入——Hungarian 会把 ORDER-001 一起分配掉；不要用放宽 `order_snapshot_mismatch` 来实现任意下单。
+
 
 ## 2026-08-22 · `WarehouseLocation` 序列化是 `{id, x, y}`，`position` 只是计算属性
 

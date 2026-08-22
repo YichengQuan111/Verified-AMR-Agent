@@ -8,8 +8,9 @@
   演示 UI（用户指令要求的演示扩展；scope.md 把完整前端划在 P0 外）。
   2026-08-22 晚重写为极简形态：左栏只有「自然语言下单」和「历史轨迹」两张卡。
   铁律：本页面只调 FastAPI HTTP 接口，不直接调 C++ CLI，不自行寻路；
-  轨迹只渲染后端 POST /demo/order 返回的 amr.path_step 离散格子步；
+  轨迹只渲染后端 GET /demo/nl/result 返回的 amr.path_step 离散格子步；
   历史轨迹只存浏览器内存，刷新即清空（用户明确要求非持久化）。
+  2026-08-22：页面唯一提交入口走完整 PEVR 闭环；HITL 审批匿名。
 -->
 <style>
   :root {
@@ -86,10 +87,24 @@
         <textarea id="nl-input" rows="3" placeholder="例：请把 MAT-001 从 P3 运到 S3，并在截止时间前完成。"></textarea>
       </div>
       <div class="row">
-        <button id="btn-nl-run" class="primary grow">提交订单（POST /demo/order）</button>
+        <button id="btn-nl-run" class="primary grow">提交订单（完整 PEVR 闭环）</button>
       </div>
-      <div class="row muted">取货点 P1–P6，送货点 S1–S6 可任意组合；未提截止时间默认 120 秒。链路：Fast LLM 抽取 → C++ 分配/寻路/Validator → Python 仿真。需 Fast 模型在线（scripts\start_local.ps1 -StartFast）。</div>
+      <div class="row muted">取货点 P1–P6，送货点 S1–S6 可任意组合；未提截止时间默认 120 秒。链路：抽取四要素 → understand/retrieve/plan/validate → HITL 匿名审批 → execute/verify/report。需 Fast 模型在线。</div>
       <div class="row"><span id="nl-status" class="muted grow"></span></div>
+    </div>
+
+    <div class="panel" id="stage-panel">
+      <h2>闭环进度</h2>
+      <div id="stage-status" class="muted">尚未提交</div>
+    </div>
+
+    <div class="panel" id="hitl-card" style="display:none">
+      <h2>HITL 审批</h2>
+      <div id="hitl-meta" class="muted"></div>
+      <div class="row" style="margin-top:8px">
+        <button id="btn-hitl-approve" class="primary grow">批准并继续执行</button>
+        <button id="btn-hitl-reject">拒绝</button>
+      </div>
     </div>
 
     <div class="panel">
@@ -166,7 +181,9 @@ const HEADING_VEC = {0: [0, -1], 90: [1, 0], 180: [0, 1], 270: [-1, 0]};  // 北
 
 /* ===== 全局状态 ===== */
 let mapData = null;          // GET /demo/warehouse 的响应（匿名）
-let simData = null;          // 当前选中的历史轨迹响应（POST /demo/order 的响应）
+let simData = null;          // 当前选中的历史轨迹（闭环 result 转成的渲染结构）
+let nlPoll = null;
+let activeRunId = null;
 let tick = 0;
 let playing = false;
 let playTimer = null;
@@ -214,31 +231,137 @@ async function loadMap() {
   draw();
 }
 
-/* ===== 自然语言下单：成功才入历史；失败只展示证据，不画假轨迹 ===== */
+/* ===== 自然语言下单：完整 PEVR 闭环（匿名） ===== */
 document.getElementById("btn-nl-run").onclick = async () => {
   const text = document.getElementById("nl-input").value.trim();
   if (!text) { setNLStatus("请先输入自然语言订单"); return; }
   clearError();
+  hideHitl();
   document.getElementById("btn-nl-run").disabled = true;
-  setNLStatus("规划中（LLM 抽取 → C++ 分配/寻路/校验 → 仿真）…");
-  let response;
+  setNLStatus("已提交，正在抽取订单并启动 PEVR…");
+  setStage("running", "抽取四要素并启动闭环");
+  let st;
   try {
-    response = await api("/demo/order", {
+    st = await api("/demo/nl/run", {
       method: "POST",
       body: JSON.stringify({request: text}),
     });
   } catch (e) {
     setNLStatus("失败");
+    setStage("failed", e.message || "提交失败");
     showError(e, "下单未执行（后端拒绝）");
     document.getElementById("btn-nl-run").disabled = false;
     return;
   }
-  document.getElementById("btn-nl-run").disabled = false;
-  setNLStatus("");
-  addHistory(response);
+  activeRunId = st.run_id;
+  startNlPoll(st.run_id);
 };
 
 function setNLStatus(text) { document.getElementById("nl-status").textContent = text; }
+function setStage(state, message) {
+  document.getElementById("stage-status").textContent = `${state} · ${message}`;
+}
+function hideHitl() {
+  document.getElementById("hitl-card").style.display = "none";
+}
+function showHitl(st) {
+  document.getElementById("hitl-card").style.display = "block";
+  document.getElementById("hitl-meta").textContent =
+    `run ${st.run_id} · approval ${st.approval_id} · ${st.approval_reason_code || ""} · 过期 ${st.approval_expires_at || "—"}`;
+}
+
+function stopNlPoll() {
+  if (nlPoll) { clearInterval(nlPoll); nlPoll = null; }
+}
+
+function startNlPoll(runId) {
+  stopNlPoll();
+  const tickStatus = async () => {
+    let st;
+    try { st = await api("/demo/nl/status/" + runId); }
+    catch (e) { setNLStatus("轮询失败"); showError(e, "状态查询失败"); return; }
+    setStage(st.state, st.message || "");
+    setNLStatus(st.message || st.state);
+    if (st.log_tail && st.log_tail.length) {
+      const log = document.getElementById("log-tail");
+      log.style.display = "block";
+      log.textContent = st.log_tail.join("\n");
+    }
+    if (st.state === "waiting_approval") {
+      showHitl(st);
+      return;
+    }
+    hideHitl();
+    if (st.state === "completed") {
+      stopNlPoll();
+      document.getElementById("btn-nl-run").disabled = false;
+      try {
+        const result = await api("/demo/nl/result/" + runId);
+        addHistoryFromPevr(result);
+        setNLStatus("闭环完成");
+      } catch (e) {
+        showError(e, "读取闭环结果失败");
+      }
+      return;
+    }
+    if (st.state === "failed") {
+      stopNlPoll();
+      document.getElementById("btn-nl-run").disabled = false;
+      showError({code: "pevr_failed", message: (st.log_tail || []).slice(-8).join("\n") || st.message, detail: {}}, "PEVR 闭环失败");
+    }
+  };
+  tickStatus();
+  nlPoll = setInterval(tickStatus, 3000);
+}
+
+document.getElementById("btn-hitl-approve").onclick = async () => {
+  const st = await api("/demo/nl/status/" + activeRunId);
+  if (!st.approval_id) { setNLStatus("缺少 approval_id"); return; }
+  document.getElementById("btn-hitl-approve").disabled = true;
+  try {
+    await api(`/agent/runs/${st.run_id}/hitl/${st.approval_id}/approve`, {method: "POST", body: "{}"});
+    await api("/demo/nl/resume", {method: "POST", body: JSON.stringify({run_id: st.run_id})});
+    hideHitl();
+    setStage("running", "已批准，正在恢复执行");
+    startNlPoll(st.run_id);
+  } catch (e) {
+    showError(e, "批准失败");
+  } finally {
+    document.getElementById("btn-hitl-approve").disabled = false;
+  }
+};
+document.getElementById("btn-hitl-reject").onclick = async () => {
+  const st = await api("/demo/nl/status/" + activeRunId);
+  if (!st.approval_id) return;
+  try {
+    await api(`/agent/runs/${st.run_id}/hitl/${st.approval_id}/reject`, {method: "POST", body: "{}"});
+    await api("/demo/nl/dismiss", {method: "POST", body: JSON.stringify({run_id: st.run_id})});
+    hideHitl();
+    stopNlPoll();
+    document.getElementById("btn-nl-run").disabled = false;
+    setStage("failed", "已拒绝并清理槽位");
+    setNLStatus("已拒绝");
+  } catch (e) {
+    showError(e, "拒绝失败");
+  }
+};
+
+function addHistoryFromPevr(result) {
+  const response = {
+    summary: {
+      order: result.order,
+      order_id: result.order.order_id,
+      simulation_status: result.report.simulation_status,
+      validator_valid: true,
+      validator_error_count: 0,
+      completed_order_ids: result.report.completed_order_ids,
+    },
+    result: {end_time: result.report.simulation_end_time},
+    path_steps: result.path_steps,
+    report: result.report,
+  };
+  addHistory(response);
+}
 
 /* ===== 历史轨迹：内存数组 + 点击切换渲染 ===== */
 function addHistory(response) {
@@ -264,7 +387,13 @@ function renderHistoryList() {
     btn.className = "history-item" + (entry.seq === activeHistoryId ? " active" : "");
     btn.innerHTML =
       `<div>#${entry.seq} ${entry.timeLabel} · ${o.material_id} ${o.pickup} → ${o.dropoff}</div>` +
-      `<div class="sub">${entry.response.summary.simulation_status} · ${entry.response.summary.order_id} · ${entry.response.path_steps.length} 步</div>`;
+      `<div class="sub">${entry.response.summary.simulation_status} · ${entry.response.summary.order_id} · ${entry.response.path_steps.length} 步` +
+      (entry.response.report ? ` · ${entry.response.report.summary}` : "") +
+      `</div>` +
+      (entry.response.report && entry.response.report.tool_names && entry.response.report.tool_names.length
+        ? `<div class="sub">工具 ${entry.response.report.tool_names.join(" → ")}</div>` : "") +
+      (entry.response.report && entry.response.report.evidence_refs && entry.response.report.evidence_refs.length
+        ? `<div class="sub">证据 ${entry.response.report.evidence_refs.slice(0, 6).join(" · ")}</div>` : "");
     btn.onclick = () => selectHistory(entry.seq);
     list.appendChild(btn);
   }
@@ -629,6 +758,12 @@ checkHealth();
 healthPoll = setInterval(checkHealth, 10000);
 loadMap();
 draw();
+api("/demo/nl/active").then((st) => {
+  if (st && st.run_id) {
+    activeRunId = st.run_id;
+    startNlPoll(st.run_id);
+  }
+}).catch(() => {});
 </script>
 </body>
 </html>

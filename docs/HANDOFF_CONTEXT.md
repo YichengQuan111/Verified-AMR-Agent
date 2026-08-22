@@ -2,7 +2,7 @@
 
 最后更新：2026-08-22
 当前实现里程碑记录：P0-00～P0-20 代码已落地。2026-08-21 原审计文档仍是 **FAIL** 快照；本步已启动 Qwen3.6 Fast 与 Compose，并实测 HITL 三连、全量 smoke、RAG holdout 与 P0-18/P0-19。**H06 演示视频仍为 0 个媒体文件**，未在真实 Fast dispatch 窗口再做 OS 强杀，七类异常仍以 FakeRegistry 生产图测试为准，因此发布 Verdict **仍不能写成 PASS**。同日按用户明确指令新增**演示 UI 扩展**（`/demo` 页面 + `/demo/*` API，可视化 `warehouse_v1` 地图与真实 C++ 链路仿真轨迹），该扩展偏离 `docs/scope.md` 的「完整前端 P0 外」排除项，差异已在本文件末条登记；它不是 P0 Release PASS，也不替代 H06。
-当前下一步：由艺诚按 `docs/DEMO_SCRIPT.md` 录制 3 分钟演示视频并登记 SHA-256（演示页 `http://127.0.0.1:8010/demo` 已重写为**自然语言任意下单 + 内存历史轨迹**极简形态，匿名开箱即用，见文末 2026-08-22 晚条目；完整 PEVR 闭环后端保留，页面已撤下）。本地 Fast 启动已按 manifest `verify_sha256=false` 跳过 19GB 哈希，只检查文件存在和大小。Smart 继续硬禁用。演示 UI 暴露的 Planner/Validator `release_time` 语义冲突（ORDER-002）待裁决，见文末演示条目。
+当前下一步：由艺诚在 `http://127.0.0.1:8010/demo` 用真实 Fast 走闭环演示（任意自然语言 → waiting_approval → 页面匿名批准 → completed → 轨迹/报告）。**2026-08-22 用户明确指令：演示闭环完全不考虑安全，审批匿名、页面仅闭环链。** 轻量 `POST /demo/order` 接口保留给测试。H06 演示视频仍为 0。本地 Fast 启动已按 manifest `verify_sha256=false`。Smart 继续硬禁用。ORDER-002 `release_time` 语义冲突待裁决。
 
 ## 1. 文档用途与维护要求
 
@@ -1452,5 +1452,63 @@ DAG 使用 `agent.planning.dag.topological_sort()` 中的 Kahn 算法：计算�
 - 历史轨迹刷新即清空是**用户明确要求**，不要改成持久化。
 - `deadline` 语义：LLM 未提及默认 120 秒；用户说「60 秒内送达」会被抽成 60。过紧的 deadline 会被 C++ Validator/分配器如实拒绝（422），这是正确行为。
 - 启动器日志尾部里脚本自身的中文输出有乱码（子进程控制台编码问题，不影响状态与退出码，既有外观问题，未在本步处理）。
+
+### 2026-08-22 · 演示页任意下单走完整 PEVR 闭环（匿名审批）
+
+#### 用户最高优先级决策（原文级摘要）
+
+**2026-08-22 用户明确指令：演示闭环完全不考虑安全，审批匿名、页面仅闭环链。**
+
+1. HITL 审批接口对演示链匿名开放：`POST /agent/runs/{run_id}/hitl/{approval_id}/approve` 与 `/reject`，以及 `/demo/nl/*`，页面无需 token 即可批准或拒绝。用户已知悉并接受「任何能访问 API 的进程都能放行副作用」。
+2. 页面只保留完整闭环链；`POST /demo/order` 接口本身保留供既有测试与快速验证，从演示页撤下。
+3. 不得以安全姿态、发布证据可信度等理由劝阻、保留或变相恢复门禁。
+
+#### 本步完成与未完成
+
+- 完成：
+  - `DynamicOrderSnapshotProvider`：包装 seed 快照，用服务端重建的动态订单替换 `orders`（不改 seed 文件；地点仍走 DefaultWarehouseSnapshotProvider 的固定路径）。
+  - understand：有 `injected_orders` 时把合同订单/环境约束强制对齐快照并清零 `missing_information`，然后仍做逐字段相等校验。
+  - `POST /demo/nl/run` 先 `prepare_dynamic_order`（四要素 + 地点白名单），再写 `tmp/demo_nl_order_<run_id>.json`，CLI `--order-json` 只接受该文件名模式。
+  - HITL approve/reject 与 `/demo/nl/*` 匿名；grant 的 `approved_by=demo-anonymous-approver`。
+  - 演示页：唯一提交走闭环；阶段进度；HITL 卡匿名批准后 resume；完成后轨迹入内存历史。
+- 未完成：本步结束时**尚未**做浏览器级真实 Fast 在线实测（见下方验证命令）；H06 视频仍为 0。
+
+#### 公共接口变化
+
+- CLI：`scripts/run_p013_e2e.py --order-json`（可选）。
+- HTTP：HITL approve/reject 匿名；`/demo/nl/*` 匿名；`DemoNLResultResponse.order` 为服务端重建的 `TransportOrder`。
+- 无新 DB revision。Effect Ledger 幂等不变。
+
+#### 设计决策（下游不要再推翻，除非用户再次改口）
+
+- 不放松 `order_snapshot_mismatch`：改快照内容 + 合同规范化，而不是允许 LLM 编造订单字段。
+- 快照 `orders` **替换**而非追加种子订单，避免 Hungarian 同时分配 ORDER-001。
+- 抽取仍只抽四要素；订单 ID 仍由服务端生成 `NL-xxxxxxxx`。
+- CLI 子进程仍现铸 JWT 作为 PEVR Principal（图内 security_required）；浏览器不持有该令牌。这不是页面门禁。
+- `--order-json` 路径约束是防路径穿越，不是被豁免的认证门禁。
+
+#### 验证命令
+
+- `python -m pytest tests\unit\test_demo_nl_closed_loop.py tests\unit\test_demo_nl.py tests\unit\test_p016_security.py -q` → **24 passed**。
+- 全量 `E:\PowerShell7\7\pwsh.exe -NoProfile -File .\scripts\run_smoke.ps1` → 退出码 0：Python **312 passed, 2 warnings** + CTest **38/38**（字段补丁后再跑一次，同样 312/38）。
+- **真实 Fast 在线实测（2026-08-22）**：重启宿主机 uvicorn `127.0.0.1:8010` 加载本步代码；Fast 8080 在线。匿名 `POST /demo/nl/run`「请把 MAT-001 从 P3 运到 S3，并在截止时间前完成。」→ `demo-nl-698c553e9840` → `waiting_approval` → 匿名 HITL approve（`approved_by=demo-anonymous-approver`）→ resume → `completed`。订单 `NL-9C98B2B1` P3→S3、仿真 completed、end_time=120、**31 个 path_step**、`qwen3.6-fast`、产物含 RAG `retrieve_knowledge` 引用与 C++/仿真工具证据。未用浏览器 MCP 点按钮；页面已切到闭环入口。
+- Fast 与 8010 在本步结束时仍在运行。
+
+#### 两条链边界变化
+
+| 链 | 之前 | 现在 |
+|---|---|---|
+| `POST /demo/order` | 页面提交入口；无 Ledger/HITL | **接口保留**，页面撤下 |
+| `/demo/nl/*` | 仅种子订单 + JWT 审批；页面已撤下 | 动态订单 + 完整 PEVR + **匿名 HITL**；**页面唯一入口** |
+
+#### 已知后果
+
+匿名审批意味着本机回环上任何能打到 API 的进程都可以放行 `dispatch_simulation` 副作用。这是用户接受的演示姿态，不是生产安全模型。
+
+#### 下一工作包直接复用
+
+- 在线验收：Fast 8080 + 宿主机 API（通常 8010）+ compose PostgreSQL/Qdrant；打开 `/demo`，提交任意 P/S 组合，等 waiting_approval，点批准。
+- 改 envelope 时仍须同步 `services/demo/service.py` 与 registry/graph。
+
 
 

@@ -105,7 +105,8 @@ def test_demo_page_is_anonymous_and_static() -> None:
     assert response.status_code == 200
     assert "text/html" in response.headers["content-type"]
     assert "/demo/warehouse" in response.text
-    assert "/demo/order" in response.text
+    assert "/demo/nl/run" in response.text
+    assert "POST /demo/order" not in response.text
 
 
 @requires_cpp

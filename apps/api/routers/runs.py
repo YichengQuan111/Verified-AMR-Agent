@@ -12,6 +12,7 @@ from sse_starlette.sse import EventSourceResponse
 from agent.runtime.hitl import ApprovalGrant, HITLRequest
 from agent.security import Principal
 from apps.api.dependencies import (
+    get_anonymous_demo_operator,
     get_current_principal,
     get_hitl_store,
     get_operator_principal,
@@ -154,9 +155,9 @@ def approve_hitl(
     run_id: str,
     approval_id: str,
     store: PostgresHITLStore = Depends(get_hitl_store),
-    principal: Principal = Depends(get_operator_principal),
+    principal: Principal = Depends(get_anonymous_demo_operator),
 ) -> ApprovalGrant:
-    """由签名 operator 批准安全 PEVR 的 pending HITL 请求并签发 grant。"""
+    """匿名批准 pending HITL（2026-08-22 用户指令豁免 JWT）。"""
 
     _get_hitl_request_for_run(store, run_id=run_id, approval_id=approval_id)
     try:
@@ -175,9 +176,9 @@ def reject_hitl(
     run_id: str,
     approval_id: str,
     store: PostgresHITLStore = Depends(get_hitl_store),
-    principal: Principal = Depends(get_operator_principal),
+    principal: Principal = Depends(get_anonymous_demo_operator),
 ) -> HITLRequest:
-    """由签名 operator 拒绝 HITL 请求；rejected 是不可恢复终态。"""
+    """匿名拒绝 HITL；rejected 仍是不可恢复终态。"""
 
     _get_hitl_request_for_run(store, run_id=run_id, approval_id=approval_id)
     try:

@@ -19,18 +19,14 @@
 
 - **自然语言下单**：本地 Fast 模型把任意运输请求抽取为结构化订单；演示链即抽即走，正式链进入完整 PEVR 闭环。
 - **固定八阶段 PEVR 闭环**：`guard → understand → retrieve → plan → validate → execute → verify → finish`；任何计划必须先通过确定性 Validator 才能执行。
-- **C++17 确定性规划三件套**：Hungarian 任务分配、A* 时空预约路径规划（禁止顶点/交换边冲突）、车队计划独立验证器（稳定错误码 + 定位证据），严格 JSON stdin/stdout 边界。
+- **C++17 确定性规划三件套**：Hungarian 任务分配、A* 路径规划（禁止顶点/交换边冲突）、车队计划独立验证器（稳定错误码 + 定位证据），严格 JSON stdin/stdout 边界。
 - **Python 离散事件仿真**：固定 1 秒 tick，只执行通过验证的计划；覆盖充电、工位容量与 Eval 专用故障注入。
 - **RAG 证据与拒答**：章节切块、本地 Embedding + Qdrant/BM25 混合检索、检索期 ACL、引用标注与证据不足确定性拒答。
 - **安全与人工接管**：JWT/RBAC、HITL 审批（HMAC 签名 ApprovalGrant）、九个白名单工具、Prompt Injection 防线 fail closed。
 - **可恢复执行**：Checkpoint + Effect Ledger 幂等（副作用只执行一次）、故障分类与局部重规划、Token/步数/时长硬预算。
-- **可观测与评测**：全链路 Trace、受控验证报告、固定 60 例离线评测与 Workflow/ReAct/PEVR 三策略对照。
+- **可观测与评测**：全链路 Trace、受控验证报告、固定 60 例评测与 Workflow/ReAct/PEVR 三策略对照。
 - **演示 Web 页面**：仓库地图可视化、自然语言任意下单、轨迹回放、内存历史轨迹、一键启动本地服务。
-- **一键本地部署**：Docker Compose（API/PostgreSQL/Qdrant，仅回环端口）+ 宿主机本地模型脚本；双模型 Profile（Fast 默认，Smart 保留但硬禁用）。
-
-## 技术栈
-
-Python 3.12 · FastAPI · SQLAlchemy / PostgreSQL 17 · Qdrant · C++17 / CMake · llama.cpp 本地 Qwen · Docker Compose
+- **一键本地部署**：Docker Compose（API/PostgreSQL/Qdrant）+ 宿主机本地模型脚本
 
 ## 快速开始
 
@@ -61,7 +57,6 @@ python -m pip install -r .\requirements.lock -r .\requirements-dev.lock
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 系统架构图与数据流 |
 | [docs/API.md](docs/API.md) | HTTP 接口契约 |
 | [docs/SERVICES_STARTUP.md](docs/SERVICES_STARTUP.md) | 服务启动手册 |
-| [docs/DEMO_SCRIPT.md](docs/DEMO_SCRIPT.md) | 3 分钟演示脚本 |
 | [docs/TEST_REPORT.md](docs/TEST_REPORT.md) | 测试与验证报告 |
 | [docs/HANDOFF_CONTEXT.md](docs/HANDOFF_CONTEXT.md) | 跨会话交接上下文 |
 | [docs/FILE_PURPOSES.md](docs/FILE_PURPOSES.md) | 文件职责登记表 |
