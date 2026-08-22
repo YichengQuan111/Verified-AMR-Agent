@@ -528,10 +528,10 @@
 
 ## 2026-08-21 · Windows PowerShell 5.1 不能直接跑无 BOM 的 UTF-8 中文脚本
 
-- 现象：`start_local.ps1 -StartFast` 用 `powershell.exe` 隐藏启动 `start_fast_secure.ps1` 后，8080 永远不起来；前台用 5.1 解析会报中文字符串把引号吃掉。
+- 现象：`start_local.ps1 -StartFast` 用 `powershell.exe` 隐藏启动 `start_fast_secure.ps1` 后，8080 永远不起来；前台用 5.1 解析会报中文字符串把引号吃掉（`MissingCatchOrFinally`、乱码 `�`）。
 - 原因：Windows PowerShell 5.1 默认按系统代码页读脚本；UTF-8 中文 `throw "..."` 会变成乱码并拆掉字符串。
-- 解决：给启动器写 UTF-8 BOM，并优先用 `pwsh.exe`。
-- 避免：仓库里带中文的 `.ps1` 若仍可能被 5.1 调用，必须带 BOM 或避免在双引号字符串里放非 ASCII。
+- 解决：给启动器写 UTF-8 BOM，并优先用 `pwsh.exe`。**2026-08-22 复发过一次**：工作区的 `start_local.ps1` 被编辑器重存丢了 BOM（HEAD 本来有），用户双击/5.1 调用再次解析失败；已把 `scripts/` 下全部 6 个含中文的 `.ps1`（`start_local`、`start_fast_secure`、`run_smoke`、`run_p018_eval`、`run_p019_compare`、`bootstrap_local_secrets`）统一补上 BOM，并用 PS 5.1 的 `Parser::ParseFile` 逐个验证通过。
+- 避免：仓库里带中文的 `.ps1` 必须带 BOM（编辑器保存时选「UTF-8 with BOM」），或避免在双引号字符串里放非 ASCII；改完用 5.1 解析器跑一次再交付。
 
 ## 2026-08-21 · HITL HTTP 测试的冻结时钟不能拿去对照墙钟 approve
 
@@ -560,6 +560,57 @@
 - 原因：父脚本 `Start-Process -WindowStyle Hidden` 后，子进程卡住或立刻失败都看不见；Ctrl+C 只停父进程，隐藏子进程可能还在。`Start-Process -ArgumentList` 给 `--model` 再套一层引号也会让 llama-server 起不来。
 - 解决：最小化窗口、写 `tmp/fast_secure.transcript.log`，子进程一退出就把日志尾抛给父脚本。
 - 避免：不要在没看到 `llama-server.exe` 之前把空等当成“正在加载”。
+
+## 2026-08-21 · Planner 的 release_time 预定位会提前踩到 pickup 格，与 Validator 首次到达语义冲突
+
+- 现象：演示链路用真实 C++ 跑 ORDER-002（release_time=10）时，Validator 同时报 `pickup_before_release`（路径首次到达 P2 是 t=4）和 `pickup_time_mismatch`（路线 pickup_time=10 ≠ 首次到达 4），计划被判 invalid。
+- 原因：H05 允许 A* 在 release_time 前移动并“预定位”；当 AMR 离 pickup 很近时，最小代价策略是提前到达后在 pickup 格上原地转身消耗时间（5 次 turn 的代价低于 6 次 wait）。但 P0-10 Validator 把「路径第一次到达 pickup 坐标」认定为 pickup 时刻，两个 C++ 工具对同一合法行为理解不一致。CTest 只分别覆盖 planner 输出和手工构造的 validator 路线，没有 planner→validator 的 release_time>0 端到端用例，所以只跑 ORDER-001（release_time=0）的 P0-13 从未暴露。
+- 最终解决：本步不修 C++（跨工具语义裁决，超出演示范围）；演示 API 把该拒绝如实映射为 422 `fleet_plan_invalid` 并回传 C++ 证据，前端只展示错误不画轨迹。
+- 后续避免：release_time>0 的订单（ORDER-002/003）走真实 C++ 链路都要预期这个结果；P0-18 数据集的 normal-002/003 期望 completed，评测前必须先裁决语义：要么 Validator 把「release_time 前经过 pickup 格」视为预定位而非 pickup 事件，要么 Planner 禁止在 pickup 格上提前等待（改在邻格等待）。裁决前不要把 ORDER-002 当成功案例演示。
+
+## 2026-08-21 · FastAPI dependency_overrides 不能直接给「类」
+
+- 现象：演示测试写 `app.dependency_overrides[get_demo_service] = _OverloadPlanService`（传类而非工厂）后，路由注册阶段报 `FastAPIError: Invalid args for response field`。
+- 原因：FastAPI 会把覆盖 callable 的签名当请求参数建模；类的 `__init__(snapshot_provider=...)` 被当成 query 字段，而 `DefaultWarehouseSnapshotProvider | None` 不是合法 Pydantic 字段类型。
+- 最终解决：覆盖一律写成 `lambda: _OverloadPlanService()`。
+- 后续避免：给 FastAPI 传任何可调用依赖/覆盖时，先想它的签名会不会被当成请求参数；构造函数带注入参数的类必须用工厂包一层。
+
+## 2026-08-21 · compose 的 amr-api 容器一直占着 8000，宿主机调试要用别的端口
+
+- 现象：本机 `uvicorn apps.api.main:app --port 8000` 启动即报 WinError 10048；`/health` 仍能通，但返回的是容器旧镜像的路由表，新加的 `/demo/*` 全部 404。
+- 原因：`compose.dev.yaml` 把 `amr-api` 发布到 `127.0.0.1:8000`，容器镜像是构建时点快照，不含新代码；`Get-NetTCPConnection` 对 Docker 代理端口偶尔查不到，容易误判端口空闲。
+- 最终解决：宿主机演示/调试改用 `--port 8010` 与容器并存。演示仿真依赖 Windows 版 C++ exe，本就只能跑在宿主机 uvicorn 上（容器是 Linux，没有 `build/cpp` 产物，容器内 `/demo/simulate` 会如实返回 503 `cpp_executable_unavailable`）。
+- 后续避免：验证新 HTTP 路由前先用 `/openapi.json` 确认路由表来自新进程；需要容器提供 `/demo` 页面时先 `docker compose build api`，并接受容器内仿真不可用这一边界。
+
+## 2026-08-22 · 签发 JWT 不能用 `AppSettings()`，它不读 `.env`
+
+- 现象：用 `AppSettings()` 取 `jwt_secret` 签发的演示令牌，被正在运行的 API 一律拒绝（401 `AUTH_REQUIRED`「JWT 无效或已过期」），且令牌本身格式、有效期完全正常。
+- 原因：`AppSettings` 是普通 `BaseModel`（`StrictSettingsModel`），直接构造只拿 Python 默认值；`.env` 里的 `AMR_JWT_SECRET` 只有走 `load_settings()`（默认值 → `config/default.toml` → `.env` → 环境变量）才会生效。API 进程启动时用的是 `load_settings()`，两边密钥不同即验签失败。
+- 最终解决：签发脚本/测试需要与线上一致的密钥时，必须 `load_settings()`；改后令牌对 8010 实测 200。
+- 后续避免：凡是要和「正在运行的服务」共享密钥/配置的场景（签 JWT、算 HITL 签名、连 Qdrant），一律走 `load_settings()`；`AppSettings()` 只适合不依赖本机 `.env` 的纯默认值测试。
+
+## 2026-08-22 · Fast 会把 `$ref` 引用语法当字面值照抄，固定字段不该交给 LLM（已根治）
+
+- 现象：自然语言闭环演示中，同一请求文本 6 次运行 4 次失败：LLM 的 plan 把数据流引用语法抄成字面值（`{"$ref": "fixed:order_ids"}`、`{"$ref": "task:TASK-ROUTE-002/input/max_time"}` 等伪引用），确定性校验按 `environment_ref_mismatch`/`simulation_seed_invalid`/`blocked_cells_mismatch` 等多项拒绝；图内一次带反馈重规划后仍不收敛。同日同时刻同模型的对照运行一次通过，说明是 temperature=0.1 下的采样方差，不是接线错误。
+- 原因：Prompt 里文档化了 `task:.../output/...` 与 `derived:...` 引用语法，35B 本地模型会过度泛化出 `fixed:*` 等不存在的命名空间；而 order_ids、environment_ref、seed、latest_deadline、blocked_cells、ruleset_version 这些字段本来就是请求/快照里的确定真值，LLM 填错没有任何收益、只有失败风险。
+- 最终解决（同日晚实施）：`canonicalize_normal_pevr_plan` 不再只解析白名单引用别名，而是把上述固定事实字段**一律覆盖**为合同/请求真值并记录 `fixed_fact_override` note；`max_time` 是唯一例外——Validator 接受 ≥ 最晚 deadline，故只在缺失/非整数/不足时拉回真值，保留合法的更大 horizon。覆盖只能让计划更贴近合同，Validator 门禁对最终计划逐项生效，`assignments`/`plan` 数据流引用不在豁免范围。修复后 6 次真实 Fast 运行 6/6 到达 `waiting_approval`（修复前 2/6）。
+- 后续避免：给 LLM 的结构化输出里，凡是有确定真值的字段都不要让它填；修复类测试夹具要破坏 canonicalize **不**豁免的字段（如 assignments 引用），否则重问/拒绝路径测不到；评估 LLM 链路可靠性时样本量要足够大（≥10 次）并记录成功率。
+
+## 2026-08-22 · PEVR 正常闭环按设计拒绝种子外订单；任意下单要另建轻量链，别在闭环里开口子
+
+- 现象：演示页提交「把 MAT-001 从 P3 运到 S3」失败，`understand` 阶段抛 `missing_information`——MAT-001 在种子里属于 ORDER-001（P1→S3），P3 是 ORDER-003 的取货点，请求与三份种子订单都对不上。
+- 原因：这是 fail-closed 设计而非 bug：`_validate_contract_against_snapshot` 要求合同订单与固定快照逐字节一致（`order_snapshot_mismatch`），prompt 又明确禁止 LLM 编造订单，于是 LLM 只能填 `missing_information`，校验门禁如实拒绝。失败的 understand 运行甚至不落库（`ensure_run` 在校验通过后才调用），排查时 PostgreSQL 里查不到记录是正常的。
+- 最终解决：用户要的效果是「任意下单」，但没有要求为此放开 PEVR 闭环的审批/Ledger 语义。正确做法不是放宽 `order_snapshot_mismatch`（那会动摇发布证据链），而是新增轻量演示链 `POST /demo/order`：LLM 只抽 material_id/pickup/dropoff/deadline 四要素，订单 ID、地点白名单、deadline 下限全部由服务端对照快照重建/校验，再走与 `/demo/simulate` 完全相同的 C++ 链。闭环保持 fail-closed，演示获得任意性，两者互不混用。
+- 后续避免：遇到「演示想要 X，但生产闭环按设计拒绝 X」时，先确认 X 是否属于证据链语义；演示需求优先在可视化-only 链路解决，证据链的 fail-closed 门禁默认不动。
+
+## 2026-08-22 · `WarehouseLocation` 序列化是 `{id, x, y}`，`position` 只是计算属性
+
+- 现象：测试里按 `item["position"]` 读 `pickup_points` 元素直接 `KeyError: 'position'`。
+- 原因：`WarehouseLocation` 的 `position` 是 `@property`（返回 `GridPosition`），不参与序列化；JSON 里只有 `id`/`x`/`y` 三个字段。
+- 最终解决：读坐标用 `{"x": item["x"], "y": item["y"]}` 自行拼装。
+- 后续避免：消费 `DemoWarehouseMap` 的 P/S/C 清单时记得它是扁平 `{id,x,y}`；只有 `location_positions`、`path_step.position` 等明确建模为 `GridPosition` 的字段才是 `{x,y}` 嵌套形。
+
+
 
 
 

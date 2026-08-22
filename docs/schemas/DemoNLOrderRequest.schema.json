@@ -1,0 +1,17 @@
+{
+  "additionalProperties": false,
+  "description": "POST /demo/order 请求体：任意自然语言运输订单（轻量演示链）。\n\n与 ``/demo/nl/run`` 的完整 PEVR 闭环不同，本接口不写 Effect Ledger、\n不需要 HITL 审批、不作发布证据；文本只作为 LLM 抽取提示，订单真值由\n服务端按快照地点白名单重建，LLM 输出本身不被信任。",
+  "properties": {
+    "request": {
+      "maxLength": 500,
+      "minLength": 1,
+      "title": "Request",
+      "type": "string"
+    }
+  },
+  "required": [
+    "request"
+  ],
+  "title": "DemoNLOrderRequest",
+  "type": "object"
+}

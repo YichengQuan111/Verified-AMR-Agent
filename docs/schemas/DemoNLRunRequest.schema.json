@@ -1,0 +1,17 @@
+{
+  "additionalProperties": false,
+  "description": "POST /demo/nl/run 请求体：自然语言运输订单原文。\n\n文本只作为 ``run_p013_e2e.py --request`` 的一个独立 argv 元素传递（无 Shell），\n长度上限比 PEVRRequest 的 4000 更紧，避免演示页提交超长 prompt 打满 Fast 上下文。",
+  "properties": {
+    "request": {
+      "maxLength": 500,
+      "minLength": 1,
+      "title": "Request",
+      "type": "string"
+    }
+  },
+  "required": [
+    "request"
+  ],
+  "title": "DemoNLRunRequest",
+  "type": "object"
+}

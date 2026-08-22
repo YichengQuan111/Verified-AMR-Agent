@@ -1,0 +1,13 @@
+{
+  "additionalProperties": false,
+  "description": "受控启动器请求体：脚本路径与参数由服务端白名单固定，前端只有布尔开关。\n\nstart_fast=True 等价于人工追加 ``-StartFast``（仍禁止 Smart）；默认 False\n对应「不启动模型」的地图/仿真演示，Fast 不是本步演示的前置条件。",
+  "properties": {
+    "start_fast": {
+      "default": false,
+      "title": "Start Fast",
+      "type": "boolean"
+    }
+  },
+  "title": "DemoLauncherRequest",
+  "type": "object"
+}

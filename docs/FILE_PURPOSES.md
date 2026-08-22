@@ -783,3 +783,81 @@ Dockerfile、依赖锁和报告属于配置/文档/数据契约，本步无核�
 | 修改 | `scripts/start_local.ps1` | 启动器最小化且 PassThru；子进程退出则立刻抛出日志尾。 | `-StartFast`。 |
 | 修改 | `config/fast_model_manifest.json` | 同步启动器 size/sha256。 | 大小门禁。 |
 
+## 2026-08-21：演示 UI 扩展（用户指令优先于 scope.md 的 P0 前端排除项）
+
+用户明确要求一个可视化演示 UI：浏览器只调 HTTP，后端串行跑真实 C++ Hungarian → A* → Validator，仅在计划合法后跑 Python AMRSimulator，前端按 `amr.path_step` 画格子轨迹。本步不是 P0 Release PASS，也不替代 H06 正式演示视频；核心代码均已补中文注释。生成物 `tmp/demo_trajectory_order-001.json`、`tmp/demo_operator.jwt`、`tmp/demo_viewer.jwt`、`tmp/demo_launcher.log` 属 gitignore 的 `tmp/`，不登记为源码。
+
+| 变更 | 文件 | 作用 | 下游影响 |
+|---|---|---|---|
+| 新建 | `services/demo/__init__.py` | 演示服务包公共出口。 | 路由与测试统一从这里导入。 |
+| 新建 | `services/demo/contracts.py` | 演示公开 JSON 契约：`DemoWarehouseMap`/`DemoSimulateRequest`/`DemoSimulateResponse`/`DemoPathStep`/`DemoRouteInfo`/`DemoSimulationOutcome`/`DemoSimulationSummary`/`DemoLauncherRequest`/`DemoLauncherStatus`，全部 extra=forbid。 | 浏览器唯一消费契约；`scripts/export_schemas.py` 同源导出 5 份主 Schema。 |
+| 新建 | `services/demo/service.py` | `WarehouseDemoService`：固定 seed → C++ 分配/路径/校验 → 合法才仿真的无状态编排；envelope 逐字段镜像 `agent/tools/registry.py` 与 `graph.py`；Validator 拒绝/订单未知/C++ 不可用分别映射 422/404/503 并带 C++ 证据，绝不返回假轨迹。`DemoServiceError` 承载稳定 code/status/evidence。不走 `dispatch_simulation`，不写 Effect Ledger，不作 HITL 证据。 | 演示页与 `scripts/export_demo_trajectory.py` 共用入口；registry/graph 的 envelope 变更必须同步检查本文件。 |
+| 新建 | `services/demo/launcher.py` | `ControlledLauncher`：只允许白名单 `scripts/start_local.ps1`，argv 由服务端固定，前端唯一输入是 `start_fast` 布尔；Shell 优先 `pwsh.exe`（PS 5.1 无法解析无 BOM 的中文脚本），回退 `powershell.exe`；异步拉起、日志写 `tmp/demo_launcher.log`、幂等防重复启动；非 Windows 返回 unavailable。Smart 无入口。 | 演示页一键启动按钮的唯一后端。 |
+| 新建 | `apps/api/routers/demo.py` | `/demo`（匿名静态页）、`GET /demo/warehouse`（viewer+）、`POST /demo/simulate`（operator）、`POST /demo/launcher/start`（operator）、`GET /demo/launcher/status`（viewer+）。 | `apps/api/main.py` 已挂载；新端点都走 JWT 门禁。 |
+| 新建 | `apps/api/static/demo.html` | 单文件演示页（Canvas 30×20）：图例/订单下拉/运行仿真/播放暂停拖动 tick/显示最终轨迹/状态栏/错误证据表/受控启动按钮；Token 只存 localStorage 不回显；轨迹只渲染后端 `path_steps`，无插值。 | 演示入口 http://127.0.0.1:8010/demo（宿主机 uvicorn）。 |
+| 修改 | `apps/api/dependencies.py` | 新增 `get_demo_service`/`get_demo_launcher` 惰性依赖（缓存到 app.state，便于测试 override）。 | 演示路由依赖注入。 |
+| 修改 | `apps/api/main.py`、`apps/api/routers/__init__.py` | 挂载 demo_router。 | API 路由表新增 5 条 `/demo*`。 |
+| 修改 | `pyproject.toml` | `apps.api` package-data 增加 `static/*.html`。 | wheel 安装包含演示页。 |
+| 修改 | `scripts/export_schemas.py` | SCHEMA_MODELS 增加 5 份演示契约。 | `docs/schemas/Demo*.schema.json`；P0-04 一致性测试自动覆盖。 |
+| 新建 | `scripts/export_demo_trajectory.py` | 离线跑演示链路并把完整响应写入 `tmp/`（默认 ORDER-001）。 | 前端联调与交接证据；输出是生成物。 |
+| 新建 | `tests/unit/test_demo_api.py` | 13 条用例：地图与种子逐格一致、ORDER-001 真实 C++ 链路含 37 个 path_step 且与事件流逐格一致、超载坏计划 422 无轨迹、ORDER-003 依赖拒绝、匿名/viewer 权限反例、未知字段 422、启动器白名单/幂等/非 Windows。仿真用例真实调用 C++ exe，缺 build 产物时仅这些用例跳过。 | 演示链路回归门禁。 |
+| 修改 | `tests/unit/test_p020_deployment.py` | 启动脚本断言从 `WindowStyle Hidden` 改为 `WindowStyle Minimized` 并禁止 Hidden 回归（上一个提交改了脚本未改测试，HEAD 即红；行为依据见 LESSONS_LEARNED「Hidden 启动器空等」）。 | 部署边界回归门禁；不属于演示 UI 新功能，属本步 smoke 暴露的存量修复。 |
+| 修改 | `docs/API.md`、`docs/HANDOFF_CONTEXT.md`、`docs/LESSONS_LEARNED.md`、`docs/FILE_PURPOSES.md` | 新接口文档、交接状态、坑与文件职责。 | 后续 Agent 与 H06 录屏。 |
+
+## 2026-08-22：脚本编码修复（纯字节级，无逻辑变化）
+
+| 状态 | 文件 | 作用 | 备注 |
+|---|---|---|---|
+| 修改 | `scripts/run_smoke.ps1`、`scripts/run_p018_eval.ps1`、`scripts/run_p019_compare.ps1`、`scripts/bootstrap_local_secrets.ps1` | 仅补 UTF-8 BOM，恢复 Windows PowerShell 5.1 可解析性（含中文注释/字符串的无 BOM 脚本会被 5.1 按 GBK 读坏）。 | 职责不变；已用 PS 5.1 `Parser::ParseFile` 逐个验证。 |
+| 修改 | `scripts/start_local.ps1`、`scripts/start_fast_secure.ps1` | 同上补 BOM；二者与 HEAD 恢复一致（HEAD 本有 BOM，工作区曾被编辑器重存丢失）。 | 职责不变；本步无核心代码注释需求。 |
+
+## 2026-08-22：自然语言下单闭环接入演示页（PEVR × 演示 UI）
+
+用户确认自然语言下单是核心功能，要求把 P0-13 完整闭环（LLM 理解 → RAG → C++ → 人工审批 → 仿真）接入演示页。实现选择**受控子进程包装已实测的 `scripts/run_p013_e2e.py`**（与启动器同模式），而不是在 API 进程内重建图：复用 P0-20 实测路径，审批决定仍由浏览器 operator 本人 JWT 调受保护 API 签发，演示后端只负责 `--resume-approved` 恢复。生成物 `tmp/demo_nl_*.json/.meta.json/.jwt/.log` 属 gitignore 的 `tmp/`，不登记为源码。
+
+| 变更 | 文件 | 作用 | 下游影响 |
+|---|---|---|---|
+| 新建 | `services/demo/nl_runner.py` | `ControlledNLRunner`：run_p013_e2e.py 的单槽位白名单运行器。argv 固定（python 取 `sys.executable`、脚本路径仓库内固定推导、自然语言仅为 `--request` 独立元素，无 Shell）；每次拉起现铸 1 小时 operator JWT（subject=demo-nl-runner）写 per-run 令牌文件；单并发（running/waiting_approval 时新运行 409）；状态可从 `tmp/demo_nl_*` 产物跨 API 重启重建；dismiss 可 terminate 运行中进程但不动 PostgreSQL 事实；结果从 PEVRRunResult.tool_results 中定位 dispatch_simulation 的 SimulationResult 并复用演示轨迹提取。 | `/demo/nl/*` 路由的唯一后端；H06 演示的自然语言入口。 |
+| 修改 | `services/demo/contracts.py` | 新增 `DemoNLRunRequest`（request 1–500 字符、纯空白拒绝）、`DemoNLResumeRequest`/`DemoNLDismissRequest`（仅 run_id）、`DemoNLRunStatus`（状态机 + 审批透出 + 日志尾部）、`DemoNLReportSummary`、`DemoNLResultResponse`（报告摘要 + path_steps）。 | 演示页 NL 面板契约；Schema 已导出。 |
+| 修改 | `services/demo/__init__.py` | 出口新增 ControlledNLRunner 与 DemoNL* 契约。 | 路由/测试统一导入。 |
+| 修改 | `apps/api/dependencies.py` | 新增 `get_demo_nl_runner` 惰性依赖；token_factory 绑定 `app.state.authenticator.issue_token`（role=OPERATOR，ttl 3600）。 | 演示 NL 路由依赖注入。 |
+| 修改 | `apps/api/routers/demo.py` | 新增 6 端点：`POST /demo/nl/run`、`GET /demo/nl/active`、`GET /demo/nl/status/{run_id}`、`POST /demo/nl/resume`、`POST /demo/nl/dismiss`、`GET /demo/nl/result/{run_id}`；写入口 operator 门禁，读入口 viewer+。 | API 路由表共 11 条 `/demo*`。 |
+| 修改 | `apps/api/static/demo.html` | 原「自然语言下单（本步不实现）」占位按钮替换为完整 NL 面板：文本输入、提交、3s 轮询进度、waiting_approval 审批卡片（批准=本人 JWT 调受保护 API 签发 grant 后 resume；拒绝=reject + dismiss）、完成后复用既有轨迹渲染器展示 PEVR 轨迹与报告摘要、页面刷新经 `/demo/nl/active` 恢复进行中运行。 | 演示页具备自然语言下单能力。 |
+| 修改 | `scripts/export_schemas.py` | SCHEMA_MODELS 增加 DemoNLRunRequest/DemoNLRunStatus/DemoNLResultResponse。 | `docs/schemas/DemoNL*.schema.json`；P0-04 一致性测试自动覆盖。 |
+| 新建 | `tests/unit/test_demo_nl.py` | 7 条用例：权限矩阵（匿名 401/viewer 403/viewer 读 200）、未知字段与空白 request 422、完整状态机（running→waiting_approval→resume argv 证据→completed→轨迹与报告断言）、单并发 409、非 waiting 恢复 409、未完成取结果 409、未知 run 404、失败日志尾部、API 重启后产物恢复、dismiss terminate。全程假进程，不真实拉起 CLI。 | 自然语言闭环演示的回归门禁。 |
+| 修改 | `docs/API.md` | 路由总表 +6 条；新增「2.2 自然语言下单闭环」节，明确该链写 Effect Ledger/需 HITL/可作发布证据，与可视化-only 链路不混用。 | 接口文档与实现一致。 |
+
+## 2026-08-22：固定事实字段强制覆盖（Fast 计划稳定性根治）
+
+艺诚实测自然语言下单再次命中固定字段校验失败（6 次运行 4 次因 LLM 照抄 `$ref` 伪引用被拒）。本步把固定事实字段从 LLM 输出中收回：`canonicalize_normal_pevr_plan` 一律以合同/请求真值覆盖并记录审计 note。首轮 plan 与图内语义修复重问共用同一 canonicalize，两条路径同时生效。
+
+| 变更 | 文件 | 作用 | 下游影响 |
+|---|---|---|---|
+| 修改 | `agent/planning/validator.py` | `canonicalize_normal_pevr_plan`：固定事实字段（environment_ref/order_ids/blocked_cells/ruleset_version/seed）由「白名单引用别名替换」升级为「一律覆盖为合同真值 + `fixed_fact_override` note」；max_time 仅在缺失/非整数/小于最晚 deadline 时拉回真值，保留合法更大 horizon。assignments/plan 数据流引用不豁免，Validator 门禁不变。 | P0-13/P0-14 计划门禁前置规范化；LLM 对固定字段的错误不再导致运行失败，只留审计 note。 |
+| 修改 | `tests/unit/test_p013_pevr.py` | 新增 4 条：fixed:* 伪引用覆盖（实测失败形状）、task:<自身>/input/* 自引用覆盖、合法大 max_time 保留、正确计划零 note；2 条语义修复测试夹具从 seed=99 改为 assignments 数据流错误（固定事实字段已被覆盖，不再触发重问路径）。 | 覆盖行为的回归门禁；后续改规范化层必须通过。 |
+| 修改 | `docs/HANDOFF_CONTEXT.md`、`docs/LESSONS_LEARNED.md`、`docs/FILE_PURPOSES.md` | 记录根治方案、设计边界与实测结果。 | 后续 Agent 交接。 |
+
+## 2026-08-22（晚）：自然语言任意下单轻量链 + 演示页极简重写
+
+用户明确决策：演示页只要「自然语言任意下单 + 内存历史轨迹」，不走完整 PEVR 闭环（无审批/无 Ledger/非持久化）；本机演示免 Token（仅限不写痕迹的演示链，PEVR 证据链仍要认证）。新链路与 `/demo/nl/*` 闭环并存、互不混用。
+
+| 变更 | 文件 | 作用 | 下游影响 |
+|---|---|---|---|
+| 修改 | `services/demo/contracts.py` | 新增 `DemoNLOrderRequest`（POST /demo/order 请求体，仅 request 1–500 字符）与 `DemoOrderExtraction`（LLM 输出 Schema：material_id/pickup/dropoff/deadline，非 HTTP 公共契约）；`DemoSimulationSummary` 新增 `order: TransportOrder` 字段（实际执行订单真值，供前端历史清单标注）。 | 前端与测试只认这些模型；Schema 已导出。 |
+| 修改 | `services/demo/service.py` | 新增 `run_nl_order`：Fast `generate_structured` 抽取四要素 → 按 warehouse_v1 地点白名单重建动态订单（服务端生成 `NL-xxxxxxxx` ID，LLM 无权命名）→ 复用种子链同一 C++ Hungarian/A*/Validator/仿真。`_execute_order_chain` 抽出共用；`_plan_routes` 增加 `orders` 参数（None=快照全量，种子链路行为不变；NL 链只传动态订单）。Fast 离线 503 `fast_model_unavailable`、抽取失败 422 `nl_extract_failed`、地图外地点 422 `unknown_location`。 | 任意 P1–P6/S1–S6 组合可下单；Validator 仍是硬门禁。 |
+| 修改 | `apps/api/dependencies.py` | 新增 `get_model_provider`（读 app.state.model_provider）。 | `/demo/order` 注入点；测试用 dependency_overrides 换假 Provider。 |
+| 修改 | `apps/api/routers/demo.py` | 新增匿名 `POST /demo/order`；`GET /demo/warehouse` 按用户决策改匿名（原 viewer+）。模块 docstring 权限矩阵同步更新。 | 演示页开箱即用；`/demo/simulate`、`/demo/nl/*`、`/demo/launcher/*` 门禁不变。 |
+| 重写 | `apps/api/static/demo.html` | 极简形态：左栏仅「自然语言下单」输入框 +「历史轨迹」选择器；每成功规划一次自动加一条历史（纯浏览器内存数组，刷新即清空）；Token 输入、种子订单仿真、受控启动、PEVR 审批卡全部撤下页面；图例/播放控制移到画布下方；订单高亮改由后端 `summary.order` 真值驱动。 | 演示页交互入口唯一化；历史非持久化是用户明确要求。 |
+| 修改 | `scripts/export_schemas.py` | SCHEMA_MODELS 增加 DemoNLOrderRequest；DemoSimulateResponse 因 summary.order 字段重导。 | `docs/schemas/` 同步；P0-04 一致性测试自动覆盖。 |
+| 新建 | `tests/unit/test_demo_order.py` | 6 条：真实 C++ 匿名 happy path（P3→S3 轨迹逐格对照地图坐标）、空白/未知字段 422、unknown_location 422、nl_extract_failed 422、fast_model_unavailable 503、Validator 拒绝 422 无轨迹。 | 轻量链回归门禁。 |
+| 修改 | `tests/unit/test_demo_api.py` | 地图测试改匿名 200 断言；页面静态测试改断言 `/demo/order`。 | 与新权限矩阵一致。 |
+| 修改 | `docs/API.md`、`docs/HANDOFF_CONTEXT.md`、`docs/LESSONS_LEARNED.md`、`docs/FILE_PURPOSES.md` | 记录新端点、匿名决策、轻量链与 PEVR 闭环的边界。 | 后续 Agent 交接。 |
+
+同日追加（用户指令「给这个前端加上启动服务的功能」，并明确选择启动端点免 Token）：
+
+| 变更 | 文件 | 作用 | 下游影响 |
+|---|---|---|---|
+| 修改 | `apps/api/routers/demo.py` | `/demo/launcher/start` 与 `/demo/launcher/status` 去 JWT 改匿名；docstring 权限矩阵同步。白名单脚本 + 单布尔开关约束不变；API 若绑定非回环地址应恢复 operator 门禁。 | 演示页启动按钮开箱即用；`/demo/nl/*`、`/agent/*` 门禁不变。 |
+| 修改 | `apps/api/static/demo.html` | 左栏 NL 卡与历史卡之间加回「服务启动」卡：启动本地服务 / 启动服务+Fast 两按钮 + 状态行 + 日志尾部，启动后轮询 `/demo/launcher/status` 与 `/health`。 | 演示页可自助拉起依赖服务。 |
+| 修改 | `tests/unit/test_demo_api.py` | `test_demo_launcher_auth_and_whitelist` 更名 `test_demo_launcher_anonymous_and_whitelist`（断言匿名 200 + 白名单 argv 不变）；脚本选择拒绝测试去 headers。 | 与新权限矩阵一致。 |
+

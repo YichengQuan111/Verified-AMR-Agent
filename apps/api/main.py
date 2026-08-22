@@ -10,7 +10,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from agent.security import JWTAuthenticator
-from apps.api.routers import documents_router, evals_router, runs_router
+from apps.api.routers import demo_router, documents_router, evals_router, runs_router
 from services.application import (
     ApplicationError,
     DocumentService,
@@ -147,6 +147,8 @@ def create_app(
     application.include_router(runs_router)
     application.include_router(documents_router)
     application.include_router(evals_router)
+    # 演示 UI 扩展路由（用户指令优先于 scope.md 的 P0 前端排除项；差异见交接文档）。
+    application.include_router(demo_router)
 
     return application
 

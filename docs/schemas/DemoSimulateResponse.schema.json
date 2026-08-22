@@ -1,0 +1,1058 @@
+{
+  "$defs": {
+    "AMRState": {
+      "additionalProperties": false,
+      "description": "一台 AMR 在某个确定时刻的完整状态快照。",
+      "properties": {
+        "amr_id": {
+          "description": "AMR 的稳定唯一标识",
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Amr Id",
+          "type": "string"
+        },
+        "position": {
+          "$ref": "#/$defs/GridPosition"
+        },
+        "heading": {
+          "$ref": "#/$defs/Heading"
+        },
+        "battery": {
+          "description": "剩余电量百分比",
+          "maximum": 100,
+          "minimum": 0,
+          "title": "Battery",
+          "type": "number"
+        },
+        "load": {
+          "description": "当前载荷，单位为千克",
+          "minimum": 0,
+          "title": "Load",
+          "type": "number"
+        },
+        "task_status": {
+          "$ref": "#/$defs/AMRTaskStatus"
+        },
+        "health_status": {
+          "$ref": "#/$defs/HealthStatus"
+        },
+        "connection_status": {
+          "$ref": "#/$defs/ConnectionStatus"
+        }
+      },
+      "required": [
+        "amr_id",
+        "position",
+        "heading",
+        "battery",
+        "load",
+        "task_status",
+        "health_status",
+        "connection_status"
+      ],
+      "title": "AMRState",
+      "type": "object"
+    },
+    "AMRTaskStatus": {
+      "description": "P0 场景中 AMR 可观测到的任务阶段。",
+      "enum": [
+        "IDLE",
+        "TO_PICKUP",
+        "LOADING",
+        "TO_DROPOFF",
+        "UNLOADING",
+        "TO_CHARGE",
+        "CHARGING",
+        "OFFLINE"
+      ],
+      "title": "AMRTaskStatus",
+      "type": "string"
+    },
+    "ChargingStationState": {
+      "additionalProperties": false,
+      "description": "充电站占用和累计供电的结构化快照。",
+      "properties": {
+        "station_id": {
+          "minLength": 1,
+          "title": "Station Id",
+          "type": "string"
+        },
+        "position": {
+          "$ref": "#/$defs/GridPosition"
+        },
+        "capacity": {
+          "title": "Capacity",
+          "type": "integer"
+        },
+        "status": {
+          "$ref": "#/$defs/ChargingStationStatus"
+        },
+        "charging_amr_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Charging Amr Ids",
+          "type": "array"
+        },
+        "total_energy_delivered_percent": {
+          "minimum": 0.0,
+          "title": "Total Energy Delivered Percent",
+          "type": "number"
+        }
+      },
+      "required": [
+        "station_id",
+        "position",
+        "capacity",
+        "status",
+        "charging_amr_ids",
+        "total_energy_delivered_percent"
+      ],
+      "title": "ChargingStationState",
+      "type": "object"
+    },
+    "ChargingStationStatus": {
+      "description": "充电站在当前 tick 的资源状态。",
+      "enum": [
+        "available",
+        "occupied"
+      ],
+      "title": "ChargingStationStatus",
+      "type": "string"
+    },
+    "ConnectionStatus": {
+      "description": "AMR 与控制系统的连接状态。",
+      "enum": [
+        "ONLINE",
+        "DEGRADED",
+        "OFFLINE"
+      ],
+      "title": "ConnectionStatus",
+      "type": "string"
+    },
+    "DemoPathStep": {
+      "additionalProperties": false,
+      "description": "画轨迹用的 ``amr.path_step`` 子集；坐标与 SimulationResult.events 逐字段一致。\n\n前端只允许按这些离散格子步画折线（move）与格内标记（wait/turn），\n不做连续物理插值；battery 随步下发，供状态栏/悬停展示电量衰减。",
+      "properties": {
+        "time": {
+          "minimum": 0,
+          "title": "Time",
+          "type": "integer"
+        },
+        "amr_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Amr Id",
+          "type": "string"
+        },
+        "order_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Order Id",
+          "type": "string"
+        },
+        "action": {
+          "enum": [
+            "start",
+            "move",
+            "turn_left",
+            "turn_right",
+            "wait"
+          ],
+          "title": "Action",
+          "type": "string"
+        },
+        "position": {
+          "$ref": "#/$defs/GridPosition"
+        },
+        "heading": {
+          "title": "Heading",
+          "type": "integer"
+        },
+        "battery": {
+          "maximum": 100.0,
+          "minimum": 0.0,
+          "title": "Battery",
+          "type": "number"
+        },
+        "g_cost": {
+          "minimum": 0.0,
+          "title": "G Cost",
+          "type": "number"
+        }
+      },
+      "required": [
+        "time",
+        "amr_id",
+        "order_id",
+        "action",
+        "position",
+        "heading",
+        "battery",
+        "g_cost"
+      ],
+      "title": "DemoPathStep",
+      "type": "object"
+    },
+    "DemoRouteInfo": {
+      "additionalProperties": false,
+      "description": "Validator 已验证的单车路线快照；仅用于对照，不是前端寻路输入。",
+      "properties": {
+        "amr_id": {
+          "title": "Amr Id",
+          "type": "string"
+        },
+        "order_id": {
+          "title": "Order Id",
+          "type": "string"
+        },
+        "payload_kg": {
+          "title": "Payload Kg",
+          "type": "number"
+        },
+        "pickup_time": {
+          "title": "Pickup Time",
+          "type": "integer"
+        },
+        "dropoff_time": {
+          "title": "Dropoff Time",
+          "type": "integer"
+        },
+        "total_cost": {
+          "title": "Total Cost",
+          "type": "number"
+        },
+        "path": {
+          "items": {
+            "$ref": "#/$defs/RouteStep"
+          },
+          "title": "Path",
+          "type": "array"
+        }
+      },
+      "required": [
+        "amr_id",
+        "order_id",
+        "payload_kg",
+        "pickup_time",
+        "dropoff_time",
+        "total_cost",
+        "path"
+      ],
+      "title": "DemoRouteInfo",
+      "type": "object"
+    },
+    "DemoSimulationOutcome": {
+      "additionalProperties": false,
+      "description": "SimulationResult 的稳定展示子集：状态、最终 AMR/订单快照与完整事件流。\n\n逐 tick Observation 体量大且前端播放只需要事件流，因此响应不内嵌\nobservations；需要完整结果调试时用 scripts/export_demo_trajectory.py\n离线导出。events 保持原样下发，便于核对 path_steps 没有伪造。",
+      "properties": {
+        "simulation_id": {
+          "title": "Simulation Id",
+          "type": "string"
+        },
+        "seed": {
+          "title": "Seed",
+          "type": "integer"
+        },
+        "status": {
+          "$ref": "#/$defs/SimulationStatus"
+        },
+        "start_time": {
+          "title": "Start Time",
+          "type": "integer"
+        },
+        "end_time": {
+          "title": "End Time",
+          "type": "integer"
+        },
+        "amrs": {
+          "items": {
+            "$ref": "#/$defs/AMRState"
+          },
+          "title": "Amrs",
+          "type": "array"
+        },
+        "orders": {
+          "items": {
+            "$ref": "#/$defs/SimulationOrderState"
+          },
+          "title": "Orders",
+          "type": "array"
+        },
+        "workstations": {
+          "items": {
+            "$ref": "#/$defs/WorkstationState"
+          },
+          "title": "Workstations",
+          "type": "array"
+        },
+        "charging_stations": {
+          "items": {
+            "$ref": "#/$defs/ChargingStationState"
+          },
+          "title": "Charging Stations",
+          "type": "array"
+        },
+        "events": {
+          "items": {
+            "$ref": "#/$defs/SimulationEvent"
+          },
+          "title": "Events",
+          "type": "array"
+        }
+      },
+      "required": [
+        "simulation_id",
+        "seed",
+        "status",
+        "start_time",
+        "end_time",
+        "amrs",
+        "orders",
+        "workstations",
+        "charging_stations",
+        "events"
+      ],
+      "title": "DemoSimulationOutcome",
+      "type": "object"
+    },
+    "DemoSimulationSummary": {
+      "additionalProperties": false,
+      "description": "状态栏摘要：Validator 判定、仿真状态与完成订单一屏可见。\n\n``order`` 是本次实际执行的完整订单真值：自然语言链路中抽取结果由服务端\n重建，前端历史清单只能以它为准标注物料与取/送点，不得自行解析用户原文。",
+      "properties": {
+        "order_id": {
+          "title": "Order Id",
+          "type": "string"
+        },
+        "order": {
+          "$ref": "#/$defs/TransportOrder"
+        },
+        "allocation_status": {
+          "title": "Allocation Status",
+          "type": "string"
+        },
+        "route_status": {
+          "title": "Route Status",
+          "type": "string"
+        },
+        "validator_valid": {
+          "title": "Validator Valid",
+          "type": "boolean"
+        },
+        "validator_error_count": {
+          "minimum": 0,
+          "title": "Validator Error Count",
+          "type": "integer"
+        },
+        "validator_ruleset_version": {
+          "title": "Validator Ruleset Version",
+          "type": "string"
+        },
+        "simulation_status": {
+          "$ref": "#/$defs/SimulationStatus"
+        },
+        "completed_order_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Completed Order Ids",
+          "type": "array"
+        },
+        "path_step_count": {
+          "minimum": 0,
+          "title": "Path Step Count",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "order_id",
+        "order",
+        "allocation_status",
+        "route_status",
+        "validator_valid",
+        "validator_error_count",
+        "validator_ruleset_version",
+        "simulation_status",
+        "completed_order_ids",
+        "path_step_count"
+      ],
+      "title": "DemoSimulationSummary",
+      "type": "object"
+    },
+    "DemoWarehouseMap": {
+      "additionalProperties": false,
+      "description": "GET /demo/warehouse 的规范化地图快照；前端不得自行猜测任何地图元素。\n\n字段直接复用 domains.amr_warehouse 的已验证模型，保证 UI 图例与\nwarehouse_v1.json 逐格一致；amrs/orders 来自同一 seed 的快照读取，\n因此初始位姿与可选订单和 C++ 规划看到的完全一致。",
+      "properties": {
+        "environment_ref": {
+          "title": "Environment Ref",
+          "type": "string"
+        },
+        "state_version": {
+          "title": "State Version",
+          "type": "string"
+        },
+        "map_id": {
+          "title": "Map Id",
+          "type": "string"
+        },
+        "version": {
+          "title": "Version",
+          "type": "integer"
+        },
+        "width": {
+          "title": "Width",
+          "type": "integer"
+        },
+        "height": {
+          "title": "Height",
+          "type": "integer"
+        },
+        "resolution_m": {
+          "title": "Resolution M",
+          "type": "number"
+        },
+        "obstacles": {
+          "items": {
+            "$ref": "#/$defs/GridPosition"
+          },
+          "title": "Obstacles",
+          "type": "array"
+        },
+        "temporary_blocked_cells": {
+          "items": {
+            "$ref": "#/$defs/GridPosition"
+          },
+          "title": "Temporary Blocked Cells",
+          "type": "array"
+        },
+        "narrow_aisles": {
+          "items": {
+            "$ref": "#/$defs/NarrowAisle"
+          },
+          "title": "Narrow Aisles",
+          "type": "array"
+        },
+        "blocked_edges": {
+          "items": {
+            "$ref": "#/$defs/WarehouseEdge"
+          },
+          "title": "Blocked Edges",
+          "type": "array"
+        },
+        "one_way_edges": {
+          "items": {
+            "$ref": "#/$defs/WarehouseEdge"
+          },
+          "title": "One Way Edges",
+          "type": "array"
+        },
+        "pickup_points": {
+          "items": {
+            "$ref": "#/$defs/WarehouseLocation"
+          },
+          "title": "Pickup Points",
+          "type": "array"
+        },
+        "dropoff_points": {
+          "items": {
+            "$ref": "#/$defs/WarehouseLocation"
+          },
+          "title": "Dropoff Points",
+          "type": "array"
+        },
+        "charging_stations": {
+          "items": {
+            "$ref": "#/$defs/WarehouseLocation"
+          },
+          "title": "Charging Stations",
+          "type": "array"
+        },
+        "amrs": {
+          "items": {
+            "$ref": "#/$defs/AMRState"
+          },
+          "title": "Amrs",
+          "type": "array"
+        },
+        "orders": {
+          "items": {
+            "$ref": "#/$defs/TransportOrder"
+          },
+          "title": "Orders",
+          "type": "array"
+        },
+        "start_time": {
+          "title": "Start Time",
+          "type": "integer"
+        },
+        "max_time": {
+          "title": "Max Time",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "environment_ref",
+        "state_version",
+        "map_id",
+        "version",
+        "width",
+        "height",
+        "resolution_m",
+        "obstacles",
+        "temporary_blocked_cells",
+        "narrow_aisles",
+        "blocked_edges",
+        "one_way_edges",
+        "pickup_points",
+        "dropoff_points",
+        "charging_stations",
+        "amrs",
+        "orders",
+        "start_time",
+        "max_time"
+      ],
+      "title": "DemoWarehouseMap",
+      "type": "object"
+    },
+    "GridPosition": {
+      "additionalProperties": false,
+      "description": "30 × 20 仓库栅格中的一个合法位置。\n\n坐标从 0 开始，所以宽度为 30 时 x 最大只能是 29，高度为 20 时 y 最大只能是 19。",
+      "properties": {
+        "x": {
+          "description": "横坐标，允许 0～29",
+          "exclusiveMaximum": 30,
+          "minimum": 0,
+          "title": "X",
+          "type": "integer"
+        },
+        "y": {
+          "description": "纵坐标，允许 0～19",
+          "exclusiveMaximum": 20,
+          "minimum": 0,
+          "title": "Y",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "x",
+        "y"
+      ],
+      "title": "GridPosition",
+      "type": "object"
+    },
+    "Heading": {
+      "description": "AMR 的四个栅格朝向，单位为度。",
+      "enum": [
+        0,
+        90,
+        180,
+        270
+      ],
+      "title": "Heading",
+      "type": "integer"
+    },
+    "HealthStatus": {
+      "description": "AMR 自检健康状态。",
+      "enum": [
+        "HEALTHY",
+        "DEGRADED",
+        "FAULT"
+      ],
+      "title": "HealthStatus",
+      "type": "string"
+    },
+    "JsonValue": {},
+    "NarrowAisle": {
+      "additionalProperties": false,
+      "description": "固定地图中的窄通道标签及其连续栅格。",
+      "properties": {
+        "aisle_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Aisle Id",
+          "type": "string"
+        },
+        "cells": {
+          "items": {
+            "$ref": "#/$defs/GridPosition"
+          },
+          "minItems": 2,
+          "title": "Cells",
+          "type": "array"
+        }
+      },
+      "required": [
+        "aisle_id",
+        "cells"
+      ],
+      "title": "NarrowAisle",
+      "type": "object"
+    },
+    "RouteStep": {
+      "additionalProperties": false,
+      "description": "P0-09 的逐时刻路径状态；仿真器只消费，不重新规划。",
+      "properties": {
+        "position": {
+          "$ref": "#/$defs/GridPosition"
+        },
+        "heading": {
+          "$ref": "#/$defs/Heading"
+        },
+        "time": {
+          "title": "Time",
+          "type": "integer"
+        },
+        "action": {
+          "enum": [
+            "start",
+            "move",
+            "turn_left",
+            "turn_right",
+            "wait"
+          ],
+          "title": "Action",
+          "type": "string"
+        },
+        "g_cost": {
+          "title": "G Cost",
+          "type": "number"
+        }
+      },
+      "required": [
+        "position",
+        "heading",
+        "time",
+        "action",
+        "g_cost"
+      ],
+      "title": "RouteStep",
+      "type": "object"
+    },
+    "SimulationEvent": {
+      "additionalProperties": false,
+      "description": "单个确定性仿真事件。\n\n``time`` 是离散仿真秒，不使用墙上时钟；``payload`` 只保存 JSON 值，便于\n后续 P0-06 events、Trace 和 Eval 直接序列化而不执行任意对象。",
+      "properties": {
+        "event_id": {
+          "minLength": 1,
+          "title": "Event Id",
+          "type": "string"
+        },
+        "simulation_id": {
+          "minLength": 1,
+          "title": "Simulation Id",
+          "type": "string"
+        },
+        "time": {
+          "minimum": 0,
+          "title": "Time",
+          "type": "integer"
+        },
+        "event_type": {
+          "minLength": 1,
+          "title": "Event Type",
+          "type": "string"
+        },
+        "severity": {
+          "enum": [
+            "info",
+            "warning",
+            "error"
+          ],
+          "title": "Severity",
+          "type": "string"
+        },
+        "amr_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Amr Id"
+        },
+        "order_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Order Id"
+        },
+        "workstation_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Workstation Id"
+        },
+        "charging_station_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Charging Station Id"
+        },
+        "payload": {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "title": "Payload",
+          "type": "object"
+        }
+      },
+      "required": [
+        "event_id",
+        "simulation_id",
+        "time",
+        "event_type",
+        "severity",
+        "payload"
+      ],
+      "title": "SimulationEvent",
+      "type": "object"
+    },
+    "SimulationOrderState": {
+      "additionalProperties": false,
+      "description": "订单的可审计运行态，不修改 P0-04 的 TransportOrder 定义。",
+      "properties": {
+        "order_id": {
+          "minLength": 1,
+          "title": "Order Id",
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/SimulationOrderStatus"
+        },
+        "assigned_amr_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Assigned Amr Id"
+        },
+        "payload_kg": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Payload Kg"
+        },
+        "pickup_time": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Pickup Time"
+        },
+        "dropoff_time": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Dropoff Time"
+        },
+        "blocked_reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Blocked Reason"
+        }
+      },
+      "required": [
+        "order_id",
+        "status",
+        "assigned_amr_id",
+        "payload_kg",
+        "pickup_time",
+        "dropoff_time",
+        "blocked_reason"
+      ],
+      "title": "SimulationOrderState",
+      "type": "object"
+    },
+    "SimulationOrderStatus": {
+      "description": "订单在仿真中的最小生命周期。",
+      "enum": [
+        "pending",
+        "in_progress",
+        "completed",
+        "blocked"
+      ],
+      "title": "SimulationOrderStatus",
+      "type": "string"
+    },
+    "SimulationStatus": {
+      "description": "仿真终态：完成、故障阻塞或运行到时间上限。",
+      "enum": [
+        "completed",
+        "blocked",
+        "timeout"
+      ],
+      "title": "SimulationStatus",
+      "type": "string"
+    },
+    "TransportOrder": {
+      "additionalProperties": false,
+      "description": "仓库内一次 pickup-transport-dropoff 运输订单。",
+      "properties": {
+        "order_id": {
+          "description": "订单唯一标识",
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Order Id",
+          "type": "string"
+        },
+        "material_id": {
+          "description": "待运输物料标识",
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Material Id",
+          "type": "string"
+        },
+        "pickup": {
+          "description": "取货点标识",
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Pickup",
+          "type": "string"
+        },
+        "dropoff": {
+          "description": "交付点标识",
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Dropoff",
+          "type": "string"
+        },
+        "priority": {
+          "description": "优先级；5 最高，1 最低",
+          "maximum": 5,
+          "minimum": 1,
+          "title": "Priority",
+          "type": "integer"
+        },
+        "release_time": {
+          "description": "订单可开始时间，单位为仿真秒",
+          "minimum": 0,
+          "title": "Release Time",
+          "type": "integer"
+        },
+        "deadline": {
+          "description": "订单截止时间，单位为仿真秒",
+          "exclusiveMinimum": 0,
+          "title": "Deadline",
+          "type": "integer"
+        },
+        "dependencies": {
+          "description": "必须先完成的订单 ID",
+          "items": {
+            "type": "string"
+          },
+          "title": "Dependencies",
+          "type": "array"
+        }
+      },
+      "required": [
+        "order_id",
+        "material_id",
+        "pickup",
+        "dropoff",
+        "priority",
+        "release_time",
+        "deadline",
+        "dependencies"
+      ],
+      "title": "TransportOrder",
+      "type": "object"
+    },
+    "WarehouseEdge": {
+      "additionalProperties": false,
+      "description": "地图中的一条相邻有向边。",
+      "properties": {
+        "from": {
+          "$ref": "#/$defs/GridPosition"
+        },
+        "to": {
+          "$ref": "#/$defs/GridPosition"
+        }
+      },
+      "required": [
+        "from",
+        "to"
+      ],
+      "title": "WarehouseEdge",
+      "type": "object"
+    },
+    "WarehouseLocation": {
+      "additionalProperties": false,
+      "description": "固定地图中一个带稳定 ID 的工位或充电点。",
+      "properties": {
+        "id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Id",
+          "type": "string"
+        },
+        "x": {
+          "exclusiveMaximum": 30,
+          "minimum": 0,
+          "title": "X",
+          "type": "integer"
+        },
+        "y": {
+          "exclusiveMaximum": 20,
+          "minimum": 0,
+          "title": "Y",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id",
+        "x",
+        "y"
+      ],
+      "title": "WarehouseLocation",
+      "type": "object"
+    },
+    "WorkstationState": {
+      "additionalProperties": false,
+      "description": "工位的离散事件状态；容量由 P0-10 计划配置决定。",
+      "properties": {
+        "workstation_id": {
+          "minLength": 1,
+          "title": "Workstation Id",
+          "type": "string"
+        },
+        "position": {
+          "$ref": "#/$defs/GridPosition"
+        },
+        "capacity": {
+          "title": "Capacity",
+          "type": "integer"
+        },
+        "occupied_amr_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Occupied Amr Ids",
+          "type": "array"
+        },
+        "last_event_time": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Last Event Time"
+        },
+        "last_event_type": {
+          "anyOf": [
+            {
+              "enum": [
+                "pickup",
+                "dropoff"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Last Event Type"
+        },
+        "service_count": {
+          "minimum": 0,
+          "title": "Service Count",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "workstation_id",
+        "position",
+        "capacity",
+        "occupied_amr_ids",
+        "last_event_time",
+        "last_event_type",
+        "service_count"
+      ],
+      "title": "WorkstationState",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "POST /demo/simulate 成功响应：地图 + 对照路线 + 仿真结果 + 轨迹子集。",
+  "properties": {
+    "map": {
+      "$ref": "#/$defs/DemoWarehouseMap"
+    },
+    "routes": {
+      "items": {
+        "$ref": "#/$defs/DemoRouteInfo"
+      },
+      "title": "Routes",
+      "type": "array"
+    },
+    "result": {
+      "$ref": "#/$defs/DemoSimulationOutcome"
+    },
+    "path_steps": {
+      "items": {
+        "$ref": "#/$defs/DemoPathStep"
+      },
+      "title": "Path Steps",
+      "type": "array"
+    },
+    "summary": {
+      "$ref": "#/$defs/DemoSimulationSummary"
+    }
+  },
+  "required": [
+    "map",
+    "routes",
+    "result",
+    "path_steps",
+    "summary"
+  ],
+  "title": "DemoSimulateResponse",
+  "type": "object"
+}

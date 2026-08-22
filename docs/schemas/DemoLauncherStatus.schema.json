@@ -1,0 +1,81 @@
+{
+  "additionalProperties": false,
+  "description": "启动器状态：不回传密钥、环境变量或完整命令行，只暴露排障所需最小信息。",
+  "properties": {
+    "state": {
+      "enum": [
+        "idle",
+        "running",
+        "exited",
+        "failed",
+        "unavailable"
+      ],
+      "title": "State",
+      "type": "string"
+    },
+    "script": {
+      "title": "Script",
+      "type": "string"
+    },
+    "start_fast": {
+      "title": "Start Fast",
+      "type": "boolean"
+    },
+    "pid": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Pid"
+    },
+    "exit_code": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Exit Code"
+    },
+    "started_at": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Started At"
+    },
+    "message": {
+      "title": "Message",
+      "type": "string"
+    },
+    "log_tail": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Log Tail",
+      "type": "array"
+    }
+  },
+  "required": [
+    "state",
+    "script",
+    "start_fast",
+    "pid",
+    "exit_code",
+    "started_at",
+    "message",
+    "log_tail"
+  ],
+  "title": "DemoLauncherStatus",
+  "type": "object"
+}

@@ -705,6 +705,161 @@ def test_fixed_fact_alias_refs_are_resolved_only_from_whitelist() -> None:
     assert allocate_id == normalized.tasks[0].task_id
 
 
+def test_fixed_fact_override_repairs_hallucinated_fixed_refs() -> None:
+    """2026-08-22 演示实测失败形状：LLM 把 fixed:* 伪引用当字面值照抄。
+
+    这些字段的正确值由合同/请求唯一确定，规范化层必须以真值覆盖并记录 note，
+    覆盖后的计划仍要完整通过确定性 Validator。
+    """
+
+    contract = _contract()
+    plan = _plan(contract)
+    replacements = {
+        ToolName.ALLOCATE_TASKS: {
+            "environment_ref": {"$ref": "fixed:environment_ref"},
+            "order_ids": {"$ref": "fixed:order_ids"},
+        },
+        ToolName.PLAN_MULTI_AMR_ROUTES: {
+            "environment_ref": {"$ref": "fixed:environment_ref"},
+            "blocked_cells": {"$ref": "fixed:blocked_cells"},
+            "max_time": {"$ref": "fixed:latest_deadline"},
+        },
+        ToolName.VALIDATE_FLEET_PLAN: {
+            "environment_ref": {"$ref": "fixed:environment_ref"},
+            "ruleset_version": {"$ref": "fixed:ruleset_version"},
+        },
+        ToolName.DISPATCH_SIMULATION: {
+            "seed": {"$ref": "fixed:simulation_seed"},
+        },
+    }
+    tasks = [
+        task.model_copy(
+            update={
+                "tool_arguments": {
+                    **task.tool_arguments,
+                    **replacements.get(task.tool_name, {}),
+                }
+            }
+        )
+        for task in plan.tasks
+    ]
+    hallucinated = PlanTasksOutput.model_validate(
+        {**plan.model_dump(mode="python"), "tasks": tasks}
+    )
+
+    normalized, notes = canonicalize_normal_pevr_plan(
+        hallucinated,
+        contract=contract,
+        expected_seed=7,
+    )
+
+    assert normalized.tasks[0].tool_arguments["environment_ref"] == ENVIRONMENT_REF
+    assert normalized.tasks[0].tool_arguments["order_ids"] == ["ORDER-001"]
+    assert normalized.tasks[1].tool_arguments["blocked_cells"] == [
+        cell.model_dump(mode="json") for cell in contract.constraints.blocked_cells
+    ]
+    assert normalized.tasks[1].tool_arguments["max_time"] == 120
+    assert normalized.tasks[2].tool_arguments["environment_ref"] == ENVIRONMENT_REF
+    assert normalized.tasks[2].tool_arguments["ruleset_version"] == "p0-10.v1"
+    assert normalized.tasks[3].tool_arguments["seed"] == 7
+    assert sum("fixed_fact_override" in note for note in notes) == 8
+    validation = validate_normal_pevr_plan(
+        contract,
+        normalized,
+        tool_specs=build_tool_registry().specs(),
+        expected_seed=7,
+    )
+    assert validation.valid is True
+
+
+def test_fixed_fact_override_repairs_self_input_refs() -> None:
+    """实测失败形状之二：LLM 自引用 task:<自身>/input/* 也必须被真值覆盖。"""
+
+    contract = _contract()
+    plan = _plan(contract)
+    replacements = {
+        ToolName.PLAN_MULTI_AMR_ROUTES: {
+            "max_time": {"$ref": "task:TASK-ROUTE/input/max_time"},
+        },
+        ToolName.DISPATCH_SIMULATION: {
+            "seed": {"$ref": "task:TASK-DISPATCH/input/seed"},
+        },
+    }
+    tasks = [
+        task.model_copy(
+            update={
+                "tool_arguments": {
+                    **task.tool_arguments,
+                    **replacements.get(task.tool_name, {}),
+                }
+            }
+        )
+        for task in plan.tasks
+    ]
+    hallucinated = PlanTasksOutput.model_validate(
+        {**plan.model_dump(mode="python"), "tasks": tasks}
+    )
+
+    normalized, notes = canonicalize_normal_pevr_plan(
+        hallucinated,
+        contract=contract,
+        expected_seed=7,
+    )
+
+    assert normalized.tasks[1].tool_arguments["max_time"] == 120
+    assert normalized.tasks[3].tool_arguments["seed"] == 7
+    assert sum("fixed_fact_override" in note for note in notes) == 2
+    validation = validate_normal_pevr_plan(
+        contract,
+        normalized,
+        tool_specs=build_tool_registry().specs(),
+        expected_seed=7,
+    )
+    assert validation.valid is True
+
+
+def test_fixed_fact_override_preserves_larger_max_time() -> None:
+    """max_time 是唯一允许 LLM 加大的字段：合法更大 horizon 不被覆盖。"""
+
+    contract = _contract()
+    plan = _plan(contract)
+    route = plan.tasks[1]
+    tasks = [
+        route.model_copy(
+            update={"tool_arguments": {**route.tool_arguments, "max_time": 300}}
+        )
+        if task.task_id == route.task_id
+        else task
+        for task in plan.tasks
+    ]
+    wider = PlanTasksOutput.model_validate({**plan.model_dump(mode="python"), "tasks": tasks})
+
+    normalized, notes = canonicalize_normal_pevr_plan(wider, contract=contract, expected_seed=7)
+
+    assert normalized.tasks[1].tool_arguments["max_time"] == 300
+    assert not [note for note in notes if "fixed_fact_override" in note]
+
+
+def test_fixed_fact_override_leaves_correct_plan_quiet() -> None:
+    """完全正确的计划不产生任何 fixed_fact_override note（审计噪音为零）。"""
+
+    contract = _contract()
+    normalized, notes = canonicalize_normal_pevr_plan(
+        _plan(contract),
+        contract=contract,
+        expected_seed=7,
+    )
+
+    assert not [note for note in notes if "fixed_fact_override" in note]
+    validation = validate_normal_pevr_plan(
+        contract,
+        normalized,
+        tool_specs=build_tool_registry().specs(),
+        expected_seed=7,
+    )
+    assert validation.valid is True
+
+
 def test_plan_validator_blocks_untrusted_dataflow_before_executor() -> None:
     """非法 assignments 引用必须在任何工具调用前失败。"""
 
@@ -752,21 +907,26 @@ def test_dispatch_requires_trusted_approval_context_before_handler() -> None:
 
 
 def test_plan_semantic_repair_runs_once_then_still_uses_hard_validator() -> None:
-    """Fast 首次固定事实写错时只重问一次，修复计划仍走正式 validate 节点。"""
+    """Fast 首次数据流引用写错时只重问一次，修复计划仍走正式 validate 节点。
+
+    非法夹具必须破坏 canonicalize 不豁免的字段（assignments 数据流引用）；
+    固定事实字段（seed 等）自 2026-08-22 起由规范化层直接覆盖为真值，
+    不再进入重问路径。
+    """
 
     run_id = "run-p013-plan-repair"
     contract = _contract()
     valid = _plan(contract)
-    invalid_dispatch = valid.tasks[3].model_copy(
+    invalid_route = valid.tasks[1].model_copy(
         update={
             "tool_arguments": {
-                **valid.tasks[3].tool_arguments,
-                "seed": 99,
+                **valid.tasks[1].tool_arguments,
+                "assignments": {"$ref": "task:TASK-ELSEWHERE/output/assignments"},
             }
         }
     )
     invalid = valid.model_copy(
-        update={"tasks": [*valid.tasks[:3], invalid_dispatch]}
+        update={"tasks": [valid.tasks[0], invalid_route, *valid.tasks[2:]]}
     )
     provider = _SequencePlanProvider(contract, [invalid, valid], run_id)
     registry = _FakeRegistry(run_id)
@@ -797,10 +957,17 @@ def test_plan_semantic_repair_stops_after_one_invalid_retry() -> None:
     run_id = "run-p013-plan-repair-fails"
     contract = _contract()
     plan = _plan(contract)
-    invalid_dispatch = plan.tasks[3].model_copy(
-        update={"tool_arguments": {**plan.tasks[3].tool_arguments, "seed": 99}}
+    invalid_route = plan.tasks[1].model_copy(
+        update={
+            "tool_arguments": {
+                **plan.tasks[1].tool_arguments,
+                "assignments": {"$ref": "task:TASK-ELSEWHERE/output/assignments"},
+            }
+        }
     )
-    invalid = plan.model_copy(update={"tasks": [*plan.tasks[:3], invalid_dispatch]})
+    invalid = plan.model_copy(
+        update={"tasks": [plan.tasks[0], invalid_route, *plan.tasks[2:]]}
+    )
     provider = _SequencePlanProvider(contract, [invalid, invalid, plan], run_id)
     registry = _FakeRegistry(run_id)
 

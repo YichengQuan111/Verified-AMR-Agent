@@ -1,0 +1,128 @@
+{
+  "additionalProperties": false,
+  "description": "自然语言闭环的运行状态；审批信息直接取自 CLI 落盘的 waiting artifact。\n\n不回传 JWT、命令行或 .env；log_tail 只保留尾部若干行供排障。",
+  "properties": {
+    "run_id": {
+      "title": "Run Id",
+      "type": "string"
+    },
+    "state": {
+      "enum": [
+        "running",
+        "waiting_approval",
+        "completed",
+        "failed"
+      ],
+      "title": "State",
+      "type": "string"
+    },
+    "request": {
+      "title": "Request",
+      "type": "string"
+    },
+    "pid": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Pid"
+    },
+    "exit_code": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Exit Code"
+    },
+    "started_at": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Started At"
+    },
+    "approval_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Approval Id"
+    },
+    "approval_reason_code": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Approval Reason Code"
+    },
+    "approval_expires_at": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Approval Expires At"
+    },
+    "final_status": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Final Status"
+    },
+    "message": {
+      "title": "Message",
+      "type": "string"
+    },
+    "log_tail": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Log Tail",
+      "type": "array"
+    }
+  },
+  "required": [
+    "run_id",
+    "state",
+    "request",
+    "pid",
+    "exit_code",
+    "started_at",
+    "approval_id",
+    "approval_reason_code",
+    "approval_expires_at",
+    "final_status",
+    "message",
+    "log_tail"
+  ],
+  "title": "DemoNLRunStatus",
+  "type": "object"
+}

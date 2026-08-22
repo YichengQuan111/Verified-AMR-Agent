@@ -1,0 +1,410 @@
+{
+  "$defs": {
+    "AMRState": {
+      "additionalProperties": false,
+      "description": "一台 AMR 在某个确定时刻的完整状态快照。",
+      "properties": {
+        "amr_id": {
+          "description": "AMR 的稳定唯一标识",
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Amr Id",
+          "type": "string"
+        },
+        "position": {
+          "$ref": "#/$defs/GridPosition"
+        },
+        "heading": {
+          "$ref": "#/$defs/Heading"
+        },
+        "battery": {
+          "description": "剩余电量百分比",
+          "maximum": 100,
+          "minimum": 0,
+          "title": "Battery",
+          "type": "number"
+        },
+        "load": {
+          "description": "当前载荷，单位为千克",
+          "minimum": 0,
+          "title": "Load",
+          "type": "number"
+        },
+        "task_status": {
+          "$ref": "#/$defs/AMRTaskStatus"
+        },
+        "health_status": {
+          "$ref": "#/$defs/HealthStatus"
+        },
+        "connection_status": {
+          "$ref": "#/$defs/ConnectionStatus"
+        }
+      },
+      "required": [
+        "amr_id",
+        "position",
+        "heading",
+        "battery",
+        "load",
+        "task_status",
+        "health_status",
+        "connection_status"
+      ],
+      "title": "AMRState",
+      "type": "object"
+    },
+    "AMRTaskStatus": {
+      "description": "P0 场景中 AMR 可观测到的任务阶段。",
+      "enum": [
+        "IDLE",
+        "TO_PICKUP",
+        "LOADING",
+        "TO_DROPOFF",
+        "UNLOADING",
+        "TO_CHARGE",
+        "CHARGING",
+        "OFFLINE"
+      ],
+      "title": "AMRTaskStatus",
+      "type": "string"
+    },
+    "ConnectionStatus": {
+      "description": "AMR 与控制系统的连接状态。",
+      "enum": [
+        "ONLINE",
+        "DEGRADED",
+        "OFFLINE"
+      ],
+      "title": "ConnectionStatus",
+      "type": "string"
+    },
+    "GridPosition": {
+      "additionalProperties": false,
+      "description": "30 × 20 仓库栅格中的一个合法位置。\n\n坐标从 0 开始，所以宽度为 30 时 x 最大只能是 29，高度为 20 时 y 最大只能是 19。",
+      "properties": {
+        "x": {
+          "description": "横坐标，允许 0～29",
+          "exclusiveMaximum": 30,
+          "minimum": 0,
+          "title": "X",
+          "type": "integer"
+        },
+        "y": {
+          "description": "纵坐标，允许 0～19",
+          "exclusiveMaximum": 20,
+          "minimum": 0,
+          "title": "Y",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "x",
+        "y"
+      ],
+      "title": "GridPosition",
+      "type": "object"
+    },
+    "Heading": {
+      "description": "AMR 的四个栅格朝向，单位为度。",
+      "enum": [
+        0,
+        90,
+        180,
+        270
+      ],
+      "title": "Heading",
+      "type": "integer"
+    },
+    "HealthStatus": {
+      "description": "AMR 自检健康状态。",
+      "enum": [
+        "HEALTHY",
+        "DEGRADED",
+        "FAULT"
+      ],
+      "title": "HealthStatus",
+      "type": "string"
+    },
+    "NarrowAisle": {
+      "additionalProperties": false,
+      "description": "固定地图中的窄通道标签及其连续栅格。",
+      "properties": {
+        "aisle_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Aisle Id",
+          "type": "string"
+        },
+        "cells": {
+          "items": {
+            "$ref": "#/$defs/GridPosition"
+          },
+          "minItems": 2,
+          "title": "Cells",
+          "type": "array"
+        }
+      },
+      "required": [
+        "aisle_id",
+        "cells"
+      ],
+      "title": "NarrowAisle",
+      "type": "object"
+    },
+    "TransportOrder": {
+      "additionalProperties": false,
+      "description": "仓库内一次 pickup-transport-dropoff 运输订单。",
+      "properties": {
+        "order_id": {
+          "description": "订单唯一标识",
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Order Id",
+          "type": "string"
+        },
+        "material_id": {
+          "description": "待运输物料标识",
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Material Id",
+          "type": "string"
+        },
+        "pickup": {
+          "description": "取货点标识",
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Pickup",
+          "type": "string"
+        },
+        "dropoff": {
+          "description": "交付点标识",
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Dropoff",
+          "type": "string"
+        },
+        "priority": {
+          "description": "优先级；5 最高，1 最低",
+          "maximum": 5,
+          "minimum": 1,
+          "title": "Priority",
+          "type": "integer"
+        },
+        "release_time": {
+          "description": "订单可开始时间，单位为仿真秒",
+          "minimum": 0,
+          "title": "Release Time",
+          "type": "integer"
+        },
+        "deadline": {
+          "description": "订单截止时间，单位为仿真秒",
+          "exclusiveMinimum": 0,
+          "title": "Deadline",
+          "type": "integer"
+        },
+        "dependencies": {
+          "description": "必须先完成的订单 ID",
+          "items": {
+            "type": "string"
+          },
+          "title": "Dependencies",
+          "type": "array"
+        }
+      },
+      "required": [
+        "order_id",
+        "material_id",
+        "pickup",
+        "dropoff",
+        "priority",
+        "release_time",
+        "deadline",
+        "dependencies"
+      ],
+      "title": "TransportOrder",
+      "type": "object"
+    },
+    "WarehouseEdge": {
+      "additionalProperties": false,
+      "description": "地图中的一条相邻有向边。",
+      "properties": {
+        "from": {
+          "$ref": "#/$defs/GridPosition"
+        },
+        "to": {
+          "$ref": "#/$defs/GridPosition"
+        }
+      },
+      "required": [
+        "from",
+        "to"
+      ],
+      "title": "WarehouseEdge",
+      "type": "object"
+    },
+    "WarehouseLocation": {
+      "additionalProperties": false,
+      "description": "固定地图中一个带稳定 ID 的工位或充电点。",
+      "properties": {
+        "id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Id",
+          "type": "string"
+        },
+        "x": {
+          "exclusiveMaximum": 30,
+          "minimum": 0,
+          "title": "X",
+          "type": "integer"
+        },
+        "y": {
+          "exclusiveMaximum": 20,
+          "minimum": 0,
+          "title": "Y",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id",
+        "x",
+        "y"
+      ],
+      "title": "WarehouseLocation",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "GET /demo/warehouse 的规范化地图快照；前端不得自行猜测任何地图元素。\n\n字段直接复用 domains.amr_warehouse 的已验证模型，保证 UI 图例与\nwarehouse_v1.json 逐格一致；amrs/orders 来自同一 seed 的快照读取，\n因此初始位姿与可选订单和 C++ 规划看到的完全一致。",
+  "properties": {
+    "environment_ref": {
+      "title": "Environment Ref",
+      "type": "string"
+    },
+    "state_version": {
+      "title": "State Version",
+      "type": "string"
+    },
+    "map_id": {
+      "title": "Map Id",
+      "type": "string"
+    },
+    "version": {
+      "title": "Version",
+      "type": "integer"
+    },
+    "width": {
+      "title": "Width",
+      "type": "integer"
+    },
+    "height": {
+      "title": "Height",
+      "type": "integer"
+    },
+    "resolution_m": {
+      "title": "Resolution M",
+      "type": "number"
+    },
+    "obstacles": {
+      "items": {
+        "$ref": "#/$defs/GridPosition"
+      },
+      "title": "Obstacles",
+      "type": "array"
+    },
+    "temporary_blocked_cells": {
+      "items": {
+        "$ref": "#/$defs/GridPosition"
+      },
+      "title": "Temporary Blocked Cells",
+      "type": "array"
+    },
+    "narrow_aisles": {
+      "items": {
+        "$ref": "#/$defs/NarrowAisle"
+      },
+      "title": "Narrow Aisles",
+      "type": "array"
+    },
+    "blocked_edges": {
+      "items": {
+        "$ref": "#/$defs/WarehouseEdge"
+      },
+      "title": "Blocked Edges",
+      "type": "array"
+    },
+    "one_way_edges": {
+      "items": {
+        "$ref": "#/$defs/WarehouseEdge"
+      },
+      "title": "One Way Edges",
+      "type": "array"
+    },
+    "pickup_points": {
+      "items": {
+        "$ref": "#/$defs/WarehouseLocation"
+      },
+      "title": "Pickup Points",
+      "type": "array"
+    },
+    "dropoff_points": {
+      "items": {
+        "$ref": "#/$defs/WarehouseLocation"
+      },
+      "title": "Dropoff Points",
+      "type": "array"
+    },
+    "charging_stations": {
+      "items": {
+        "$ref": "#/$defs/WarehouseLocation"
+      },
+      "title": "Charging Stations",
+      "type": "array"
+    },
+    "amrs": {
+      "items": {
+        "$ref": "#/$defs/AMRState"
+      },
+      "title": "Amrs",
+      "type": "array"
+    },
+    "orders": {
+      "items": {
+        "$ref": "#/$defs/TransportOrder"
+      },
+      "title": "Orders",
+      "type": "array"
+    },
+    "start_time": {
+      "title": "Start Time",
+      "type": "integer"
+    },
+    "max_time": {
+      "title": "Max Time",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "environment_ref",
+    "state_version",
+    "map_id",
+    "version",
+    "width",
+    "height",
+    "resolution_m",
+    "obstacles",
+    "temporary_blocked_cells",
+    "narrow_aisles",
+    "blocked_edges",
+    "one_way_edges",
+    "pickup_points",
+    "dropoff_points",
+    "charging_stations",
+    "amrs",
+    "orders",
+    "start_time",
+    "max_time"
+  ],
+  "title": "DemoWarehouseMap",
+  "type": "object"
+}

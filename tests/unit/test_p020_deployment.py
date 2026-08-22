@@ -79,7 +79,9 @@ def test_p020_image_and_start_script_keep_fast_on_host() -> None:
     assert "torch" not in api_requirements.lower()
     assert "start_fast_secure.ps1" in startup
     assert "FAST_ARTIFACT_ROOT" in startup
-    assert "WindowStyle Hidden" in startup
+    # Hidden 曾让启动器空转（见 LESSONS_LEARNED 2026-08-21）；必须保持最小化窗口。
+    assert "WindowStyle Minimized" in startup
+    assert "WindowStyle Hidden" not in startup
     assert "start-qwen3.8-agent.cmd" not in startup
     assert "*.gguf" in dockerignore
     assert "*.safetensors" in dockerignore

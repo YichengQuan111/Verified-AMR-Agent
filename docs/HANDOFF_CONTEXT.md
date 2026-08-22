@@ -1,8 +1,8 @@
 # AMR Agent 项目交接上下文
 
-最后更新：2026-08-21
-当前实现里程碑记录：P0-00～P0-20 代码已落地。2026-08-21 原审计文档仍是 **FAIL** 快照；本步已启动 Qwen3.6 Fast 与 Compose，并实测 HITL 三连、全量 smoke、RAG holdout 与 P0-18/P0-19。**H06 演示视频仍为 0 个媒体文件**，未在真实 Fast dispatch 窗口再做 OS 强杀，七类异常仍以 FakeRegistry 生产图测试为准，因此发布 Verdict **仍不能写成 PASS**。
-当前下一步：由艺诚按 `docs/DEMO_SCRIPT.md` 录制 3 分钟演示视频并登记 SHA-256。本地 Fast 启动已按 manifest `verify_sha256=false` 跳过 19GB 哈希，只检查文件存在和大小。Smart 继续硬禁用。
+最后更新：2026-08-22
+当前实现里程碑记录：P0-00～P0-20 代码已落地。2026-08-21 原审计文档仍是 **FAIL** 快照；本步已启动 Qwen3.6 Fast 与 Compose，并实测 HITL 三连、全量 smoke、RAG holdout 与 P0-18/P0-19。**H06 演示视频仍为 0 个媒体文件**，未在真实 Fast dispatch 窗口再做 OS 强杀，七类异常仍以 FakeRegistry 生产图测试为准，因此发布 Verdict **仍不能写成 PASS**。同日按用户明确指令新增**演示 UI 扩展**（`/demo` 页面 + `/demo/*` API，可视化 `warehouse_v1` 地图与真实 C++ 链路仿真轨迹），该扩展偏离 `docs/scope.md` 的「完整前端 P0 外」排除项，差异已在本文件末条登记；它不是 P0 Release PASS，也不替代 H06。
+当前下一步：由艺诚按 `docs/DEMO_SCRIPT.md` 录制 3 分钟演示视频并登记 SHA-256（演示页 `http://127.0.0.1:8010/demo` 已重写为**自然语言任意下单 + 内存历史轨迹**极简形态，匿名开箱即用，见文末 2026-08-22 晚条目；完整 PEVR 闭环后端保留，页面已撤下）。本地 Fast 启动已按 manifest `verify_sha256=false` 跳过 19GB 哈希，只检查文件存在和大小。Smart 继续硬禁用。演示 UI 暴露的 Planner/Validator `release_time` 语义冲突（ORDER-002）待裁决，见文末演示条目。
 
 ## 1. 文档用途与维护要求
 
@@ -1275,5 +1275,182 @@ DAG 使用 `agent.planning.dag.topological_sort()` 中的 Kahn 算法：计算�
 - 完成：`config/fast_model_manifest.json` 增加 `verify_sha256=false`；`start_local.ps1` / `start_fast_secure.ps1` 与 `load_and_verify_fast_artifact` 启动时不再扫描 19GB GGUF。仍检查文件存在和 `size_bytes`。启动器记录更新为 size=7289、sha256=`CDBC7D8E…ADBDCA`。
 - 未完成：H06 视频仍缺。关闭哈希后，运行报告里的 model_sha256 只是 manifest 记录，不能写成启动时重新核验。
 - 验证：`tests/unit/test_model_artifacts.py` 本步会实际运行。
+
+### 2026-08-21 · 演示 UI 扩展：/demo 页面 + 真实 C++ 链路仿真可视化
+
+**与 Scope 的差异（必须先知）**：`docs/scope.md` 把「完整前端」划在 P0 外；本步是用户明确指令要求的演示 UI 扩展，用户指令优先。本步**不是** P0 Release PASS，也**不替代** H06 正式演示视频；`docs/TEST_REPORT.md` 发布口径未因此改动。
+
+#### 本步完成与未完成
+
+- 完成（均有实测命令，见下）：
+  - 新 API：`GET /demo`（匿名静态页）、`GET /demo/warehouse`（viewer+，返回 `warehouse_v1@seed-v1` 规范化地图：30×20、障碍、临时封路、窄通道、单向/禁行边、P1–P6、S1–S6、C1/C2、4 台 AMR 初始位姿与可选订单）、`POST /demo/simulate`（operator，服务端串行跑真实 C++ Hungarian → A* → Validator，合法后才跑 Python `AMRSimulator`，返回 map/routes/result/path_steps/summary）、`POST /demo/launcher/start` 与 `GET /demo/launcher/status`（受控一键启动，白名单仅 `scripts/start_local.ps1`，唯一参数 `start_fast` 布尔，Smart 无入口）。
+  - 前端 `apps/api/static/demo.html`：Canvas 30×20（y 向上翻转、原点标注 (0,0) 左下）、全图例、AMR 编号/朝向箭头/电量、当前订单 pickup/dropoff 高亮、播放/暂停/拖动 tick/显示最终轨迹、状态栏（simulation status、完成订单、Validator error_count）、失败时展示 C++ 证据表且不画任何轨迹。轨迹只渲染后端 `path_steps`（move 折线、turn 橙色、wait 灰色格内标记），无插值。
+  - 权限矩阵实测：匿名 simulate 401、viewer simulate 403（`OPERATOR_REQUIRED`）、viewer 可读地图与启动状态；未知字段 422；未知订单 404（`demo_order_not_found` + 可选清单）；坏计划 422 `fleet_plan_invalid` 带 C++ 错误证据且无轨迹。
+  - 生成物 `tmp/demo_trajectory_order-001.json`（37 个 `amr.path_step` / 47 个事件，`demo-9ff095e7e610c2f1`，gitignore，不登记为源码）。
+  - 顺手修复存量问题：`tests/unit/test_p020_deployment.py` 的 `WindowStyle Hidden` 断言随上一提交脚本改为 `Minimized` 而过期（HEAD 即红），已改为断言 Minimized 并禁止 Hidden 回归；`run_smoke.ps1` 及本仓库中文 `.ps1` 在 Windows PowerShell 5.1 下解析失败，统一改用 `pwsh.exe` 执行。
+- 未完成/有意不做：
+  - 不恢复 `--approve-dispatch`；演示链路不写 Effect Ledger、不作 HITL 发布证据。
+  - 不做自然语言下单 UI（页面保留「暂不支持」按钮）、不把 FaultInjection 暴露给前端、不改 Smart 为 enabled。
+  - 浏览器端 Token 仍需人工粘贴（localStorage 保存、永不回显）；未做登录接口。
+  - H06 演示视频仍为 0。
+
+#### 公共接口变化
+
+- 新 Pydantic 契约（全部 `extra=forbid`）：`services/demo/contracts.py` 的 `DemoWarehouseMap`、`DemoSimulateRequest`、`DemoSimulateResponse`、`DemoPathStep`、`DemoRouteInfo`、`DemoSimulationOutcome`、`DemoSimulationSummary`、`DemoLauncherRequest`、`DemoLauncherStatus`；`scripts/export_schemas.py` 同源导出 5 份主 Schema 到 `docs/schemas/Demo*.schema.json`（P0-04 一致性测试覆盖）。
+- 新路由全部挂在 `apps/api/main.py`（`demo_router`）；`docs/API.md` 已登记 5 个端点、权限矩阵与业务错误码（`demo_order_not_found` 404、`demo_cpp_request_rejected`/`allocation_infeasible`/`route_infeasible`/`fleet_plan_invalid` 422、`demo_cpp_output_schema_violation` 502、`cpp_executable_unavailable`/`cpp_timeout`/`demo_launcher_*` 503）。
+- `apps/api/dependencies.py` 新增 `get_demo_service`/`get_demo_launcher`（惰性构造、缓存 app.state）；`pyproject.toml` package-data 增加 `apps.api = ["static/*.html"]`。
+- 无 DB 字段/表变化，无 C++ 源码改动；现有 `/runs`、`/documents` 等接口零改动。
+
+#### 设计决策
+
+- **visualization-only**：演示服务直连 `FixedCppJsonClient` + `AMRSimulator`，刻意绕过 `ToolRegistry.dispatch_simulation`（它会写 Effect Ledger 且 `requires_approval=true`）。演示轨迹只能当可视化证据。
+- **无状态确定性**：每次请求重读固定 seed 快照；`simulation_id` 由计划内容哈希派生（同订单重跑同 ID）；前端不可改环境/路径/载荷。
+- **envelope 镜像生产**：发给三个 C++ exe 的请求逐字段镜像 `agent/tools/registry.py` 与 `agent/runtime/graph.py`（allocator 不带 `environment_ref`——C++ 严格 codec 会拒），改那两处必须同步检查 `services/demo/service.py`。
+- **启动器白名单**：argv 完全由服务端构造，请求体只有 `start_fast` 布尔；运行中重复点击幂等返回同一进程；Shell 优先 `pwsh.exe` 回退 `powershell.exe`（5.1 解析不了无 BOM 中文脚本）；非 Windows 返回 `unavailable`。
+- **修复 P0-20 过期断言而非回退脚本**：`Minimized` 是 LESSONS_LEARNED 记录的既定修复（Hidden 导致启动器空转），故改测试。
+
+#### 验证命令（全部实测）
+
+- `python -m pytest tests\unit\test_demo_api.py -q` → **13 passed**（仿真用例真实调用 `build/cpp` 三个 exe；缺产物时仅这些用例跳过）。
+- `E:\PowerShell7\7\pwsh.exe -NoProfile -File .\scripts\run_smoke.ps1` → 退出码 0：Python **286 passed, 2 warnings**（272 基线 + 13 演示 + 1 修复的 P0-20）、CTest **38/38**、环境/迁移/Qdrant 门禁全过。注意：`powershell.exe`（5.1）会因无 BOM 中文注释解析失败，smoke 必须用 pwsh。
+- `python scripts\export_demo_trajectory.py` → 生成 `tmp/demo_trajectory_order-001.json`。
+- 浏览器实测（宿主机 uvicorn 8010）：匿名打开 `/demo` → 粘贴 operator JWT 加载地图 → 运行 ORDER-001 看到逐格轨迹（t=0..36，AMR-01 (1,2)→P1→S3 (27,9)，pickup/dropoff 脉冲高亮）→ 暂停/拖动 tick/显示最终轨迹正常 → ORDER-002 显示 422 + C++ 证据表（`pickup_before_release`/`pickup_time_mismatch`）且无轨迹 → 8000 容器路径（无 C++ exe）显示 503 `cpp_executable_unavailable`。
+- 未执行：Fast 在线联动（演示不依赖模型）、容器内 `/demo/simulate`（容器无 Windows C++ exe，预期 503）。不得推断为通过。
+
+#### 环境与服务状态
+
+- 宿主机 uvicorn 仍在跑：`http://127.0.0.1:8010`（`model_validated=false`，无 Fast）；演示入口 `http://127.0.0.1:8010/demo`。
+- `compose` 的 `amr-api` 容器仍占 `127.0.0.1:8000`（旧镜像，无 `/demo` 路由，对 `/demo` 返回 404）。要容器提供演示页需先 `docker compose build api`，但容器是 Linux、没有 `build/cpp` 产物，容器内 `/demo/simulate` 会如实 503——仿真演示只能用宿主机 uvicorn。
+- PostgreSQL 5432 / Qdrant 6333 容器 healthy（smoke 门禁实测）。Fast/Smart 均未运行，8080 无监听。
+- 演示用 JWT 在 gitignore 的 `tmp/demo_operator.jwt` / `tmp/demo_viewer.jwt`，启动器日志 `tmp/demo_launcher.log`；均不得提交。
+
+#### 已知限制与待决策
+
+- **Planner/Validator `release_time` 语义冲突（新发现，未裁决）**：A* 允许 release_time 前预定位，代价最优时会在 pickup 格上提前原地转身等待；Validator 把「首次到达 pickup 格」认定为 pickup 时刻 → ORDER-002（release_time=10）稳定被判 invalid（`pickup_before_release` + `pickup_time_mismatch`）。演示如实展示该拒绝。P0-18 数据集 normal-002/003 期望 completed，评测前必须裁决语义（Validator 放宽或 Planner 禁止 pickup 格提前等待）；详见 `docs/LESSONS_LEARNED.md` 同日条目。
+- ORDER-003 依赖未完成的 ORDER-001，C++ 分配器直接拒绝（422 `demo_cpp_request_rejected`）——这是正确业务行为，不是缺陷。
+- 前端 Token 手工粘贴；多标签页各自播放、无服务端推送；窄通道/单向边只做展示，A* 不建模窄通道减速（与生产 envelope 一致）。
+- 本步偏离 `docs/scope.md` 的「完整前端 P0 外」排除项（用户指令优先）；如 P0 审计复核，需要说明这是演示扩展而非 Scope 变更。
+
+#### 下一工作包直接复用
+
+- 演示入口：`http://127.0.0.1:8010/demo`（宿主机）；离线导出：`python scripts\export_demo_trajectory.py --order ORDER-001`。
+- 录 H06 视频可复用本页展示地图/轨迹；自然语言闭环仍走 `scripts/run_p013_e2e.py`。
+- 修改 `registry.py`/`graph.py` 的 C++ envelope 时，必须同步核对 `services/demo/service.py`（两处镜像关系已写在各自 docstring）。
+- 运行仓库内任何含中文注释的 `.ps1` 一律用 `pwsh.exe`；新增中文脚本要么带 BOM 要么走 pwsh。
+
+### 2026-08-22 · 演示令牌与脚本编码修复
+
+- 演示 JWT：给运行中服务签令牌必须用 `load_settings()`（读 `.env` 的 `AMR_JWT_SECRET`）；`AppSettings()` 只拿开发默认值，签出的令牌会被线上 401。`tmp/demo_operator.jwt` / `tmp/demo_viewer.jwt` 已按正确方式重签（12h），并对 8010 实测 200。详见 LESSONS_LEARNED 同日条目。
+- 脚本编码：`scripts/` 下 6 个含中文的 `.ps1` 已统一补 UTF-8 BOM 并通过 PS 5.1 解析验证；`start_local.ps1`/`start_fast_secure.ps1` 与 HEAD 恢复一致。此后双击或 `powershell.exe` 直接调用不会再报 `MissingCatchOrFinally`。
+- 服务状态：宿主机 uvicorn 8010（含演示路由）与 compose 8000 均在跑；Fast/Smart 未启动。
+
+### 2026-08-22 · 自然语言下单闭环接入演示页（PEVR × 演示 UI）
+
+#### 背景与完成内容
+
+用户确认「自然语言下单是核心功能」，要求把 P0-13 完整闭环接入演示页（此前演示页只有占位按钮，系当时指令明确排除）。本步完成后演示页具备两条互不混用的链路：
+
+1. **可视化-only**：`POST /demo/simulate`（选种子订单 → C++ 链 → 仿真轨迹；不写 Ledger、不需审批、不能当发布证据）。
+2. **自然语言完整闭环**：`/demo/nl/*`（自然语言 → Fast LLM 理解 → RAG → C++ 分配/寻路/校验 → **人工审批** → 仿真 → 报告与轨迹；写 Effect Ledger、HITL 门禁、可作发布证据）。
+
+#### 关键设计决策（下游不要再推翻）
+
+- **受控子进程包装已实测 CLI，不在 API 进程内重建图**：`services/demo/nl_runner.py` 的 `ControlledNLRunner` 以固定 argv 拉起 `scripts/run_p013_e2e.py`（python 取 `sys.executable`；自然语言仅为 `--request` 独立 argv 元素，无 Shell；`--run-id demo-nl-<uuid12>` 由服务端生成）。这是 P0-20 实测的 HITL 三连同一路径，避免在 API 进程复制图装配带来的并发与漂移风险。
+- **审批决定不在演示后端发生**：waiting 后前端用**浏览器本人 JWT** 调既有受保护 API `POST /agent/runs/{run_id}/hitl/{approval_id}/approve`（或 `/reject`）签发 grant，再调 `POST /demo/nl/resume` 由后端以 `--resume-approved` 恢复。演示后端**永不使用 `--approve-and-resume`**（该开关会由 CLI 代批，绕过本人留痕）。
+- **每 run 现铸令牌**：runner 每次拉起用 `app.state.authenticator.issue_token(subject="demo-nl-runner", role=OPERATOR, ttl=3600)` 写 `tmp/demo_nl_<run_id>.jwt`；浏览器与长期令牌文件不参与。
+- **单并发槽位**：本地只有一个 Fast 实例；running/waiting_approval 时新运行 409 `demo_nl_busy`；dismiss 清槽（running 先 terminate），不改写 PostgreSQL 事实。
+- **状态可从产物重建**：waiting/完成事实以 CLI 落盘的 `tmp/demo_nl_<run_id>.json` 为准，meta 边车保存原始请求文本；API 重启后 status/resume 仍可用。
+- **结果复用渲染器**：`GET /demo/nl/result/{run_id}` 从 PEVRRunResult.tool_results 定位 dispatch_simulation 的完整 SimulationResult，path_steps 提取与 `/demo/simulate` 同一函数，前端复用同一轨迹渲染器。
+
+#### 新增公共接口
+
+6 条 `/demo/nl/*`（详见 `docs/API.md` 2.2 节与 `docs/schemas/DemoNL*.schema.json`）：`POST /demo/nl/run`（operator）、`GET /demo/nl/active`（viewer+）、`GET /demo/nl/status/{run_id}`（viewer+）、`POST /demo/nl/resume`（operator）、`POST /demo/nl/dismiss`（operator）、`GET /demo/nl/result/{run_id}`（viewer+）。契约：`DemoNLRunRequest`（request 1–500 字符、纯空白 422）、`DemoNLResumeRequest`/`DemoNLDismissRequest`、`DemoNLRunStatus`、`DemoNLReportSummary`、`DemoNLResultResponse`。
+
+#### 实测验证
+
+- `pytest tests\unit\test_demo_nl.py`：7 passed（假进程；覆盖权限矩阵、argv 白名单证据、完整状态机、单并发 409、非 waiting 恢复 409、未完成取结果 409、未知 run 404、失败日志尾部、API 重启产物恢复、dismiss terminate）。
+- `pytest tests\unit\test_demo_api.py tests\unit\test_demo_nl.py tests\unit\test_p004_contracts.py`：72 passed（含新 Schema 一致性）。
+- 全量 `.\scripts\run_smoke.ps1`：293 passed（Python，含新增 7 条）+ 38/38 CTest passed，exit 0（2026-08-22）。
+- **真实 Fast 在线实测通过（2026-08-22）**：
+  - API 级：`POST /demo/nl/run`（"请把 MAT-001 从 P1 运到 S3，并在截止时间前完成。"）→ waiting_approval → 浏览器身份 operator JWT 调 `POST /agent/runs/{run_id}/hitl/{approval_id}/approve` 签发 grant → `POST /demo/nl/resume` → completed。结果：ORDER-001 completed、simulation completed、end_time=120、model=qwen3.6-fast、**37 个 path_step 与 `/demo/simulate` 确定性链轨迹逐步一致**（run `demo-nl-1956318a1e38`）。
+  - 浏览器级（`http://127.0.0.1:8010/demo` 全 UI 驱动）：提交 → 审批卡片正确透出 approval_id/high_risk_write/过期时间 → 点「批准并继续执行」→ completed → 轨迹渲染 + 报告摘要（run `demo-nl-3b0e1c8f5f9d`）。页面刷新后 `/demo/nl/active` 恢复进行中/已完成运行也已实测。
+- **重要平台发现（已于同日晚根治，见下文「固定事实字段强制覆盖」条目）**：Fast（temperature=0.1）的 plan 产出对固定字段不稳定——6 次演示运行中 4 次把 `$ref` 数据流引用语法当成字面值照抄（`fixed:order_ids`、`task:TASK-ROUTE-002/input/...` 等伪引用），确定性校验正确拒绝（environment_ref/seed/blocked_cells/max_time/ruleset 多项 mismatch），图内一次重规划反馈后仍未收敛。对照实验（同日同时刻同模型同请求文本，仅 run_id 不同）一次通过。P0-20 HITL 三连 3/3 通过属幸运样本。根治方案：plan 规范化层把已知固定字段（order_ids/environment_ref/seed/latest_deadline/blocked_cells/ruleset_version）从 LLM 输出强制覆盖为请求/快照真值，详见 LESSONS_LEARNED 同日条目。
+
+#### 环境与服务状态
+
+- 宿主机 uvicorn 8010 **已重启并加载 `/demo/nl/*` 路由**（实测 `/demo/nl/active` 200）；compose 8000 容器仍是旧镜像（无演示路由）。
+- 自然语言闭环需要：Fast 在线（8080）+ PostgreSQL/Qdrant 容器（compose）+ 宿主机 API（8010）。CLI 子进程自己连 PostgreSQL 写 Checkpoint/HITL/Effect Ledger。
+- 实测时 Fast 由 `pwsh -File .\scripts\start_local.ps1 -StartFast` 启动（编码修复后 PS 脚本正常）；本条目完成时 Fast 仍在运行。
+- 生成物 `tmp/demo_nl_*.json/.meta.json/.jwt/.log` 均在 gitignore 的 `tmp/` 下。
+
+#### 已知限制
+
+- ~~Fast 计划产出不稳定~~（**2026-08-22 晚已根治**，见下文「固定事实字段强制覆盖」条目：规范化层把固定字段覆盖为真值后，真实 Fast 连续 6/6 到达 waiting_approval）。
+- LLM 延迟不可控：run 阶段通常 60–90 秒到数分钟，前端 3s 轮询；无服务端推送。
+- 审批有过期时间（HITLRequest.expires_at，实测 15 分钟）；过期后 approve 返回 409，页面如实展示，需 dismiss 后重新下单。
+- `--resume-approved` 在 grant 不存在（未批准/已拒绝）时 CLI 退出码 1，状态呈 failed + 日志尾部——这是如实呈现，不是缺陷。
+- 同一时刻只能跑一个自然语言运行；多用户场景不在演示范围。
+
+### 2026-08-22 · 固定事实字段强制覆盖（Fast 计划稳定性根治）
+
+#### 背景与完成内容
+
+艺诚在演示页提交自然语言订单时再次命中上方「重要平台发现」的校验失败（`environment_ref_mismatch`/`simulation_seed_invalid` 等 7 项）。本步把根治方案落地：`agent/planning/validator.py` 的 `canonicalize_normal_pevr_plan` 在传入 contract+expected_seed 时，把 `environment_ref`、`order_ids`、`blocked_cells`、`ruleset_version`、`seed` **一律覆盖**为合同/请求真值并记录 `{task}.{field}:fixed_fact_override` note；`max_time` 是唯一例外（Validator 接受 ≥ 最晚 deadline，只在缺失/非整数/不足时拉回真值，保留合法更大 horizon）。
+
+#### 关键设计决策（下游不要再推翻）
+
+- **覆盖不放宽任何约束**：这些字段的正确值由合同/请求唯一确定，LLM 本就没有合法选择权（Validator 对任何偏差都拒绝）；覆盖只能让计划更贴近合同。Validator 门禁对覆盖后的计划逐项生效，`assignments`/`plan` 数据流引用、工具基数、DAG 拓扑**不在**豁免范围，语义修复重问路径（`_SequencePlanProvider` 相关测试）继续用数据流错误夹具验证。
+- **审计可见**：每次覆盖都写 normalization note 并随 checkpoint/trace 持久化，LLM 的错误不会无声消失。
+- 首轮 plan 与图内语义修复重问共用同一 canonicalize（graph.py 两处调用点），修复对两条路径同时生效。
+
+#### 实测验证
+
+- `pytest tests\unit\test_p013_pevr.py`：14 passed（新增 4 条：fixed:* 伪引用覆盖、自引用 task:<自身>/input/* 覆盖、合法大 max_time 保留、正确计划零 note；2 条语义修复测试夹具从 seed 改为 assignments 数据流错误）。
+- PEVR 相关回归：`test_p013_pevr / test_p014_checkpoint / test_p014_replanner / test_p015_faults / test_p016_security / test_p017_validation / test_p017_trace / test_p018_eval / test_p019_compare / test_demo_api / test_demo_nl` 共 108 passed。
+- 全量 `.\scripts\run_smoke.ps1`：297 passed（Python，含新增 4 条）+ 38/38 CTest passed，exit 0（2026-08-22 晚）。
+- **真实 Fast 连续成功率实测（修复后，2026-08-22 晚）**：同一请求文本经 `POST /demo/nl/run` 连续 6 次运行，**6/6 一次到达 `waiting_approval`**（run `demo-nl-e16d747eae52`/`b382ee6c8ba0`/`0a8a71ccf280`/`abb08109dcdd`/`2666945596f6`/`957ddd13b6eb`；修复前同文本 2/6）。
+- **修复后完整 E2E（2026-08-22 晚）**：`demo-nl-b6c97bb986ba` 提交 → waiting_approval（approval_df0c9a290f37…）→ operator JWT 调受保护 API 批准（200）→ `POST /demo/nl/resume` → completed（exit 0）。结果：ORDER-001 completed、simulation completed、end_time=120、**37 个 path_step** 与确定性链一致。该完成的运行留在演示槽位中，打开演示页即可看到轨迹与报告。
+- 备注：宿主机 uvicorn（8010）未因本修复重启——canonicalize 由 CLI 子进程从磁盘加载，修复对 `/demo/nl/*` 即时生效；API 进程本身不执行计划校验。
+
+### 2026-08-22（晚）· 自然语言任意下单轻量链 + 演示页极简重写
+
+#### 背景与完成内容
+
+艺诚明确要求：演示页的效果是「自然语言**任意**下单」——左边只有一个自然语言下单框和一个历史轨迹选择框，每成功规划一次加一条历史轨迹，且历史**不持久化**。此前页面上的种子订单仿真、受控启动、完整 PEVR 闭环面板都不是他要的效果。本步落地：
+
+- **新端点 `POST /demo/order`（匿名）**：任意自然语言 → Fast `ModelProvider.generate_structured` 抽取四要素（`DemoOrderExtraction`：material_id/pickup/dropoff/deadline，未提截止默认 120 秒）→ 服务端按 warehouse_v1 地点白名单（P1–P6/S1–S6）重建动态订单（ID 由服务端生成 `NL-xxxxxxxx`，LLM 无权命名）→ 与 `/demo/simulate` **完全相同**的 C++ Hungarian → A* → Validator → Python 仿真链 → 同一 `DemoSimulateResponse`。
+- **`GET /demo/warehouse` 改匿名**（用户明确选择本机演示免 Token；地图是只读视图）。
+- **演示页重写**：左栏为 NL 输入框 +「服务启动」卡 + 历史轨迹选择器；历史是纯浏览器内存数组（刷新即清空）；Token 输入、种子订单仿真、PEVR 审批卡从页面撤下（后端端点全部保留，安全姿态不变）；图例与播放控制移到画布下方；订单高亮由后端 `summary.order` 真值驱动（`DemoSimulationSummary` 新增 `order: TransportOrder` 字段）。同日稍晚按用户指令把受控启动加回页面：左栏「服务启动」卡（启动本地服务 / 启动服务+Fast），`/demo/launcher/start` 与 `/demo/launcher/status` 同步改匿名，浏览器实测点击 → 脚本退出码 0、状态与日志尾部正确回显。
+
+#### 关键设计决策（下游不要再推翻）
+
+- **轻量链 vs PEVR 闭环的边界**：`/demo/order` 不写 Effect Ledger、不需 HITL、不持久化、不作发布证据；`/demo/nl/*` 完整闭环（审批 + Ledger + 发布证据）后端保留、仅从页面撤下。两条链互不混用；要发布证据仍走 `/demo/nl/*` 或 `scripts/run_p013_e2e.py`。
+- **LLM 只抽四要素，订单真值在服务端重建**：沿用「固定事实字段强制覆盖」的教训——交给 LLM 的字段越少，幻觉失败面越小。地点白名单、订单 ID、deadline 下限都由服务端对快照校验/生成；LLM 输出永远只是线索。
+- **匿名范围仅限无痕迹演示链 + 受控启动器**：`/demo/order` 与 `/demo/warehouse` 不写任何持久存储、不触发副作用（除 C++ 子进程计算）；`/demo/launcher/*` 同日稍晚按用户明确决策也放开匿名（白名单脚本 + 单布尔开关约束不变；API 若绑定非回环地址应恢复 operator 门禁）。凡写库/审批的端点（`/demo/nl/*`、`/agent/*`）仍全部走 JWT。
+- **种子链路行为不变**：`_plan_routes` 的 `orders=None` 默认仍传快照全量订单表（与生产 registry envelope 逐字段一致）；只有 NL 链显式传单元素动态订单列表。
+
+#### 实测验证
+
+- `pytest tests\unit\test_demo_order.py`（新建 6 条）：真实 C++ 匿名 happy path（假 Provider 抽取 P3→S3 → 200，validator_valid=true、simulation completed、轨迹按 (time,amr_id) 排序、取货步坐标=P3、终点=S3）、空白/未知字段 422（且不消耗模型调用）、unknown_location 422（附合法 P/S 清单）、nl_extract_failed 422、fast_model_unavailable 503、超载坏计划被真实 Validator 拒绝 422 无轨迹。
+- `pytest tests\unit\test_demo_api.py tests\unit\test_demo_nl.py`：20 passed（地图测试改匿名 200 断言；页面静态测试改断言 `/demo/order`）。
+- 全量 `pytest tests\unit`：272 passed（含 Schema 一致性；`DemoNLOrderRequest.schema.json` 已导出，`DemoSimulateResponse.schema.json` 因 summary.order 重导）。
+- 全量 `.\scripts\run_smoke.ps1`：303 passed（Python，含新增 6 条）+ 38/38 CTest passed，exit 0（2026-08-22 晚）。
+- **启动器加回页面（2026-08-22 晚，同日追加）**：`/demo/launcher/start`、`/demo/launcher/status` 去 JWT 改匿名（`test_demo_launcher_auth_and_whitelist` 更名 `test_demo_launcher_anonymous_and_whitelist`，断言匿名 200 + 白名单 argv 不变）；演示三件套复测 26 passed；浏览器实测点「启动本地服务」→ 脚本退出码 0、状态行与日志尾部正确回显。
+- **真实 Fast 在线实测（2026-08-22 晚，宿主机 API 8010 已重启加载新路由）**：
+  - API 级：此前被 PEVR 闭环按设计拒绝的「请把 MAT-001 从 P3 运到 S3，并在截止时间前完成。」经 `POST /demo/order` 匿名提交 → 200：LLM 正确抽取 MAT-001/P3→S3/deadline=120，Validator valid（0 错误），仿真 completed，31 个 path_step（订单 `NL-FDE24429`）。
+  - 浏览器级（`http://127.0.0.1:8010/demo` 全 UI 驱动，无 Token）：提交「MAT-002 从 P5 运到 S2，90 秒内送达。」→ 正确抽取 deadline=90、completed、历史条目 #1；再提交「把 MAT-003 从 P2 运到 S6。」→ 历史条目 #2；点击 #1 正确切回 P5→S2 轨迹与状态栏。历史刷新即清空（内存数组，用户明确要求）。
+
+#### 环境与服务状态
+
+- 演示页 `http://127.0.0.1:8010/demo` 开箱即用：无需粘贴 JWT；Fast 离线时下单返回 503 `fast_model_unavailable`（页面如实展示，不画假轨迹）。
+- Fast 启动方式不变：`pwsh -File .\scripts\start_local.ps1 -StartFast`；页面「服务启动」卡（同日稍晚按用户指令加回，匿名）点「启动服务 + Fast」等价于该命令，「启动本地服务」等价于不带 `-StartFast`。
+
+#### 已知限制
+
+- 单次下单串行：LLM 抽取（数秒）+ C++ 链（<1s）+ 仿真（<1s），全程同步阻塞该请求；未做并发排队（演示范围外）。
+- LLM 抽取存在温度方差：四要素极小 + Schema 约束 + 一次修复，实测未见失败；若失败返回 422 如实呈现，用户可重试。
+- 历史轨迹刷新即清空是**用户明确要求**，不要改成持久化。
+- `deadline` 语义：LLM 未提及默认 120 秒；用户说「60 秒内送达」会被抽成 60。过紧的 deadline 会被 C++ Validator/分配器如实拒绝（422），这是正确行为。
+- 启动器日志尾部里脚本自身的中文输出有乱码（子进程控制台编码问题，不影响状态与退出码，既有外观问题，未在本步处理）。
 
 

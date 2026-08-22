@@ -68,6 +68,17 @@ from evals.p018.contracts import (  # noqa: E402
     EvalReport,
 )
 from evals.p019.contracts import P019Report, StrategyCaseResult, StrategySummary  # noqa: E402
+from services.demo.contracts import (  # noqa: E402
+    DemoLauncherRequest,
+    DemoLauncherStatus,
+    DemoNLOrderRequest,
+    DemoNLResultResponse,
+    DemoNLRunRequest,
+    DemoNLRunStatus,
+    DemoSimulateRequest,
+    DemoSimulateResponse,
+    DemoWarehouseMap,
+)
 
 
 SCHEMA_DIRECTORY = PROJECT_ROOT / "docs" / "schemas"
@@ -140,6 +151,19 @@ SCHEMA_MODELS: dict[str, type[BaseModel]] = {
     "P019Report.schema.json": P019Report,
     "P019StrategyCase.schema.json": StrategyCaseResult,
     "P019StrategySummary.schema.json": StrategySummary,
+    # 演示 UI 扩展（用户指令优先于 scope.md 的 P0 前端排除项）：浏览器只消费
+    # 这五份契约，必须从运行时 Pydantic 模型同源导出，防止前端按猜测字段渲染。
+    "DemoWarehouseMap.schema.json": DemoWarehouseMap,
+    "DemoSimulateRequest.schema.json": DemoSimulateRequest,
+    "DemoSimulateResponse.schema.json": DemoSimulateResponse,
+    "DemoLauncherRequest.schema.json": DemoLauncherRequest,
+    "DemoLauncherStatus.schema.json": DemoLauncherStatus,
+    # 自然语言闭环演示（P0-13 接入演示页）：运行请求/状态/结果三份契约。
+    "DemoNLRunRequest.schema.json": DemoNLRunRequest,
+    "DemoNLRunStatus.schema.json": DemoNLRunStatus,
+    "DemoNLResultResponse.schema.json": DemoNLResultResponse,
+    # 轻量自然语言任意下单链（POST /demo/order）的请求契约；响应复用 DemoSimulateResponse。
+    "DemoNLOrderRequest.schema.json": DemoNLOrderRequest,
 }
 
 

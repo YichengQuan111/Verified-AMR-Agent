@@ -1,4 +1,4 @@
-param(
+﻿param(
     [string]$Python = "E:\Anaconda\envs\torch128\python.exe",
     [ValidateSet("independent", "replay")]
     [string]$Mode = "independent",

@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [switch]$RotateRunningPostgres,
     [string]$FastArtifactRoot = 'E:\Llama.cpp',

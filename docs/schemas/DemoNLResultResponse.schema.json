@@ -1,0 +1,194 @@
+{
+  "$defs": {
+    "DemoNLReportSummary": {
+      "additionalProperties": false,
+      "description": "PEVR 最终报告的展示子集：谁批准、模型版本、完成订单与仿真状态。",
+      "properties": {
+        "final_status": {
+          "title": "Final Status",
+          "type": "string"
+        },
+        "summary": {
+          "title": "Summary",
+          "type": "string"
+        },
+        "completed_order_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Completed Order Ids",
+          "type": "array"
+        },
+        "approval_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Approval Id"
+        },
+        "principal_subject": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Principal Subject"
+        },
+        "model_alias": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Model Alias"
+        },
+        "simulation_status": {
+          "title": "Simulation Status",
+          "type": "string"
+        },
+        "simulation_end_time": {
+          "minimum": 0,
+          "title": "Simulation End Time",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "final_status",
+        "summary",
+        "completed_order_ids",
+        "approval_id",
+        "principal_subject",
+        "model_alias",
+        "simulation_status",
+        "simulation_end_time"
+      ],
+      "title": "DemoNLReportSummary",
+      "type": "object"
+    },
+    "DemoPathStep": {
+      "additionalProperties": false,
+      "description": "画轨迹用的 ``amr.path_step`` 子集；坐标与 SimulationResult.events 逐字段一致。\n\n前端只允许按这些离散格子步画折线（move）与格内标记（wait/turn），\n不做连续物理插值；battery 随步下发，供状态栏/悬停展示电量衰减。",
+      "properties": {
+        "time": {
+          "minimum": 0,
+          "title": "Time",
+          "type": "integer"
+        },
+        "amr_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Amr Id",
+          "type": "string"
+        },
+        "order_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Order Id",
+          "type": "string"
+        },
+        "action": {
+          "enum": [
+            "start",
+            "move",
+            "turn_left",
+            "turn_right",
+            "wait"
+          ],
+          "title": "Action",
+          "type": "string"
+        },
+        "position": {
+          "$ref": "#/$defs/GridPosition"
+        },
+        "heading": {
+          "title": "Heading",
+          "type": "integer"
+        },
+        "battery": {
+          "maximum": 100.0,
+          "minimum": 0.0,
+          "title": "Battery",
+          "type": "number"
+        },
+        "g_cost": {
+          "minimum": 0.0,
+          "title": "G Cost",
+          "type": "number"
+        }
+      },
+      "required": [
+        "time",
+        "amr_id",
+        "order_id",
+        "action",
+        "position",
+        "heading",
+        "battery",
+        "g_cost"
+      ],
+      "title": "DemoPathStep",
+      "type": "object"
+    },
+    "GridPosition": {
+      "additionalProperties": false,
+      "description": "30 × 20 仓库栅格中的一个合法位置。\n\n坐标从 0 开始，所以宽度为 30 时 x 最大只能是 29，高度为 20 时 y 最大只能是 19。",
+      "properties": {
+        "x": {
+          "description": "横坐标，允许 0～29",
+          "exclusiveMaximum": 30,
+          "minimum": 0,
+          "title": "X",
+          "type": "integer"
+        },
+        "y": {
+          "description": "纵坐标，允许 0～19",
+          "exclusiveMaximum": 20,
+          "minimum": 0,
+          "title": "Y",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "x",
+        "y"
+      ],
+      "title": "GridPosition",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "GET /demo/nl/result/{run_id}：PEVR 证据摘要 + 与演示页一致的轨迹子集。\n\npath_steps 从 dispatch_simulation 工具结果内嵌的 SimulationResult 原样截取，\n与 ``POST /demo/simulate`` 的轨迹语义完全一致，前端复用同一渲染器。",
+  "properties": {
+    "run_id": {
+      "title": "Run Id",
+      "type": "string"
+    },
+    "report": {
+      "$ref": "#/$defs/DemoNLReportSummary"
+    },
+    "path_steps": {
+      "items": {
+        "$ref": "#/$defs/DemoPathStep"
+      },
+      "title": "Path Steps",
+      "type": "array"
+    }
+  },
+  "required": [
+    "run_id",
+    "report",
+    "path_steps"
+  ],
+  "title": "DemoNLResultResponse",
+  "type": "object"
+}

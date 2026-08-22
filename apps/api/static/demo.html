@@ -1,0 +1,634 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AMR 仓库演示 · 自然语言任意下单</title>
+<!--
+  演示 UI（用户指令要求的演示扩展；scope.md 把完整前端划在 P0 外）。
+  2026-08-22 晚重写为极简形态：左栏只有「自然语言下单」和「历史轨迹」两张卡。
+  铁律：本页面只调 FastAPI HTTP 接口，不直接调 C++ CLI，不自行寻路；
+  轨迹只渲染后端 POST /demo/order 返回的 amr.path_step 离散格子步；
+  历史轨迹只存浏览器内存，刷新即清空（用户明确要求非持久化）。
+-->
+<style>
+  :root {
+    --bg: #f1f5f9; --panel: #ffffff; --ink: #0f172a; --muted: #64748b;
+    --line: #e2e8f0; --accent: #2563eb; --ok: #059669; --bad: #dc2626;
+    --warn: #d97706;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 16px 20px 32px; background: var(--bg); color: var(--ink);
+    font-family: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif; font-size: 14px;
+  }
+  h1 { font-size: 18px; margin: 0; }
+  h2 { font-size: 13px; margin: 0 0 8px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+  .topbar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
+  .badge { padding: 2px 10px; border-radius: 999px; font-size: 12px; border: 1px solid var(--line); background: #fff; }
+  .badge.ok { color: var(--ok); border-color: var(--ok); }
+  .badge.warn { color: var(--warn); border-color: var(--warn); }
+  .layout { display: flex; gap: 16px; align-items: flex-start; flex-wrap: wrap; }
+  .side { width: 320px; display: flex; flex-direction: column; gap: 12px; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; }
+  .canvas-wrap { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px; }
+  canvas { display: block; }
+  button {
+    font: inherit; padding: 6px 12px; border-radius: 8px; border: 1px solid var(--line);
+    background: #fff; color: var(--ink); cursor: pointer;
+  }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  button:hover:not(:disabled) { filter: brightness(.96); }
+  textarea, select {
+    font: inherit; padding: 5px 8px; border: 1px solid var(--line); border-radius: 8px; width: 100%;
+  }
+  textarea { resize: vertical; }
+  .row { display: flex; gap: 8px; align-items: center; }
+  .row + .row { margin-top: 8px; }
+  .grow { flex: 1; }
+  .muted { color: var(--muted); font-size: 12px; }
+  .statusbar { margin-top: 12px; display: flex; gap: 16px; flex-wrap: wrap; }
+  .statusbar .item { background: #fff; border: 1px solid var(--line); border-radius: 8px; padding: 6px 12px; }
+  .statusbar .k { color: var(--muted); font-size: 12px; margin-right: 6px; }
+  #error-panel { display: none; margin-top: 12px; border: 1px solid var(--bad); border-radius: 10px; background: #fef2f2; padding: 12px 14px; }
+  #error-panel h3 { margin: 0 0 6px; color: var(--bad); font-size: 14px; }
+  #error-panel table { border-collapse: collapse; width: 100%; margin-top: 8px; font-size: 12px; }
+  #error-panel th, #error-panel td { border: 1px solid #fecaca; padding: 3px 8px; text-align: left; }
+  #error-panel th { background: #fee2e2; }
+  .legend { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px 10px; font-size: 12px; margin-top: 12px; }
+  .legend .sw { display: inline-block; width: 14px; height: 14px; border-radius: 3px; margin-right: 6px; vertical-align: -2px; border: 1px solid rgba(0,0,0,.25); }
+  input[type="range"] { width: 100%; }
+  .tick-readout { font-variant-numeric: tabular-nums; font-weight: 600; }
+  #log-tail { background: #0f172a; color: #d1fae5; font-size: 11px; border-radius: 8px; padding: 8px; max-height: 150px; overflow: auto; white-space: pre-wrap; word-break: break-all; display: none; margin-top: 8px; }
+  #history-list { display: flex; flex-direction: column; gap: 6px; }
+  .history-item {
+    text-align: left; padding: 7px 10px; border-radius: 8px; border: 1px solid var(--line);
+    background: #fff; cursor: pointer; font-size: 13px; line-height: 1.5;
+  }
+  .history-item.active { border-color: var(--accent); background: #eff6ff; }
+  .history-item .sub { color: var(--muted); font-size: 11px; }
+  .history-empty { color: var(--muted); font-size: 12px; }
+</style>
+</head>
+<body>
+<div class="topbar">
+  <h1>AMR 仓库演示 · 自然语言任意下单（30×20）</h1>
+  <span id="health-badge" class="badge warn">API 未连接</span>
+  <span class="muted">浏览器只调 HTTP；规划由后端 C++ 完成，仿真由后端 Python 完成；历史轨迹仅存本页内存，刷新即清空</span>
+</div>
+
+<div class="layout">
+  <div class="side">
+    <div class="panel">
+      <h2>自然语言下单</h2>
+      <div class="row">
+        <textarea id="nl-input" rows="3" placeholder="例：请把 MAT-001 从 P3 运到 S3，并在截止时间前完成。"></textarea>
+      </div>
+      <div class="row">
+        <button id="btn-nl-run" class="primary grow">提交订单（POST /demo/order）</button>
+      </div>
+      <div class="row muted">取货点 P1–P6，送货点 S1–S6 可任意组合；未提截止时间默认 120 秒。链路：Fast LLM 抽取 → C++ 分配/寻路/Validator → Python 仿真。需 Fast 模型在线（scripts\start_local.ps1 -StartFast）。</div>
+      <div class="row"><span id="nl-status" class="muted grow"></span></div>
+    </div>
+
+    <div class="panel">
+      <h2>服务启动</h2>
+      <div class="row">
+        <button id="btn-start-local">启动本地服务</button>
+        <button id="btn-start-fast">启动服务 + Fast</button>
+      </div>
+      <div class="row muted">仅允许白名单脚本 scripts\start_local.ps1；自然语言下单需要 Fast 在线（右侧按钮）。启动后自动轮询状态与 /health。</div>
+      <div class="row"><span id="launcher-status" class="muted grow">未发起启动</span></div>
+      <pre id="log-tail"></pre>
+    </div>
+
+    <div class="panel">
+      <h2>历史轨迹（仅本次页面会话）</h2>
+      <div id="history-list"><div class="history-empty">暂无历史轨迹：每成功规划一次自动添加一条。</div></div>
+    </div>
+  </div>
+
+  <div class="canvas-wrap">
+    <canvas id="grid" width="960" height="680"></canvas>
+    <div class="statusbar" id="statusbar">
+      <span class="item"><span class="k">订单</span><span id="st-order">—</span></span>
+      <span class="item"><span class="k">仿真状态</span><span id="st-sim">—</span></span>
+      <span class="item"><span class="k">Validator</span><span id="st-validator">—</span></span>
+      <span class="item"><span class="k">error_count</span><span id="st-errors">—</span></span>
+      <span class="item"><span class="k">完成订单</span><span id="st-orders">—</span></span>
+    </div>
+    <div class="row" style="margin-top:12px">
+      <button id="btn-play" disabled>播放</button>
+      <button id="btn-reset" disabled>回到 t=0</button>
+      <label class="row grow" style="gap:4px"><input id="chk-final" type="checkbox" disabled>显示最终轨迹</label>
+      <span class="tick-readout" id="tick-label">t = 0 / 0</span>
+      <select id="speed-select" style="width:auto">
+        <option value="1">1×</option><option value="2" selected>2×</option>
+        <option value="4">4×</option><option value="8">8×</option>
+      </select>
+    </div>
+    <div class="row">
+      <input id="tick-slider" type="range" min="0" max="0" value="0" disabled>
+    </div>
+    <div class="legend">
+      <span><span class="sw" style="background:#1f2937"></span>障碍</span>
+      <span><span class="sw" style="background:#f97316"></span>临时封路</span>
+      <span><span class="sw" style="background:#bfdbfe"></span>窄通道</span>
+      <span><span class="sw" style="background:#dc2626"></span>禁行边</span>
+      <span><span class="sw" style="background:#fbbf24"></span>单向边（箭头方向）</span>
+      <span><span class="sw" style="background:#10b981"></span>P1–P6 取货</span>
+      <span><span class="sw" style="background:#3b82f6"></span>S1–S6 送货</span>
+      <span><span class="sw" style="background:#eab308"></span>C1/C2 充电站</span>
+      <span><span class="sw" style="background:#ef4444;border-radius:50%"></span>AMR-01</span>
+      <span><span class="sw" style="background:#8b5cf6;border-radius:50%"></span>AMR-02</span>
+      <span><span class="sw" style="background:#06b6d4;border-radius:50%"></span>AMR-03</span>
+      <span><span class="sw" style="background:#f59e0b;border-radius:50%"></span>AMR-04</span>
+      <span><span class="sw" style="background:transparent;border:2px dashed #b45309"></span>当前订单 P/S 高亮</span>
+      <span><span class="sw" style="background:#e2e8f0"></span>普通格子</span>
+    </div>
+    <div id="error-panel">
+      <h3 id="error-title">错误</h3>
+      <div id="error-message" class="muted"></div>
+      <div id="error-table-wrap"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+"use strict";
+/* ===== 常量：与 warehouse_v1.json / domains.amr_warehouse 契约保持一致 ===== */
+const CELL = 30;            // 每格像素
+const GRID_W = 30, GRID_H = 20;
+const ORIGIN_X = 40, ORIGIN_Y = 34;   // 坐标轴标注留白
+const AMR_COLORS = {"AMR-01": "#ef4444", "AMR-02": "#8b5cf6", "AMR-03": "#06b6d4", "AMR-04": "#f59e0b"};
+const HEADING_VEC = {0: [0, -1], 90: [1, 0], 180: [0, 1], 270: [-1, 0]};  // 北0 东90 南180 西270
+
+/* ===== 全局状态 ===== */
+let mapData = null;          // GET /demo/warehouse 的响应（匿名）
+let simData = null;          // 当前选中的历史轨迹响应（POST /demo/order 的响应）
+let tick = 0;
+let playing = false;
+let playTimer = null;
+let stepsByAmr = {};         // amr_id -> 按 time 升序的 path_step 数组
+let healthPoll = null;
+/* 历史轨迹：纯内存数组，不落 localStorage、不写服务端，刷新页面即清空。 */
+let history = [];            // [{seq, timeLabel, response}]
+let historySeq = 0;
+let activeHistoryId = null;
+
+const canvas = document.getElementById("grid");
+const ctx = canvas.getContext("2d");
+
+/* ===== HTTP 封装：统一错误结构 {code,message,...}；演示链接口全部匿名 ===== */
+async function api(path, options = {}) {
+  const resp = await fetch(path, {
+    ...options,
+    headers: {"Content-Type": "application/json", ...(options.headers || {})},
+  });
+  const text = await resp.text();
+  let body = null;
+  try { body = text ? JSON.parse(text) : null; } catch { body = null; }
+  if (!resp.ok) {
+    const detail = (body && body.detail) || {};
+    const err = new Error(detail.message || ("HTTP " + resp.status));
+    err.status = resp.status;
+    err.code = detail.code || "http_" + resp.status;
+    err.detail = detail;
+    throw err;
+  }
+  return body;
+}
+
+/* ===== 地图加载（匿名） ===== */
+async function loadMap() {
+  clearError();
+  try {
+    mapData = await api("/demo/warehouse");
+  } catch (e) {
+    mapData = null;
+    showError(e, "加载地图失败");
+    draw();
+    return;
+  }
+  draw();
+}
+
+/* ===== 自然语言下单：成功才入历史；失败只展示证据，不画假轨迹 ===== */
+document.getElementById("btn-nl-run").onclick = async () => {
+  const text = document.getElementById("nl-input").value.trim();
+  if (!text) { setNLStatus("请先输入自然语言订单"); return; }
+  clearError();
+  document.getElementById("btn-nl-run").disabled = true;
+  setNLStatus("规划中（LLM 抽取 → C++ 分配/寻路/校验 → 仿真）…");
+  let response;
+  try {
+    response = await api("/demo/order", {
+      method: "POST",
+      body: JSON.stringify({request: text}),
+    });
+  } catch (e) {
+    setNLStatus("失败");
+    showError(e, "下单未执行（后端拒绝）");
+    document.getElementById("btn-nl-run").disabled = false;
+    return;
+  }
+  document.getElementById("btn-nl-run").disabled = false;
+  setNLStatus("");
+  addHistory(response);
+};
+
+function setNLStatus(text) { document.getElementById("nl-status").textContent = text; }
+
+/* ===== 历史轨迹：内存数组 + 点击切换渲染 ===== */
+function addHistory(response) {
+  historySeq += 1;
+  const now = new Date();
+  const timeLabel = now.toTimeString().slice(0, 8);
+  const entry = {seq: historySeq, timeLabel, response};
+  history.push(entry);
+  renderHistoryList();
+  selectHistory(entry.seq);
+}
+
+function renderHistoryList() {
+  const list = document.getElementById("history-list");
+  list.innerHTML = "";
+  if (!history.length) {
+    list.innerHTML = '<div class="history-empty">暂无历史轨迹：每成功规划一次自动添加一条。</div>';
+    return;
+  }
+  for (const entry of history) {
+    const o = entry.response.summary.order;
+    const btn = document.createElement("button");
+    btn.className = "history-item" + (entry.seq === activeHistoryId ? " active" : "");
+    btn.innerHTML =
+      `<div>#${entry.seq} ${entry.timeLabel} · ${o.material_id} ${o.pickup} → ${o.dropoff}</div>` +
+      `<div class="sub">${entry.response.summary.simulation_status} · ${entry.response.summary.order_id} · ${entry.response.path_steps.length} 步</div>`;
+    btn.onclick = () => selectHistory(entry.seq);
+    list.appendChild(btn);
+  }
+}
+
+function selectHistory(seq) {
+  const entry = history.find(item => item.seq === seq);
+  if (!entry) return;
+  activeHistoryId = seq;
+  simData = entry.response;
+  // 轨迹索引：按 (time, amr_id) 已排序，按车分组。
+  stepsByAmr = {};
+  for (const s of simData.path_steps) {
+    (stepsByAmr[s.amr_id] = stepsByAmr[s.amr_id] || []).push(s);
+  }
+  const end = simData.result.end_time;
+  const slider = document.getElementById("tick-slider");
+  slider.max = String(end);
+  slider.disabled = false;
+  resetPlayback();
+  document.getElementById("btn-play").disabled = false;
+  document.getElementById("btn-reset").disabled = false;
+  document.getElementById("chk-final").disabled = false;
+  const s = simData.summary;
+  setStatus({
+    order: `${s.order.material_id} ${s.order.pickup} → ${s.order.dropoff}`,
+    sim: s.simulation_status,
+    validator: s.validator_valid ? "valid ✓" : "INVALID ✗",
+    errors: String(s.validator_error_count),
+    orders: s.completed_order_ids.join(", ") || "—",
+  });
+  renderHistoryList();
+  draw();
+}
+
+/* ===== 播放控制 ===== */
+function resetPlayback() {
+  playing = false;
+  if (playTimer) { clearInterval(playTimer); playTimer = null; }
+  document.getElementById("btn-play").textContent = "播放";
+  tick = 0;
+  const slider = document.getElementById("tick-slider");
+  slider.value = "0";
+  slider.disabled = !simData;
+  updateTickLabel();
+}
+document.getElementById("btn-play").onclick = () => {
+  if (!simData) return;
+  playing = !playing;
+  document.getElementById("btn-play").textContent = playing ? "暂停" : "播放";
+  if (playing) {
+    const speed = Number(document.getElementById("speed-select").value);
+    playTimer = setInterval(() => {
+      tick += 1;
+      if (tick >= simData.result.end_time) {
+        // 到达仿真终点即停住，不循环。
+        tick = simData.result.end_time;
+        playing = false;
+        clearInterval(playTimer); playTimer = null;
+        document.getElementById("btn-play").textContent = "播放";
+      }
+      document.getElementById("tick-slider").value = String(tick);
+      updateTickLabel();
+      draw();
+    }, 1000 / speed);
+  } else if (playTimer) {
+    clearInterval(playTimer); playTimer = null;
+  }
+};
+document.getElementById("btn-reset").onclick = () => { resetPlayback(); draw(); };
+document.getElementById("tick-slider").oninput = (e) => {
+  tick = Number(e.target.value);
+  updateTickLabel();
+  draw();
+};
+document.getElementById("chk-final").onchange = draw;
+document.getElementById("speed-select").onchange = () => {
+  if (playing) { document.getElementById("btn-play").onclick(); document.getElementById("btn-play").onclick(); }
+};
+function updateTickLabel() {
+  const end = simData ? simData.result.end_time : 0;
+  document.getElementById("tick-label").textContent = `t = ${tick} / ${end}`;
+}
+function setStatus(v) {
+  document.getElementById("st-order").textContent = v.order;
+  document.getElementById("st-sim").textContent = v.sim;
+  document.getElementById("st-validator").textContent = v.validator;
+  document.getElementById("st-errors").textContent = v.errors;
+  document.getElementById("st-orders").textContent = v.orders;
+}
+
+/* ===== 错误展示：code/message + C++ 证据表，绝不伪造轨迹 ===== */
+function showError(e, title) {
+  const panel = document.getElementById("error-panel");
+  panel.style.display = "block";
+  document.getElementById("error-title").textContent = `${title}：${e.code || "unknown"}`;
+  document.getElementById("error-message").textContent = e.message || "";
+  const wrap = document.getElementById("error-table-wrap");
+  const errors = e.detail && Array.isArray(e.detail.errors) ? e.detail.errors : [];
+  if (errors.length) {
+    const rows = errors.slice(0, 8).map(x =>
+      `<tr><td>${x.code || ""}</td><td>${x.message || ""}</td><td>${x.amr_id || ""}</td>` +
+      `<td>${x.time ?? ""}</td><td>${x.observed ?? ""}</td><td>${x.limit ?? ""}</td></tr>`).join("");
+    wrap.innerHTML = `<table><thead><tr><th>C++ code</th><th>message</th><th>amr</th><th>time</th><th>observed</th><th>limit</th></tr></thead><tbody>${rows}</tbody></table>`;
+  } else {
+    wrap.innerHTML = "";
+  }
+}
+function clearError() {
+  document.getElementById("error-panel").style.display = "none";
+  document.getElementById("error-table-wrap").innerHTML = "";
+}
+
+/* ===== 渲染 ===== */
+function cellRect(x, y) { return [ORIGIN_X + x * CELL, ORIGIN_Y + y * CELL, CELL, CELL]; }
+function cellCenter(x, y) { return [ORIGIN_X + x * CELL + CELL / 2, ORIGIN_Y + y * CELL + CELL / 2]; }
+
+function draw() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  drawGrid();
+  if (mapData) {
+    drawMapFeatures();
+    drawOrderHighlight();
+    if (simData) drawTrajectories();
+    drawAmrs();
+  } else {
+    ctx.fillStyle = "#64748b";
+    ctx.font = "14px sans-serif";
+    ctx.fillText("正在加载地图（GET /demo/warehouse）…", ORIGIN_X, ORIGIN_Y + 40);
+  }
+  drawAxes();
+}
+
+function drawGrid() {
+  ctx.strokeStyle = "#e2e8f0";
+  ctx.lineWidth = 1;
+  for (let x = 0; x <= GRID_W; x++) {
+    ctx.beginPath(); ctx.moveTo(ORIGIN_X + x * CELL, ORIGIN_Y); ctx.lineTo(ORIGIN_X + x * CELL, ORIGIN_Y + GRID_H * CELL); ctx.stroke();
+  }
+  for (let y = 0; y <= GRID_H; y++) {
+    ctx.beginPath(); ctx.moveTo(ORIGIN_X, ORIGIN_Y + y * CELL); ctx.lineTo(ORIGIN_X + GRID_W * CELL, ORIGIN_Y + y * CELL); ctx.stroke();
+  }
+}
+
+function drawAxes() {
+  // 原点与 warehouse_v1.json 一致：x 向右 0..29，y 向下 0..19；图上明确标出。
+  ctx.fillStyle = "#0f172a";
+  ctx.font = "11px sans-serif";
+  ctx.textAlign = "center";
+  for (let x = 0; x < GRID_W; x += 5) ctx.fillText(String(x), ORIGIN_X + x * CELL + CELL / 2, ORIGIN_Y - 18);
+  ctx.textAlign = "right";
+  for (let y = 0; y < GRID_H; y += 5) ctx.fillText(String(y), ORIGIN_X - 18, ORIGIN_Y + y * CELL + CELL / 2 + 4);
+  ctx.textAlign = "left";
+  ctx.fillStyle = "#b45309";
+  ctx.font = "bold 11px sans-serif";
+  ctx.fillText("原点(0,0) · x→右 · y↓下（与 warehouse_v1.json 一致）", ORIGIN_X + 2, ORIGIN_Y + GRID_H * CELL + 24);
+  ctx.strokeStyle = "#b45309";
+  ctx.lineWidth = 2;
+  ctx.strokeRect(ORIGIN_X, ORIGIN_Y, CELL, CELL);
+}
+
+function fillCell(x, y, color) {
+  const [rx, ry, w, h] = cellRect(x, y);
+  ctx.fillStyle = color;
+  ctx.fillRect(rx + 1, ry + 1, w - 2, h - 2);
+}
+
+function drawMapFeatures() {
+  // 窄通道底色（先画，工位/障碍后画盖在上面）。
+  for (const aisle of mapData.narrow_aisles) {
+    for (const c of aisle.cells) fillCell(c.x, c.y, "#bfdbfe");
+    const c0 = aisle.cells[0];
+    const [rx, ry] = cellRect(c0.x, c0.y);
+    ctx.fillStyle = "#1e40af"; ctx.font = "9px sans-serif"; ctx.textAlign = "left";
+    ctx.fillText(aisle.aisle_id, rx + 2, ry + 9);
+  }
+  for (const c of mapData.obstacles) fillCell(c.x, c.y, "#1f2937");
+  for (const c of mapData.temporary_blocked_cells) {
+    fillCell(c.x, c.y, "#f97316");
+    const [cx, cy] = cellCenter(c.x, c.y);
+    ctx.strokeStyle = "#7c2d12"; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.moveTo(cx - 7, cy - 7); ctx.lineTo(cx + 7, cy + 7);
+    ctx.moveTo(cx + 7, cy - 7); ctx.lineTo(cx - 7, cy + 7); ctx.stroke();
+  }
+  const drawLocations = (items, color, textColor) => {
+    for (const p of items) {
+      fillCell(p.x, p.y, color);
+      const [cx, cy] = cellCenter(p.x, p.y);
+      ctx.fillStyle = textColor; ctx.font = "bold 12px sans-serif"; ctx.textAlign = "center";
+      ctx.fillText(p.id, cx, cy + 4);
+    }
+  };
+  drawLocations(mapData.pickup_points, "#10b981", "#ffffff");
+  drawLocations(mapData.dropoff_points, "#3b82f6", "#ffffff");
+  drawLocations(mapData.charging_stations, "#eab308", "#713f12");
+
+  // 禁行边：两格中心之间画红色粗线（种子数据均为相邻格）。
+  for (const e of mapData.blocked_edges) {
+    const [x1, y1] = cellCenter(e.from.x, e.from.y);
+    const [x2, y2] = cellCenter(e.to.x, e.to.y);
+    ctx.strokeStyle = "#dc2626"; ctx.lineWidth = 4;
+    ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+  }
+  // 单向边：沿允许方向画琥珀色箭头。
+  for (const e of mapData.one_way_edges) {
+    const [x1, y1] = cellCenter(e.from.x, e.from.y);
+    const [x2, y2] = cellCenter(e.to.x, e.to.y);
+    const dx = x2 - x1, dy = y2 - y1;
+    const len = Math.hypot(dx, dy) || 1;
+    const ux = dx / len, uy = dy / len;
+    ctx.strokeStyle = "#d97706"; ctx.fillStyle = "#d97706"; ctx.lineWidth = 2.5;
+    ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2 - ux * 8, y2 - uy * 8); ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(x2, y2);
+    ctx.lineTo(x2 - ux * 10 - uy * 5, y2 - uy * 10 + ux * 5);
+    ctx.lineTo(x2 - ux * 10 + uy * 5, y2 - uy * 10 - ux * 5);
+    ctx.closePath(); ctx.fill();
+  }
+}
+
+function drawOrderHighlight() {
+  // 高亮当前选中历史轨迹的订单取/送点（订单真值来自后端 summary.order）。
+  if (!simData) return;
+  const order = simData.summary.order;
+  const loc = {};
+  for (const p of [...mapData.pickup_points, ...mapData.dropoff_points]) loc[p.id] = p;
+  for (const key of [order.pickup, order.dropoff]) {
+    const p = loc[key];
+    if (!p) continue;
+    const [rx, ry, w, h] = cellRect(p.x, p.y);
+    ctx.strokeStyle = "#b45309"; ctx.lineWidth = 2.5;
+    ctx.setLineDash([5, 3]);
+    ctx.strokeRect(rx - 2, ry - 2, w + 4, h + 4);
+    ctx.setLineDash([]);
+  }
+}
+
+/* 轨迹折线：move 步连接格中心；wait/turn 在格内画 W/T 角标（同格合并计数）。 */
+function drawTrajectories() {
+  const showFinal = document.getElementById("chk-final").checked;
+  const limit = showFinal ? Infinity : tick;
+  for (const [amrId, steps] of Object.entries(stepsByAmr)) {
+    const color = AMR_COLORS[amrId] || "#475569";
+    const visible = steps.filter(s => s.time <= limit);
+    if (visible.length < 1) continue;
+    ctx.strokeStyle = color; ctx.lineWidth = 2.5; ctx.globalAlpha = 0.85;
+    ctx.beginPath();
+    let prev = null;
+    for (const s of visible) {
+      const [cx, cy] = cellCenter(s.position.x, s.position.y);
+      if (prev === null) ctx.moveTo(cx, cy);
+      else if (s.action === "move" || prev[0] !== cx || prev[1] !== cy) ctx.lineTo(cx, cy);
+      prev = [cx, cy];
+    }
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+    // wait/turn 角标：同格合并，角标数字为次数。
+    const glyph = {};
+    for (const s of visible) {
+      if (s.action === "wait" || s.action.startsWith("turn")) {
+        const key = s.position.x + "," + s.position.y + "," + s.action[0];
+        glyph[key] = (glyph[key] || 0) + 1;
+      }
+    }
+    ctx.font = "bold 9px sans-serif"; ctx.textAlign = "left";
+    for (const [key, count] of Object.entries(glyph)) {
+      const [x, y, kind] = key.split(",");
+      const [rx, ry] = cellRect(Number(x), Number(y));
+      ctx.fillStyle = color;
+      ctx.fillText((kind === "w" ? "W" : "T") + (count > 1 ? "×" + count : ""), rx + 2, ry + CELL - 4);
+    }
+  }
+}
+
+/* AMR 位姿：仿真中按 path_step 推进；未分配的车保持在种子初始位姿。 */
+function amrStateAt(amr, t) {
+  const steps = stepsByAmr[amr.amr_id];
+  if (!steps) return {position: amr.position, heading: amr.heading, battery: amr.battery};
+  let current = null;
+  for (const s of steps) { if (s.time <= t) current = s; else break; }
+  if (!current) return {position: amr.position, heading: amr.heading, battery: amr.battery};
+  return {position: current.position, heading: current.heading, battery: current.battery};
+}
+
+function drawAmrs() {
+  for (const amr of mapData.amrs) {
+    const state = simData ? amrStateAt(amr, tick) : amr;
+    const [cx, cy] = cellCenter(state.position.x, state.position.y);
+    const color = AMR_COLORS[amr.amr_id] || "#475569";
+    ctx.fillStyle = color;
+    ctx.beginPath(); ctx.arc(cx, cy, 10, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = "#ffffff"; ctx.lineWidth = 2; ctx.stroke();
+    // 朝向短线
+    const vec = HEADING_VEC[state.heading] || [0, -1];
+    ctx.strokeStyle = "#0f172a"; ctx.lineWidth = 2.5;
+    ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx + vec[0] * 9, cy + vec[1] * 9); ctx.stroke();
+    // 编号 + 电量
+    ctx.fillStyle = "#0f172a"; ctx.font = "bold 10px sans-serif"; ctx.textAlign = "center";
+    ctx.fillText(amr.amr_id.replace("AMR-", "A"), cx, cy + 3);
+    ctx.font = "9px sans-serif";
+    ctx.fillText(Math.round(state.battery) + "%", cx, cy - 13);
+  }
+}
+
+/* ===== 受控启动（匿名）：只允许白名单脚本；启动后轮询状态与 /health ===== */
+let launcherPoll = null;
+
+async function startLocal(startFast) {
+  clearError();
+  const label = document.getElementById("launcher-status");
+  try {
+    const st = await api("/demo/launcher/start", {
+      method: "POST",
+      body: JSON.stringify({start_fast: startFast}),
+    });
+    label.textContent = `启动中（pid ${st.pid}，${startFast ? "含 Fast" : "不含模型"}）…`;
+    pollLauncher();
+  } catch (e) {
+    label.textContent = "启动失败";
+    showError(e, "受控启动失败");
+  }
+}
+document.getElementById("btn-start-local").onclick = () => startLocal(false);
+document.getElementById("btn-start-fast").onclick = () => startLocal(true);
+
+function pollLauncher() {
+  if (launcherPoll) clearInterval(launcherPoll);
+  launcherPoll = setInterval(async () => {
+    try {
+      const st = await api("/demo/launcher/status");
+      document.getElementById("launcher-status").textContent =
+        `${st.state}${st.exit_code !== null ? "（退出码 " + st.exit_code + "）" : ""}：${st.message}`;
+      const log = document.getElementById("log-tail");
+      if (st.log_tail && st.log_tail.length) {
+        log.style.display = "block";
+        log.textContent = st.log_tail.join("\n");
+      }
+      if (st.state === "exited" || st.state === "failed") {
+        clearInterval(launcherPoll); launcherPoll = null;
+      }
+    } catch { /* 瞬时失败下一轮再试 */ }
+  }, 3000);
+}
+
+/* ===== 健康检查（匿名 /health；只显示 API 进程状态，不显示模型细节） ===== */
+async function checkHealth() {
+  const badge = document.getElementById("health-badge");
+  try {
+    const h = await api("/health");
+    badge.textContent = `API ${h.status} · ${h.environment}`;
+    badge.className = "badge ok";
+  } catch {
+    badge.textContent = "API 未连接";
+    badge.className = "badge warn";
+  }
+}
+
+/* ===== 初始化 ===== */
+checkHealth();
+healthPoll = setInterval(checkHealth, 10000);
+loadMap();
+draw();
+</script>
+</body>
+</html>

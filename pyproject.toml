@@ -48,4 +48,5 @@ include = ["agent*", "apps*", "domains*", "services*"]
 
 [tool.setuptools.package-data]
 "agent.context" = ["prompts/*.md"]
+"apps.api" = ["static/*.html"]
 "domains.amr_warehouse" = ["knowledge/*.md", "data/*.json"]

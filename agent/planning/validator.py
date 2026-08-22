@@ -78,7 +78,13 @@ def canonicalize_normal_pevr_plan(
     contract: TaskContract | None = None,
     expected_seed: int | None = None,
 ) -> tuple[PlanTasksOutput, list[str]]:
-    """把 llama.cpp 对 ``JsonValue`` 产生的有限包装还原为普通 JSON。"""
+    """还原 llama.cpp 的 JsonValue 包装，并把固定事实字段覆盖为合同真值。
+
+    传入 contract 与 expected_seed 时，环境引用、订单全集、临时封路、seed 与
+    规则版本一律以合同/请求真值覆盖（LLM 对这些字段没有合法选择权）；max_time
+    仅在缺失或小于最晚 deadline 时拉回真值。所有覆盖都会记录 note 供审计，
+    覆盖后的计划仍必须完整通过确定性 Validator。
+    """
 
     # Pydantic 对 JsonValue 只生成空 Schema；部分本地模型会把字符串、数组和
     # 整数误写成 ``{"type": ..., "value": ...}``。这里只接受严格的两字段
@@ -117,63 +123,52 @@ def canonicalize_normal_pevr_plan(
             normalized[name] = value
         task_payload["tool_arguments"] = normalized
     if contract is not None and expected_seed is not None:
-        # 个别本地模型会把“当前输入事实”误写成 task:<allocate>/input/<field>。
-        # 这里不解释任意表达式，只对白名单字段和本计划真实 allocate task 做一次
-        # 固定替换；替换后的结果仍必须完整通过下方确定性 Validator。
-        allocate_payload = next(
-            (
-                item
-                for item in payload["tasks"]
-                if item["tool_name"] == ToolName.ALLOCATE_TASKS
-            ),
-            None,
-        )
-        if allocate_payload is not None:
-            allocate_id = allocate_payload["task_id"]
-            latest_deadline = max(order.deadline for order in contract.orders)
-            fixed_values: dict[ToolName, dict[str, JsonValue]] = {
-                ToolName.ALLOCATE_TASKS: {
-                    "environment_ref": contract.environment_ref,
-                    "order_ids": [order.order_id for order in contract.orders],
-                },
-                ToolName.PLAN_MULTI_AMR_ROUTES: {
-                    "environment_ref": contract.environment_ref,
-                    "blocked_cells": [
-                        cell.model_dump(mode="python")
-                        for cell in contract.constraints.blocked_cells
-                    ],
-                    "max_time": latest_deadline,
-                },
-                ToolName.VALIDATE_FLEET_PLAN: {
-                    "environment_ref": contract.environment_ref,
-                    "ruleset_version": "p0-10.v1",
-                },
-                ToolName.DISPATCH_SIMULATION: {"seed": expected_seed},
-            }
-            for task_payload in payload["tasks"]:
-                tool_name = ToolName(task_payload["tool_name"])
-                if tool_name not in fixed_values:
-                    continue
-                arguments = task_payload["tool_arguments"]
-                for name, expected in fixed_values[tool_name].items():
-                    reference_names = [name]
-                    if name == "max_time":
-                        reference_names.append("latest_deadline")
-                    if name == "seed":
-                        reference_names.append("simulation_seed")
-                    allowed_references = tuple(
-                        {
-                            "$ref": f"{prefix}/{reference_name}"
-                        }
-                        for prefix in (
-                            f"task:{allocate_id}/input",
-                            "fixed_execution_facts",
-                        )
-                        for reference_name in reference_names
-                    )
-                    if arguments.get(name) in allowed_references:
-                        arguments[name] = expected
-                        notes.append(f"{task_payload['task_id']}.{name}:fixed_fact_ref")
+        # 下列字段的正确值由合同/请求唯一确定：环境引用、订单全集、临时封路、
+        # 确定性 seed、Validator 规则版本。LLM 填写它们只有出错空间、没有决策
+        # 价值——实测本地模型会把 $ref 语法照抄成 fixed:* 伪引用或自引用
+        # task:<自身>/input/*（2026-08-22 演示实测 6 次运行 4 次因此失败），
+        # 所以这里一律以真值覆盖并记录 note。覆盖只能让计划更贴近合同，不会
+        # 放宽任何约束：Validator 对覆盖后的计划仍逐项生效，assignments/plan
+        # 数据流引用不在豁免范围，未知工具/基数/拓扑错误照旧被拒绝。
+        latest_deadline = max(order.deadline for order in contract.orders)
+        fixed_values: dict[ToolName, dict[str, JsonValue]] = {
+            ToolName.ALLOCATE_TASKS: {
+                "environment_ref": contract.environment_ref,
+                "order_ids": [order.order_id for order in contract.orders],
+            },
+            ToolName.PLAN_MULTI_AMR_ROUTES: {
+                "environment_ref": contract.environment_ref,
+                "blocked_cells": [
+                    cell.model_dump(mode="python")
+                    for cell in contract.constraints.blocked_cells
+                ],
+            },
+            ToolName.VALIDATE_FLEET_PLAN: {
+                "environment_ref": contract.environment_ref,
+                "ruleset_version": "p0-10.v1",
+            },
+            ToolName.DISPATCH_SIMULATION: {"seed": expected_seed},
+        }
+        for task_payload in payload["tasks"]:
+            tool_name = ToolName(task_payload["tool_name"])
+            if tool_name not in fixed_values:
+                continue
+            arguments = task_payload["tool_arguments"]
+            for name, expected in fixed_values[tool_name].items():
+                if arguments.get(name) != expected:
+                    arguments[name] = expected
+                    notes.append(f"{task_payload['task_id']}.{name}:fixed_fact_override")
+            if tool_name is ToolName.PLAN_MULTI_AMR_ROUTES:
+                # max_time 是唯一允许 LLM 加大的字段（Validator 接受 >= 最晚
+                # deadline）；只在缺失/非整数/不足时拉回真值，不抹掉合法 horizon。
+                max_time = arguments.get("max_time")
+                if (
+                    not isinstance(max_time, int)
+                    or isinstance(max_time, bool)
+                    or max_time < latest_deadline
+                ):
+                    arguments["max_time"] = latest_deadline
+                    notes.append(f"{task_payload['task_id']}.max_time:fixed_fact_override")
     return PlanTasksOutput.model_validate(payload), notes
 
 
