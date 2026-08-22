@@ -1510,5 +1510,359 @@ DAG 使用 `agent.planning.dag.topological_sort()` 中的 Kahn 算法：计算�
 - 在线验收：Fast 8080 + 宿主机 API（通常 8010）+ compose PostgreSQL/Qdrant；打开 `/demo`，提交任意 P/S 组合，等 waiting_approval，点批准。
 - 改 envelope 时仍须同步 `services/demo/service.py` 与 registry/graph。
 
+### 2026-08-22 · 本地秋招 Agent/RAG 面试手册（独立、不入库）
+
+#### 本步完成与未完成
+
+- 完成：按用户指令在仓库根创建 `tutorial/` 离线 HTML 手册（提问作答、题库、对照表、模拟面试、简历口径），考点只收 Agent 与 RAG，不含 FastAPI/数据库。`.gitignore` 已忽略整个 `tutorial/`。
+- 未完成：不是 P0 工作包；不改变演示闭环、公共接口或发布 Verdict。当前下一步仍是艺诚在 `/demo` 走真实 Fast 闭环。
+
+#### 公共接口变化
+
+- 无。手册无 HTTP 服务、无 Schema、无 CLI。
+
+#### 设计决策
+
+- 手册是独立本地单元，不进 git，不作为源码交付物。
+- 口述口径对齐已落地设计，并写明离线 oracle ≠ 在线模型质量等限定。
+- 打开方式：浏览器打开 `tutorial/index.html`。
+
+#### 验证命令
+
+- 未跑 Python/C++ 测试：本步不修改运行时代码。
+- 已确认 `.gitignore` 含 `tutorial/`；手册文件对 git 为忽略项。
+
+#### 下一工作包直接复用
+
+- 无需复用。若 Agent/RAG 设计变更，以正式文档为准，不必更新本手册除非用户再要求。
+
+### 2026-08-22 · tutorial 增加系统学习模块（仍不入库）
+
+#### 本步完成与未完成
+
+- 完成：在 `tutorial/` 增加六层 19 课「系统学习」（心智、契约与上下文、工具与确定性技能、RAG、编排运行时、评测与安全）。每课含概念、技术栈取舍、仓库文件落点、讲解、自测、对应面试题；进度 localStorage。打开手册默认进课程导图。面试题库仍保留。
+- 未完成：不是 P0 工作包。当前下一步仍是 `/demo` 真实 Fast 闭环。H06 视频仍为 0。
+
+#### 公共接口变化
+
+- 无。
+
+#### 验证命令
+
+- 未跑 Python/C++ 测试（不改运行时）。本机无 `node`，未做 `node --check`。
+- 手册仍被 `.gitignore` 的 `tutorial/` 忽略。
+
+#### 下一工作包直接复用
+
+- 仍以正式 `docs/` 为准。手册继续 gitignore。
+
+### 2026-08-22 · tutorial 按学习路线通俗重写（仍不入库）
+
+#### 本步完成与未完成
+
+- 完成：按用户指定 PDF《Agent 全链路知识图谱与旗舰项目学习路线》把 `tutorial/` 系统课改成 **8 章 24 课**。每课固定顺序为人话结论、为什么学、比方、先记住三句、细讲、小例子、混淆、仓库对照、自测。导图增加七段读法、贯穿订单、P0/P1/P2 图例、PDF 章节对照表。面试题库保留。
+- 未完成：不是 P0 工作包；不改运行时、公共接口或发布 Verdict。当前下一步仍是艺诚在 `/demo` 走真实 Fast 闭环。H06 视频仍为 0。
+
+#### 公共接口变化
+
+- 无。手册无 HTTP 服务、无 Schema、无 CLI。`tutorial/` 仍被 `.gitignore` 忽略。
+
+#### 设计决策
+
+- PDF 只提供教学顺序和通俗讲法；拒答门槛、P0-19 分数、Smart 禁用、演示匿名审批等事实以仓库正式文档为准。
+- 贯穿例子固定为「把 MAT-001 从 P1 运到 S3」。4 台 AMR 仍按车辆调度讲，不按 4 个聊天 Agent 讲。
+- 进度键仍为 `amr-learn-done-v2`（课号 l00–l23，未再换键）。
+
+#### 验证命令
+
+- 未跑 Python/C++ 测试：本步不修改运行时代码。
+- 用脚本核对 24 课 id 与 extras 齐全。浏览器抽查：导图 `0 / 24`、侧栏 24 条、第 00 课与第 23 课均出现「为什么要学」「先记住三句」和 PDF 章节标签。未跑 Python/C++ 测试。
+
+#### 下一工作包直接复用
+
+- 无需复用到产品链。手册内容若与代码分叉，以 `docs/` 为准。
+
+### 2026-08-22 · tutorial 增加通用 Agent 八股笔试（仍不入库）
+
+#### 本步完成与未完成
+
+- 完成：在 `tutorial/` 增加「笔试」页。判断 18 题、选择 18 题（含多选）可交卷批改并显示解析；简答 10 题是针对需求的开发决策，不计分，先想再点开评分要点。题目不考本仓库文件名、分数或 AMR 细节。
+- 未完成：不是 P0 工作包。当前下一步仍是 `/demo` 真实 Fast 闭环。H06 视频仍为 0。
+
+#### 公共接口变化
+
+- 无。作答存在浏览器 `localStorage` 键 `amr-exam-v1`。
+
+#### 设计决策
+
+- 笔试与系统课/项目题库分开：课可以对照仓库，卷子只考通用 Agent 系统设计。
+- 多选全对才得分；未作答单独统计。批改后锁定选项，防止对着解析改答案。清空可重做。
+
+#### 验证命令
+
+- 未跑 Python/C++ 测试（不改运行时）。
+- 打开 `tutorial/index.html#exam`，交卷应出分数与逐题解析；简答题要点默认折叠。
+
+#### 下一工作包直接复用
+
+- 无需复用到产品链。
+
+### 2026-08-22 · tutorial 扩成秋招八股五模块总册（仍不入库）
+
+#### 本步完成与未完成
+
+- 完成：`tutorial/` 改为秋招八股复习总网页。首页 `#home` 五个模块：Agent / 大模型·Transformer / C++ / 操作系统 / 计算机网络。每科有系统课 + 笔试（判断/选择可批改，简答为开发决策、先想再点开）。新加四科均含通用八股与本仓库对照。四科**不做**模拟面试；Agent 仍保留题库、提问作答、对照表、模拟面试、简历口径。
+- 课程规模：Agent 24 课；LLM 11 课；C++ 11 课；OS 10 课；Net 10 课。新四科笔试各约 12 判断 + 10 选择（含 1 多选）+ 6 简答。
+- 未完成：不是 P0 工作包，不改运行时。当前下一步仍是艺诚在 `/demo` 走真实 Fast 闭环。H06 视频仍为 0。四科模拟面试按用户指令暂不做。
+
+#### 公共接口变化
+
+- 无运行时接口。手册 hash：`#home`、`#agent/learn`、`#agent/exam`、`#llm/learn`、`#cpp/exam` 等。旧 `#learn`/`#exam`/`#overview` 兼容为 Agent。
+- localStorage：Agent 课/笔试键不变；其余为 `amr-learn-done-v2-<track>`、`amr-exam-v1-<track>`。
+
+#### 设计决策
+
+- 四科对照仓库时写进课程与简答，不把本仓库文件名当作 Agent 那张「通用笔试」的考点；Agent 笔试仍保持通用系统设计卷。
+- 端口与安全口径跟正式文档：8080 为 Bearer 代理、18080 为 llama-server、演示常 8010、绑定 `127.0.0.1`、`parallel_slots=1`、Smart 硬禁用、dispatch 禁止盲重试。
+- 4 台 AMR 仍按车辆调度讲。演示匿名 HITL 不写成生产模型。
+
+#### 验证命令
+
+- 未跑 Python/C++ 测试（不改运行时）。本机无 `node`，未做 `node --check`。
+- 用脚本核对五科 `parts` 课号与 `lessons` 一致，括号/字符串字面量可闭合；Agent 24、LLM 11、C++ 11、OS 10、Net 10。
+- 临时 `python -m http.server` 打开手册：`#home` 五张卡片计数正确；`#os/learn/l00`、`#net/learn/l08`、`#cpp/exam`、`#llm/exam` 标题与题量正确；四科子导航只有系统学习/笔试；`#agent/drill` 仍有模拟面试。该静态服务已停止，不是常驻依赖。
+- `tutorial/` 仍被 `.gitignore` 忽略。
+
+#### 环境与服务
+
+- 本步不启动 Fast/Smart/Compose。手册纯静态。
+
+#### 已知限制
+
+- 手册事实若与代码分叉，以 `docs/` 为准。
+- 共用一份笔试 DOM，切科会重绘试卷；进度按科分键，不会串。
+- 侧栏「课程导图」必须跟当前科走；已改为按 `currentTrack` 写 hash。
+
+#### 下一工作包直接复用
+
+- 无需复用到产品链。若以后要给四科加模拟面试，应新建独立题库，不要误用 Agent 的 `qa.js`。
+
+### 2026-08-22 · tutorial 四科课文按入门教材重写（仍不入库）
+
+#### 本步完成与未完成
+
+- 完成：大模型 / C++ / 操作系统 / 计算机网络系统课从复习提纲改成入门教材。每课增加「读之前你只需要知道」、本课用词表；细讲改为多小节、每节多段；例子带步骤。渲染增加 `prereq` / `terms` / 多段 `story.p`。Agent 导图文案同步为教材口吻，24 课结构未改课号。
+- 未完成：不是 P0。当前下一步仍是 `/demo` Fast 闭环。四科仍无模拟面试。
+
+#### 公共接口变化
+
+- 无运行时接口。课文字段对手册渲染新增 `prereq`、`terms`，`story.p` 可为字符串数组。课号与 localStorage 键不变。
+
+#### 设计决策
+
+- 先定义词、再细讲、最后对照仓库；对照段不再承担「第一次引入概念」。
+- 不把面试常考当目录。面试提示只放在课末或笔试。
+
+#### 验证命令
+
+- 未跑 Python/C++ 测试。脚本核对四科课号与 parts 一致，每课均有 prereq 与 terms；括号与字符串字面量可闭合。
+- 本机无 node。请 Ctrl+F5 后打开 `#llm/learn/l00`、`#cpp/learn/l00`、`#os/learn/l00`、`#net/learn/l00`，应看到「读之前你只需要知道」和「这一课会用到的词」。
+
+#### 下一工作包直接复用
+
+- 无需复用到产品链。若再压缩成提纲，会违反本步用户指令。
+
+### 2026-08-22 · `tutorial/os-learn.js` 改写成未修过 OS 课也能读的入门教材（仍不入库）
+
+#### 本步完成与未完成
+
+- 完成：整份覆盖 `C:\Users\QYC\Documents\AMR_Agent\tutorial\os-learn.js`。仍导出 `window.OS_LEARN`，仍是 10 课 `l00`～`l09`；`p1` 为 `l00`～`l07`，`p2` 为 `l08`～`l09`。写法改为教材而不是面试提纲：每课先给 `terms`，细讲 4～6 小节且 `p` 为 2～3 段数组，`minutes` 17～20，中文口语用「」。
+- 课题：l00 读法与进程边界；l01 进程 vs 线程；l02 用户态/内核/系统调用；l03 虚拟内存；l04 锁、死锁、数据竞争；l05 调度与超时；l06 崩溃、信号、僵尸、PID；l07 容器 vs 虚拟机；l08 本仓库 llama-server / Agent / C++ CLI 拆分、`parallel_slots=1`、工具不在推理进程；l09 Checkpoint、副作用账本、按记下的 PID 停 Fast。
+- 未完成：不是 P0 工作包，不改运行时。`os-exam.js` 未改。产品下一步仍是艺诚在 `/demo` 走真实 Fast 闭环。H06 视频仍为 0。
+
+#### 公共接口变化
+
+- 无运行时接口。手册仍读 `window.OS_LEARN`；进度键仍为 `amr-learn-done-v2-os`。
+
+#### 设计决策
+
+- 默认读者未上过操作系统课；名词在用到的那一课才定义。
+- 项目事实与仓库一致：llama-server 与 FastAPI/Agent 拆进程；`config/fast_model_manifest.json` 中 `parallel_slots=1`；Compose 把 postgres/qdrant 端口发布到 `127.0.0.1`；Checkpoint 在 Postgres；幂等键为 `run_id+plan_version+task_id` 而非随机 UUID；进程内缓存 ≠ 重启恢复；停 Fast 只杀 `start_fast_secure.ps1` 记下的 PID；演示匿名 HITL 是用户指令豁免不是生产模型；API 容器可 503 `cpp_executable_unavailable`；Windows 宿主机 `127.0.0.1:8080` 不一定能从 Linux 容器回环访问。
+
+#### 验证命令
+
+- 未跑 Python/C++ 测试（不改运行时）。本机无 `node`，未做 `node --check`。
+- 用脚本核对：10 个课号 `l00`～`l09`；花括号/方括号/圆括号配平为 0；每课含 renderer 字段；`takeHome` 恰 3 条；`story` 4～6 节且每节 `p` 为 2～3 段；「」成对（131/131）。校验脚本已删除，不是交付物。
+- `tutorial/` 仍被 `.gitignore` 忽略。
+
+#### 环境与服务
+
+- 本步不启动 Fast/Smart/Compose。手册纯静态。
+
+#### 已知限制
+
+- 手册事实若与代码分叉，以 `docs/` 为准。
+- 笔试 `os-exam.js` 仍偏对照题，未同步改成教材口吻。
+
+#### 下一工作包直接复用
+
+- 无需复用到产品链。计网课已按同一教材体例重写（见下条）。若继续改 C++ 课，抄 `os-learn.js` / `llm-learn.js` / `net-learn.js` 的字段约定，不要退回提纲体。
+
+### 2026-08-22 · `tutorial/net-learn.js` 改写成未修过计网课也能读的入门教材（仍不入库）
+
+#### 本步完成与未完成
+
+- 完成：整份覆盖 `C:\Users\QYC\Documents\AMR_Agent\tutorial\net-learn.js`。仍导出 `window.NET_LEARN`，仍是 **10 课** `l00`～`l09`；`p1` 为 `l00`～`l07`，`p2` 为 `l08`～`l09`。写法改为教材而不是面试提纲：每课含 `oneLiner` / `prereq` / `why` / `analogy` / `takeHome`（恰 3 条）/ `terms` / `goals` / `story`（4～6 节，`p` 为段落数组）/ `example` / `mixups` / `ideas` / `files` / `teach` / `checks` / `related`；`minutes` 16～20；中文口语用「」。
+- 课题：l00 怎么读、超时 vs 握手；l01 OSI vs TCP/IP 分层；l02 TCP vs UDP；l03 HTTP 方法与状态码；l04 超时、重试、幂等；l05 TLS vs 本机明文、CORS、绑定地址；l06 端口、连接、Keep-Alive；l07 反向代理与健康探针；l08 本仓库端口地图 8080 / 18080 / 8000 / 8010 / 5432 / 6333；l09 禁止盲重试 dispatch。
+- 未完成：不是 P0 工作包，不改运行时。`net-exam.js` 未改。产品下一步仍是艺诚在 `/demo` 走真实 Fast 闭环。H06 视频仍为 0。
+
+#### 公共接口变化
+
+- 无运行时接口。手册仍读 `window.NET_LEARN`；进度键仍为 `amr-learn-done-v2-net`。
+
+#### 设计决策
+
+- 默认读者未上过计算机网络课；名词在用到的那一课才定义。超时先于握手公式：超时是未知，不是失败证明。
+- 项目事实与仓库一致：`127.0.0.1:8080/v1` 为 OpenAI 兼容入口（强制 Bearer 代理）；llama-server 在 18080；FastAPI 文档口常 8000；演示常宿主机 uvicorn 8010；Qdrant 6333；Postgres 5432；模型不通时健康检查 503 `MODEL_CONNECTION_FAILED`；Fast 与 Smart 按设计共用 8080，当前只允许 Fast；容器访问宿主机 Fast 用 `host.docker.internal`；CORS 不是鉴权；无方案不得绑 `0.0.0.0`；dispatch 超时按未知副作用处理；幂等键为 `run_id+plan_version+task_id`；retrieve 可有限重试，dispatch 禁止盲重试；4 台 AMR 是车不是 4 个 Agent。
+
+#### 验证命令
+
+- 未跑 Python/C++ 测试（不改运行时）。本机无 `node`，未做 `node --check`。
+- 用脚本核对：10 个课号 `l00`～`l09`；`p1`=`l00`～`l07`、`p2`=`l08`～`l09`；花括号/方括号/圆括号与字符串配平；每课含 renderer 字段；`takeHome` 恰 3 条；`story` 4～6 节且每节 `p` 为数组；「」成对（185/185）。校验脚本已删除，不是交付物。
+- `tutorial/` 仍被 `.gitignore` 忽略。
+
+#### 环境与服务
+
+- 本步不启动 Fast/Smart/Compose。手册纯静态。
+
+#### 已知限制
+
+- 手册事实若与代码分叉，以 `docs/` 为准。
+- 笔试 `net-exam.js` 仍偏对照题，未同步改成教材口吻。
+
+#### 下一工作包直接复用
+
+- 无需复用到产品链。若继续把 C++ 课改成同一教材体例，抄本文件与 `os-learn.js` / `llm-learn.js` 的字段约定，不要退回提纲体。
+
+### 2026-08-22 · Transformer 课文加公式与本地 KaTeX（仍不入库）
+
+#### 本步完成与未完成
+
+- 完成：大模型课 l01～l05 增加公式卡片（残差/因果掩码/缩放点积注意力/softmax/多头/正弦位置编码/KV Cache/温度采样）。手册用本地 `tutorial/vendor/katex/` 排版，每张卡片带纯字符对照；课文行内用 `\\( ... \\)`。未改运行时。
+- 未完成：不是 P0。当前下一步仍是 `/demo` Fast 闭环。C++/OS/Net 课未加公式。
+
+#### 公共接口变化
+
+- 无运行时接口。手册课文可选用 `formulas: [{title, tex, plain, say}]`。
+
+#### 设计决策
+
+- 浏览器手册不调用 VS Code 的 LaTeX Workshop。本机 VS Code 扩展在 `C:\Users\QYC\.vscode\extensions\james-yu.latex-workshop-10.18.0`，用于 `.tex` PDF 预览；Markdown `$...$` 走编辑器自带 `markdown.math`。
+- 行内不用单个 `$`，避免中文课文误切分。
+
+#### 验证命令
+
+- 未跑 Python/C++ 测试。核对 `llm-learn.js` 花括号配平；`formulas:` 出现 5 次；`katex.min.js` 约 277KB 已落盘。请 Ctrl+F5 后打开 `#llm/learn/l03`，应看到排版后的 Attention 公式及纯字符对照。
+
+#### 下一工作包直接复用
+
+- 其他课若要公式，复用同一 `formulas` 字段即可，不必再下 KaTeX。
+
+### 2026-08-22 · 按秋招清单把手册扩成 S/A/B 三个集合（仍不入库）
+
+#### 本步完成与未完成
+
+- 完成：系统课导图改为 S/A/B 三个集合；每课标明分级；新增数据库科；按清单扩写 Agent / 大模型 / OS / 计网 / 数据库；C++ 全部归入 S。公式用本地 KaTeX。未改运行时、未 git commit。
+- 未完成：不是 P0。当前下一步仍是艺诚在 `/demo` 走真实 Fast 闭环。H06 视频仍为 0。除 Agent 外仍无模拟面试。Agent 题库 `qa.js` 未按 S/A/B 重标。
+
+#### 公共接口变化
+
+- 无运行时接口。手册 `parts` 约定 id 为 `s`/`a`/`b`；课文 `prio` 为 `S`/`A`/`B`（旧 P0/P1/P2 仍映射显示）。新进度键：`amr-learn-done-v2-db`、`amr-exam-v1-db`。
+
+#### 设计决策
+
+- S/A/B 是导图的三个集合，不再用 p1/p2 章节当主结构（Agent 原八章顺序保留在阅读建议里）。
+- 清单没有独立 C++ 科目，求解/验证对照课全部放进 S，不编造 A/B。
+- 数据库教学用假想「仓库订单表」，八张核心表仍是 `runs/plans/tasks/tool_calls/effects/approvals/events/documents`。
+
+#### 课数（Python 括号配平后）
+
+| 科 | S | A | B | 合计 |
+|---|---|---|---|---|
+| Agent | 24 | 11 | 1 | 36 |
+| 大模型 | 17 | 8 | 1 | 26 |
+| OS | 12 | 3 | 1 | 16 |
+| 计网 | 13 | 6 | 1 | 20 |
+| 数据库 | 15 | 5 | 1 | 21 |
+| C++ | 11 | 0 | 0 | 11 |
+
+#### 验证命令
+
+- 未跑 Python/C++ 产品测试（不改运行时）。
+- 对各 `*-learn.js` 与 `exam.js` 做花括号配平、「」成对、无模板字符串 `${`；各课 `prio` 仅 S/A/B（C++ 仅 S）。请 Ctrl+F5 打开 `#home`，再分别进 `#agent/learn`、`#llm/learn/l04`、`#os/learn`、`#net/learn`、`#db/learn`、`#cpp/learn`。
+- 本机无 `node`，未做 `node --check`。
+
+#### 环境与服务
+
+- 本步不启动 Fast/Smart/Compose。手册纯静态。
+
+#### 已知限制
+
+- 手册事实若与代码分叉，以 `docs/` 为准。
+- 各科笔试题量加大，仍只批改判断/选择。
+- `tutorial/` 仍被 `.gitignore` 忽略。
+
+#### 下一工作包直接复用
+
+- 无需复用到产品链。继续改教材时保持三个集合，不要退回 P0/P1/P2 八章导图。
+
+### 2026-08-22 · Agent 课程导图从「一张总目录」改成三张集合
+
+#### 本步完成与未完成
+
+- 完成：系统课把 S/A/B 三张导图放到简介正下方并排；侧栏增加「S 级导图 / A 级导图 / B 级导图」跳转。Agent 原先长阅读建议压在集合上面，看起来像只有一张「课程导图」。未改运行时。
+- 同日续修：Agent 侧栏「已学 0 / 0 课」是因为 `learn.js` 里 5 处 `story` 对象漏逗号，整文件未执行。已补逗号。
+- 未完成：不是 P0。当前下一步仍是 `/demo` Fast 闭环。
+
+#### 验证命令
+
+- 未跑 Python/C++ 测试。请 Ctrl+F5 打开 `#agent/learn`，应立刻看到三张集合卡片，而不是先翻完「建议怎么读」才见到目录。
+
+#### 下一工作包直接复用
+
+- `.course-map` 使用 `auto-fit`，只有 S 集的 C++ 会自动变成单列。
+
+### 2026-08-22 · 本地手册在安卓 / iPad 上浏览（仍不入库）
+
+#### 本步完成与未完成
+
+- 完成：手册仍是静态 HTML。手机不能访问电脑的 `127.0.0.1`。新增 `tutorial/serve.ps1` / `serve.cmd`，只把 `tutorial/` 用 Python `http.server` 绑到 `0.0.0.0:8765` 并打印局域网 IPv4。窄屏 CSS 不再把课程目录 `display:none`。未改 FastAPI、模型网关或 Compose 绑定。
+- 未完成：不是 P0。当前下一步仍是艺诚在 `/demo` 走真实 Fast 闭环。H06 视频仍为 0。没有做内网穿透，外网默认看不到。
+
+#### 公共接口变化
+
+- 无产品 API / Schema 变化。
+- 仅本机可选：`http://<局域网IPv4>:8765/` 提供手册静态文件。端口故意避开 8000/8010/8080/18080。关脚本即停。
+
+#### 设计决策
+
+- 手机 / iPad 用局域网 HTTP，不用 iOS `file://` 打开整夹（相对路径和 KaTeX 字体经常丢）。
+- **禁止**为了看手册把 Agent API 或 Fast/Smart 改成 `0.0.0.0`。CORS 不是鉴权。
+
+#### 验证命令
+
+- 未跑产品 smoke（不改运行时）。
+- 已写脚本；实际开服需艺诚在本机运行 `tutorial/serve.cmd`，再用手机浏览器打开打印出的 `http://192.168.x.x:8765/`。
+
+#### 环境与服务
+
+- 依赖本机 Python 3（优先 PATH，其次 `E:\Anaconda\envs\torch128\python.exe`）。
+- 电脑与手机须同一 Wi-Fi；访客网络 / AP 隔离会导致互访失败。Windows 防火墙可能拦入站。
+
+#### 下一工作包直接复用
+
+- 手册预览口永远独立于产品口。不要把 `serve.ps1` 的绑定方式复制到 Fast 启动脚本。
+
+
 
 

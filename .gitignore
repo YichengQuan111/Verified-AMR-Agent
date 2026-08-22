@@ -20,3 +20,6 @@ output/
 
 *.log
 
+# 本地独立秋招面试手册（HTML），不作为仓库源码交付物
+tutorial/
+

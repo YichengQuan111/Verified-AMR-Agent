@@ -882,3 +882,134 @@ Dockerfile、依赖锁和报告属于配置/文档/数据契约，本步无核�
 | 修改 | `tests/unit/test_demo_nl.py`、`test_p016_security.py`、`test_demo_api.py` | 权限矩阵改为匿名；HITL 测试注明用户指令豁免。 | 与新决策一致。 |
 | 修改 | `docs/API.md`、`docs/HANDOFF_CONTEXT.md`、`docs/LESSONS_LEARNED.md`、`docs/FILE_PURPOSES.md`、`docs/schemas/DemoNLResultResponse.schema.json` | 记录豁免决策、接口与 Schema。 | 后续 Agent 交接。 |
 
+## 2026-08-22：本地秋招 Agent/RAG 面试手册（不入库）
+
+用户明确要求：面向秋招求职者的 HTML 手册，只覆盖 Agent 与 RAG，文件放在仓库根 `tutorial/`，**不被 git 跟踪**，作为独立单元。本步无核心业务代码注释需求。
+
+| 变更 | 文件 | 作用 | 下游影响 |
+|---|---|---|---|
+| 修改 | `.gitignore` | 增加 `tutorial/`，避免把本地面试手册误提交。 | 后续 `git status` 不应再出现该目录；手册不是 P0 交付物。 |
+| 未跟踪 | `tutorial/index.html`、`tutorial/app.css`、`tutorial/qa.js`、`tutorial/app.js`、`tutorial/learn.js`、`tutorial/exam.js`、`tutorial/README.md` | 离线学习手册：系统课 + 面试题库 + 通用 Agent 八股笔试。无后端。 | 仅本机打开；课程若与代码分叉，以正式 `docs/` 为准。笔试不绑定本仓库实现。 |
+
+## 2026-08-22：系统学习模块（tutorial 仍不入库）
+
+用户要求手册不限于面试问答，增加结合本项目的 Agent 开发系统学习。本步无核心业务代码注释需求。
+
+| 变更 | 文件 | 作用 | 下游影响 |
+|---|---|---|---|
+| 未跟踪 | `tutorial/learn.js` | 24 课课程数据：人话结论、比方、三句话带走、仓库对照、自测、对应面试题。 | 仅本地手册消费。 |
+| 未跟踪 | `tutorial/index.html`、`tutorial/app.css`、`tutorial/app.js`、`tutorial/README.md` | 「系统学习」导图/课文阅读/进度；默认进入课程而非题库。 | git 仍忽略 `tutorial/`。 |
+
+## 2026-08-22：HTML 教程按学习路线通俗重写（tutorial 仍不入库）
+
+用户认为原课程晦涩，要求对照《Agent 全链路知识图谱与旗舰项目学习路线》写得更细、更通俗。本步无核心业务代码注释需求。
+
+| 变更 | 文件 | 作用 | 下游影响 |
+|---|---|---|---|
+| 未跟踪 | `tutorial/learn.js` | 扩为 8 章 24 课；每课增加为什么学、三句话带走、PDF 章节对照；补例子与混淆表。 | 仅本地手册。 |
+| 未跟踪 | `tutorial/app.js`、`tutorial/app.css`、`tutorial/index.html`、`tutorial/README.md` | 导图增加读法与 PDF 对照表；课文按「一句话→比方→三句→细讲」渲染。 | git 仍忽略 `tutorial/`。 |
+| 修改 | `docs/HANDOFF_CONTEXT.md`、`docs/FILE_PURPOSES.md`、`docs/LESSONS_LEARNED.md` | 登记本步完成内容与口径：PDF 管讲法，仓库文档管事实。 | 后续 Agent 以正式 docs 为准。 |
+
+## 2026-08-22：Agent 八股笔试（tutorial 仍不入库）
+
+用户要求出一套不绑定本仓库的 Agent 笔试卷：判断题、选择题可提交批改；简答题为开发者面对需求做决策，先想再点开要点。本步无核心业务代码注释需求（仅手册脚本中有批改逻辑的中文说明）。
+
+| 变更 | 文件 | 作用 | 下游影响 |
+|---|---|---|---|
+| 未跟踪 | `tutorial/exam.js` | 笔试数据：18 判断、18 选择（含多选）、10 道开发决策简答。 | 仅本地手册。 |
+| 未跟踪 | `tutorial/app.js`、`tutorial/app.css`、`tutorial/index.html`、`tutorial/README.md` | 笔试面板、交卷批改、锁定选项、简答折叠要点。 | git 仍忽略 `tutorial/`。 |
+| 修改 | `docs/HANDOFF_CONTEXT.md`、`docs/FILE_PURPOSES.md` | 登记笔试为独立本地能力，不改变产品下一步。 | 后续 Agent 不必把笔试题当仓库契约。 |
+
+## 2026-08-22：秋招八股五模块总册（tutorial 仍不入库）
+
+用户要求把本地手册做成秋招八股复习总网页，分为 Agent、大模型/Transformer、C++、操作系统、计算机网络五科。新加四科必须同时有通用八股、结合本仓库的对照，以及一套笔试；暂时不要模拟面试。本步无核心业务代码注释需求（仅手册脚本含模块说明与中文注释）。
+
+| 变更 | 文件 | 作用 | 下游影响 |
+|---|---|---|---|
+| 未跟踪 | `tutorial/index.html`、`tutorial/app.css`、`tutorial/app.js`、`tutorial/tracks.js` | 总册壳子：`#home` 五科入口；hash 为 `#<科>/learn`、`#<科>/exam`。Agent 仍保留题库/模拟面试面板。 | 仅本机打开。旧 hash `#learn`/`#exam` 兼容落到 Agent。 |
+| 未跟踪 | `tutorial/learn.js`、`tutorial/exam.js`、`tutorial/qa.js` | Agent 系统课、通用 Agent 笔试、本仓库面试题库。 | Agent 进度键仍为 `amr-learn-done-v2` / `amr-exam-v1`。 |
+| 未跟踪 | `tutorial/llm-learn.js`、`tutorial/llm-exam.js` | 大模型/Transformer 11 课 + 笔试。 | 进度 `amr-learn-done-v2-llm`、`amr-exam-v1-llm`。 |
+| 未跟踪 | `tutorial/cpp-learn.js`、`tutorial/cpp-exam.js` | C++ 11 课 + 笔试。 | 进度 `amr-learn-done-v2-cpp`、`amr-exam-v1-cpp`。 |
+| 未跟踪 | `tutorial/os-learn.js`、`tutorial/os-exam.js` | 操作系统 10 课 + 笔试。 | 进度 `amr-learn-done-v2-os`、`amr-exam-v1-os`。 |
+| 未跟踪 | `tutorial/net-learn.js`、`tutorial/net-exam.js` | 计算机网络 10 课 + 笔试。 | 进度 `amr-learn-done-v2-net`、`amr-exam-v1-net`。 |
+| 未跟踪 | `tutorial/README.md` | 总册打开方式、五科范围、localStorage 键、口径提醒。 | git 仍忽略 `tutorial/`。 |
+| 修改 | `docs/HANDOFF_CONTEXT.md`、`docs/FILE_PURPOSES.md`、`docs/LESSONS_LEARNED.md` | 登记五模块手册不是 P0；产品下一步仍是 `/demo` Fast 闭环。 | 后续 Agent 不要把手册端口/分数写成运行时契约。 |
+
+## 2026-08-22：手册课文按入门教材重写（tutorial 仍不入库）
+
+用户反馈原四科像复习笔记，要求按教材面向没学过的人来写。本步无核心业务代码注释需求（仅手册脚本增加教材字段说明）。
+
+| 变更 | 文件 | 作用 | 下游影响 |
+|---|---|---|---|
+| 未跟踪 | `tutorial/llm-learn.js`、`tutorial/cpp-learn.js`、`tutorial/os-learn.js`、`tutorial/net-learn.js` | 四科系统课改成入门教材：先修说明、本课用词、多段细讲、带步骤的例子。课号未改。 | 进度键不变。 |
+| 未跟踪 | `tutorial/app.js`、`tutorial/app.css`、`tutorial/index.html`、`tutorial/tracks.js`、`tutorial/learn.js`、`tutorial/README.md` | 课文增加「读之前只需知道 / 会用到的词」；细讲支持多段落；首页按教材说明。 | Agent 课结构兼容，标题文案同步。 |
+| 修改 | `docs/HANDOFF_CONTEXT.md`、`docs/FILE_PURPOSES.md`、`docs/LESSONS_LEARNED.md` | 登记教材写法；产品下一步不变。 | 后续不要再把四科压成提纲。 |
+
+## 2026-08-22：操作系统课改写成入门教材（tutorial 仍不入库）
+
+用户要求把 `tutorial/os-learn.js` 从秋招提纲改写成**未上过操作系统课**也能读的教材：先定义用语，细讲用 4～6 个小节、每节 2～3 段，时长 16～20 分钟；口语引用用「」而不是未转义英文双引号。本步无核心业务代码注释需求（仅教材数据文件含中文模块说明）。
+
+| 变更 | 文件 | 作用 | 下游影响 |
+|---|---|---|---|
+| 未跟踪 | `tutorial/os-learn.js` | `window.OS_LEARN` 十课入门教材：l00～l07 通用边界，l08～l09 对照本仓库拆进程、Checkpoint 与按 PID 停 Fast。 | 仅本地手册；进度键仍为 `amr-learn-done-v2-os`。事实以 `docs/` 为准。 |
+| 修改 | `docs/HANDOFF_CONTEXT.md`、`docs/FILE_PURPOSES.md`、`docs/LESSONS_LEARNED.md` | 登记教材口径与 JS 字面量引用约定。 | 后续改 cpp/net 教材时复用同一写法，不要退回面试提纲体。 |
+
+## 2026-08-22：计算机网络课改写成入门教材（tutorial 仍不入库）
+
+用户要求把 `tutorial/net-learn.js` 从秋招提纲改写成**未上过计算机网络课**也能读的教材：先定义用语，细讲 4～6 个小节且 `p` 为段落数组，时长 16～20 分钟；口语引用用「」。本步无核心业务代码注释需求（仅教材数据文件含中文模块说明）。
+
+| 变更 | 文件 | 作用 | 下游影响 |
+|---|---|---|---|
+| 未跟踪 | `tutorial/net-learn.js` | `window.NET_LEARN` 十课入门教材：l00～l07 寄信/分层/TCP·UDP/HTTP/超时/TLS·绑定/端口·长连接/代理·探针，l08～l09 对照本仓库六端口与发车禁止盲重试。 | 仅本地手册；进度键仍为 `amr-learn-done-v2-net`。事实以 `docs/` 为准。 |
+| 修改 | `docs/HANDOFF_CONTEXT.md`、`docs/FILE_PURPOSES.md`、`docs/LESSONS_LEARNED.md` | 登记计网教材口径、十课确认与端口/幂等事实。 | 后续改 cpp 教材时复用同一写法，不要退回面试提纲体。 |
+
+## 2026-08-22：Transformer 课文加公式与本地 KaTeX（tutorial 仍不入库）
+
+用户要求 Transformer 部分补公式，优先 LaTeX 样式渲染。本步无核心业务代码注释需求（仅手册脚本含 KaTeX 失败回退说明）。
+
+| 变更 | 文件 | 作用 | 下游影响 |
+|---|---|---|---|
+| 未跟踪 | `tutorial/vendor/katex/` | 离线 KaTeX 0.16.22（js/css/fonts），不走 CDN。 | 仅本地手册；`tutorial/` 仍被 gitignore。 |
+| 未跟踪 | `tutorial/index.html`、`tutorial/app.js`、`tutorial/app.css` | 加载 KaTeX；`lesson.formulas` 展示公式卡片；课文 `\\( ... \\)` 行内公式；失败则纯字符。 | 其他科也可复用 `formulas` 字段。 |
+| 未跟踪 | `tutorial/llm-learn.js` | 第 01～05 课增加注意力、掩码、残差、位置编码、KV Cache、温度等公式及人话解释。 | 课号不变。 |
+| 未跟踪 | `tutorial/README.md` | 说明手册 KaTeX 与 VS Code LaTeX Workshop / Markdown 预览不是同一链路。 | 避免误以为要装 TeX 才能看网页。 |
+| 修改 | `docs/HANDOFF_CONTEXT.md`、`docs/FILE_PURPOSES.md`、`docs/LESSONS_LEARNED.md` | 登记公式渲染与本机扩展路径。 | 产品下一步不变。 |
+
+## 2026-08-22：按秋招 S/A/B 清单扩手册（tutorial 仍不入库）
+
+用户要求按 `秋招八股总清单_SAB分级.md` 扩充教材：介绍时标明 S/A/B，且 **S、A、B 各成一个集合**；口吻仍是没上过课的教材；该放公式就放。本步无核心业务代码注释需求（仅手册 JS 含分级渲染与教材说明）。
+
+| 变更 | 文件 | 作用 | 下游影响 |
+|---|---|---|---|
+| 未跟踪 | `tutorial/app.js`、`tutorial/app.css`、`tutorial/index.html`、`tutorial/tracks.js` | 导图按 `parts` 的 s/a/b 三张卡片；课文分级条；P0/P1/P2 显示映射为 S/A/B；新增数据库科。 | 空集合自动隐藏。C++ 仅 S 集。 |
+| 未跟踪 | `tutorial/learn.js`、`tutorial/exam.js` | Agent 36 课：S 24（含综合口试 l24）、A 11（含原 l22）、B 1；笔试追加分级题。 | 进度键仍 `amr-learn-done-v2`。 |
+| 未跟踪 | `tutorial/llm-learn.js`、`tutorial/llm-exam.js` | 大模型 26 课（S17/A8/B1），注意力等公式卡片。 | `amr-learn-done-v2-llm`。 |
+| 未跟踪 | `tutorial/os-learn.js`、`tutorial/os-exam.js` | 操作系统 16 课（S12/A3/B1）。 | `amr-learn-done-v2-os`。 |
+| 未跟踪 | `tutorial/net-learn.js`、`tutorial/net-exam.js` | 计网 20 课（S13/A6/B1）。 | `amr-learn-done-v2-net`。 |
+| 未跟踪 | `tutorial/db-learn.js`、`tutorial/db-exam.js` | 新增数据库科 21 课（S15/A5/B1）+ 笔试。 | 进度 `amr-learn-done-v2-db` / `amr-exam-v1-db`。 |
+| 未跟踪 | `tutorial/cpp-learn.js` | 清单无独立 C++ 科；11 课全部 `prio:S`、`part:s`。 | 进度键不变。 |
+| 未跟踪 | `tutorial/README.md` | 六个模块、三个集合、课数表、KaTeX。 | 仅本地。 |
+| 修改 | `docs/HANDOFF_CONTEXT.md`、`docs/FILE_PURPOSES.md`、`docs/LESSONS_LEARNED.md` | 登记 S/A/B 扩写与验证。 | 不是 P0；当前下一步仍是 `/demo` Fast 闭环。 |
+
+## 2026-08-22：Agent 三张集合导图不再埋在一张总目录下面
+
+用户反馈 Agent 八股只看到一个「课程导图」。原因是三个集合排成单列，且被九段阅读建议压在下面。本步无核心业务代码注释需求（仅手册壳子）。
+
+| 变更 | 文件 | 作用 | 下游影响 |
+|---|---|---|---|
+| 未跟踪 | `tutorial/app.js`、`tutorial/app.css`、`tutorial/index.html` | 三张 S/A/B 导图紧跟简介并排；侧栏「S/A/B 级导图」跳转；课文返回键改为「三个集合」。 | 各科共用同一壳子。C++ 只有 S 时自动单列。 |
+| 未跟踪 | `tutorial/learn.js` | 补 5 处 `story` 对象之间漏写的逗号，否则整份脚本不执行、侧栏 0/0 课。 | 改课文后除括号配平外，还要查 `}{` 漏逗号。 |
+| 修改 | `docs/HANDOFF_CONTEXT.md`、`docs/FILE_PURPOSES.md`、`docs/LESSONS_LEARNED.md` | 登记该 UI 修复。 | 产品下一步不变。 |
+
+## 2026-08-22：本地手册在安卓 / iPad 上浏览（tutorial 仍不入库）
+
+用户要在手机和平板上读 `tutorial/index.html`。本步无核心业务代码注释需求（仅手册静态服务脚本含绑定说明）。
+
+| 变更 | 文件 | 作用 | 下游影响 |
+|---|---|---|---|
+| 未跟踪 | `tutorial/serve.ps1`、`tutorial/serve.cmd` | 只对 `tutorial/` 开 `0.0.0.0:8765` 静态服务并打印局域网 URL。双击 `serve.cmd` 即可。 | 不改 FastAPI/模型绑定。关窗口即停。 |
+| 未跟踪 | `tutorial/app.css`、`tutorial/index.html` | 窄屏不再隐藏课程目录；加大点击区域；输入框 16px 以免 iOS 缩放；viewport-fit 与安全区。 | 仅手册。 |
+| 未跟踪 | `tutorial/README.md` | 写明手机不能用 127.0.0.1、同一 Wi-Fi、防火墙。 | 仅本地。 |
+| 修改 | `docs/HANDOFF_CONTEXT.md`、`docs/FILE_PURPOSES.md`、`docs/LESSONS_LEARNED.md` | 登记手册局域网预览与产品口绑定边界。 | 产品下一步仍是 `/demo` Fast 闭环。 |
+
+
