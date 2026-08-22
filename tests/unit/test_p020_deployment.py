@@ -110,7 +110,9 @@ def test_p020_delivery_documents_are_linked_and_boundary_explicit() -> None:
     for relative_path in required:
         assert (PROJECT_ROOT / relative_path).is_file(), relative_path
 
-    readme = _read_text("README.md")
-    assert "P0-20" in readme
-    assert "Smart" in readme
-    assert "offline_independent_oracle" in readme or "offline_trace_replay" in readme
+    # 2026-08-22 起根目录 README 改为功能向首页，详细边界说明迁至 docs/PROJECT_OVERVIEW.md；
+    # 真实入口/离线评测/Smart 限制的断言随之指向迁移后的文档。
+    overview = _read_text("docs/PROJECT_OVERVIEW.md")
+    assert "P0-20" in overview
+    assert "Smart" in overview
+    assert "offline_independent_oracle" in overview or "offline_trace_replay" in overview
