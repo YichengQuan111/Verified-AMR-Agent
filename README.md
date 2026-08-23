@@ -19,7 +19,7 @@
 
 ## 功能特性
 
-- **自然语言下单**：本地 Fast 模型把任意运输请求抽取为结构化订单；演示链即抽即走，正式链进入完整 PEVR 闭环。
+- **自然语言下单**：本地 Qwen 3.6 35B A3B 模型把任意运输请求抽取为结构化订单；演示链即抽即走，正式链进入完整 PEVR 闭环。
 - **固定八阶段 PEVR 闭环**：`guard → understand → retrieve → plan → validate → execute → verify → finish`；任何计划必须先通过确定性 Validator 才能执行。
 - **C++17 确定性规划三件套**：Hungarian 任务分配、A* 路径规划、车队计划独立验证器，严格 JSON stdin/stdout 边界。
 - **Python 离散事件仿真**：固定 1 秒 tick，只执行通过验证的计划；覆盖充电、工位容量与 Eval 专用故障注入。
