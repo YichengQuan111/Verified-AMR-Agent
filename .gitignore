@@ -23,3 +23,5 @@ output/
 # 本地独立秋招面试手册（HTML），不作为仓库源码交付物
 tutorial/
 
+# 本次面向 Agent / RAG 的独立系统教程，同样只保留在本机
+tutorial_Codex/

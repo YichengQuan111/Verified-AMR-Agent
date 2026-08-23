@@ -106,9 +106,10 @@ ID 到正整数容量的覆盖表；同一工位同一离散服务时刻的 pick
 - 任务依赖：未知依赖、重复/自依赖、环、未规划前置任务，以及前置订单
   `dropoff_time > 当前订单 pickup_time` 均拒绝。`completed_order_ids` 中的外部订单
  视为已完成。
-- 时间窗：路线首次到达 pickup 的时刻不得早于 `release_time`，路线终点必须是
-  dropoff，且 `dropoff_time` 不得晚于 `deadline`。声明的 pickup/dropoff 时间必须
-  与路径重新计算出的时刻完全相等。
+- 时间窗：装货事件时刻为 ``route.pickup_time``，且该时刻路径必须停在 pickup
+  工位。允许 ``t < release_time`` 先踏上 pickup 再等待（与 P0-09 A* 预定位一致）；
+  装卸事件本身不得早于 `release_time`。路线终点必须是 dropoff，且 `dropoff_time`
+  不得晚于 `deadline`。声明的 pickup/dropoff 时间必须与路径上对应事件时刻完全相等。
 - 载荷：初始载荷不得超过上限，pickup 后按
   `amr.load + route.payload_kg` 再检查一次；dropoff 后的卸载不作为绕过 pickup
   硬检查的理由。

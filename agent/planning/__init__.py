@@ -2,6 +2,7 @@
 
 from agent.planning.contracts import (
     ApprovalRequirement,
+    ChargingGoal,
     ExecutionBudgets,
     FallbackStrategy,
     PlanTask,
@@ -14,6 +15,7 @@ from agent.planning.dag import DAGValidationError, topological_sort, validate_da
 
 __all__ = [
     "ApprovalRequirement",
+    "ChargingGoal",
     "DAGValidationError",
     "ExecutionBudgets",
     "FallbackStrategy",
@@ -26,12 +28,14 @@ __all__ = [
     "validate_dag",
     "NORMAL_PEVR_TOOL_CHAIN",
     "canonicalize_normal_pevr_plan",
+    "canonicalize_replanned_pevr_plan",
     "PlanValidationIssue",
     "PlanValidationResult",
     "is_data_ref",
     "make_data_ref",
     "validate_normal_pevr_plan",
     "validate_replanned_pevr_plan",
+    "validate_charging_pevr_plan",
     "AffectedEntitySet",
     "LocalReplanAnalysis",
     "LocalReplanResult",
@@ -47,12 +51,14 @@ def __getattr__(name: str):
     lazy_names = {
         "NORMAL_PEVR_TOOL_CHAIN",
         "canonicalize_normal_pevr_plan",
+        "canonicalize_replanned_pevr_plan",
         "PlanValidationIssue",
         "PlanValidationResult",
         "is_data_ref",
         "make_data_ref",
         "validate_normal_pevr_plan",
         "validate_replanned_pevr_plan",
+        "validate_charging_pevr_plan",
         "AffectedEntitySet",
         "LocalReplanAnalysis",
         "LocalReplanResult",
@@ -66,12 +72,14 @@ def __getattr__(name: str):
         source = validator if name in {
             "NORMAL_PEVR_TOOL_CHAIN",
             "canonicalize_normal_pevr_plan",
+            "canonicalize_replanned_pevr_plan",
             "PlanValidationIssue",
             "PlanValidationResult",
             "is_data_ref",
             "make_data_ref",
             "validate_normal_pevr_plan",
             "validate_replanned_pevr_plan",
+            "validate_charging_pevr_plan",
         } else replanner
         value = getattr(source, name)
         globals()[name] = value

@@ -10,7 +10,8 @@
   铁律：本页面只调 FastAPI HTTP 接口，不直接调 C++ CLI，不自行寻路；
   轨迹只渲染后端 GET /demo/nl/result 返回的 amr.path_step 离散格子步；
   历史轨迹只存浏览器内存，刷新即清空（用户明确要求非持久化）。
-  2026-08-22：页面唯一提交入口走完整 PEVR 闭环；HITL 审批匿名。
+  2026-08-23：地图与在线评测同一难度（warehouse_v1_hard + 2 格固定通道障碍）。
+  同日精简左栏：HITL 卡只显示风险文案；历史轨迹卡不展示证据/工具/报告摘要。
 -->
 <style>
   :root {
@@ -32,6 +33,10 @@
   .layout { display: flex; gap: 16px; align-items: flex-start; flex-wrap: wrap; }
   .side { width: 320px; display: flex; flex-direction: column; gap: 12px; }
   .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; }
+  #hitl-card { padding: 8px 10px; }
+  #hitl-card h2 { margin-bottom: 4px; }
+  #hitl-risk { font-size: 13px; font-weight: 600; color: var(--warn); margin: 0 0 6px; }
+  #hitl-card .row { margin-top: 0; }
   .canvas-wrap { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px; }
   canvas { display: block; }
   button {
@@ -64,8 +69,8 @@
   #log-tail { background: #0f172a; color: #d1fae5; font-size: 11px; border-radius: 8px; padding: 8px; max-height: 150px; overflow: auto; white-space: pre-wrap; word-break: break-all; display: none; margin-top: 8px; }
   #history-list { display: flex; flex-direction: column; gap: 6px; }
   .history-item {
-    text-align: left; padding: 7px 10px; border-radius: 8px; border: 1px solid var(--line);
-    background: #fff; cursor: pointer; font-size: 13px; line-height: 1.5;
+    text-align: left; padding: 6px 8px; border-radius: 8px; border: 1px solid var(--line);
+    background: #fff; cursor: pointer; font-size: 13px; line-height: 1.35;
   }
   .history-item.active { border-color: var(--accent); background: #eff6ff; }
   .history-item .sub { color: var(--muted); font-size: 11px; }
@@ -76,7 +81,8 @@
 <div class="topbar">
   <h1>AMR 仓库演示 · 自然语言任意下单（30×20）</h1>
   <span id="health-badge" class="badge warn">API 未连接</span>
-  <span class="muted">浏览器只调 HTTP；规划由后端 C++ 完成，仿真由后端 Python 完成；历史轨迹仅存本页内存，刷新即清空</span>
+  <span id="map-badge" class="badge warn">地图未加载</span>
+  <span class="muted">地图与在线评测同一难度（货架墙 + 固定通道障碍）；浏览器只调 HTTP；规划由后端 C++ 完成，仿真由后端 Python 完成；历史轨迹仅存本页内存，刷新即清空</span>
 </div>
 
 <div class="layout">
@@ -100,9 +106,10 @@
 
     <div class="panel" id="hitl-card" style="display:none">
       <h2>HITL 审批</h2>
-      <div id="hitl-meta" class="muted"></div>
-      <div class="row" style="margin-top:8px">
-        <button id="btn-hitl-approve" class="primary grow">批准并继续执行</button>
+      <!-- 演示卡只展示风险，不展示 run/approval_id/过期时间 -->
+      <div id="hitl-risk"></div>
+      <div class="row">
+        <button id="btn-hitl-approve" class="primary grow">批准</button>
         <button id="btn-hitl-reject">拒绝</button>
       </div>
     </div>
@@ -119,7 +126,7 @@
     </div>
 
     <div class="panel">
-      <h2>历史轨迹（仅本次页面会话）</h2>
+      <h2>历史轨迹</h2>
       <div id="history-list"><div class="history-empty">暂无历史轨迹：每成功规划一次自动添加一条。</div></div>
     </div>
   </div>
@@ -147,7 +154,7 @@
       <input id="tick-slider" type="range" min="0" max="0" value="0" disabled>
     </div>
     <div class="legend">
-      <span><span class="sw" style="background:#1f2937"></span>障碍</span>
+      <span><span class="sw" style="background:#1f2937"></span>障碍（含货架墙）</span>
       <span><span class="sw" style="background:#f97316"></span>临时封路</span>
       <span><span class="sw" style="background:#bfdbfe"></span>窄通道</span>
       <span><span class="sw" style="background:#dc2626"></span>禁行边</span>
@@ -172,7 +179,7 @@
 
 <script>
 "use strict";
-/* ===== 常量：与 warehouse_v1.json / domains.amr_warehouse 契约保持一致 ===== */
+/* ===== 常量：与评测加难图 / domains.amr_warehouse 契约保持一致 ===== */
 const CELL = 30;            // 每格像素
 const GRID_W = 30, GRID_H = 20;
 const ORIGIN_X = 40, ORIGIN_Y = 34;   // 坐标轴标注留白
@@ -184,6 +191,7 @@ let mapData = null;          // GET /demo/warehouse 的响应（匿名）
 let simData = null;          // 当前选中的历史轨迹（闭环 result 转成的渲染结构）
 let nlPoll = null;
 let activeRunId = null;
+let lastApprovedId = null;  // 已点过「批准」的 approval_id，避免同一张卡循环可点
 let tick = 0;
 let playing = false;
 let playTimer = null;
@@ -200,6 +208,7 @@ const ctx = canvas.getContext("2d");
 /* ===== HTTP 封装：统一错误结构 {code,message,...}；演示链接口全部匿名 ===== */
 async function api(path, options = {}) {
   const resp = await fetch(path, {
+    cache: "no-store",
     ...options,
     headers: {"Content-Type": "application/json", ...(options.headers || {})},
   });
@@ -222,6 +231,14 @@ async function loadMap() {
   clearError();
   try {
     mapData = await api("/demo/warehouse");
+    const mapBadge = document.getElementById("map-badge");
+    if (mapBadge) {
+      mapBadge.textContent =
+        (mapData.environment_ref || "unknown") +
+        " · 障碍 " +
+        ((mapData.obstacles && mapData.obstacles.length) || 0);
+      mapBadge.className = "badge ok";
+    }
   } catch (e) {
     mapData = null;
     showError(e, "加载地图失败");
@@ -253,6 +270,7 @@ document.getElementById("btn-nl-run").onclick = async () => {
     document.getElementById("btn-nl-run").disabled = false;
     return;
   }
+  lastApprovedId = null;
   activeRunId = st.run_id;
   startNlPoll(st.run_id);
 };
@@ -264,10 +282,20 @@ function setStage(state, message) {
 function hideHitl() {
   document.getElementById("hitl-card").style.display = "none";
 }
+function hitlRiskLabel(code) {
+  if (code === "high_risk_write") return "高风险写操作";
+  return code || "高风险操作";
+}
+
 function showHitl(st) {
   document.getElementById("hitl-card").style.display = "block";
-  document.getElementById("hitl-meta").textContent =
-    `run ${st.run_id} · approval ${st.approval_id} · ${st.approval_reason_code || ""} · 过期 ${st.approval_expires_at || "—"}`;
+  document.getElementById("hitl-risk").textContent = "风险 · " + hitlRiskLabel(st.approval_reason_code);
+  const sameApproved = Boolean(lastApprovedId && st.approval_id === lastApprovedId);
+  document.getElementById("btn-hitl-approve").disabled = sameApproved;
+  document.getElementById("btn-hitl-reject").disabled = sameApproved;
+  if (sameApproved) {
+    setNLStatus("该审批已批准，正在恢复执行；请勿再点拒绝");
+  }
 }
 
 function stopNlPoll() {
@@ -318,16 +346,18 @@ document.getElementById("btn-hitl-approve").onclick = async () => {
   const st = await api("/demo/nl/status/" + activeRunId);
   if (!st.approval_id) { setNLStatus("缺少 approval_id"); return; }
   document.getElementById("btn-hitl-approve").disabled = true;
+  document.getElementById("btn-hitl-reject").disabled = true;
   try {
     await api(`/agent/runs/${st.run_id}/hitl/${st.approval_id}/approve`, {method: "POST", body: "{}"});
+    lastApprovedId = st.approval_id;
     await api("/demo/nl/resume", {method: "POST", body: JSON.stringify({run_id: st.run_id})});
     hideHitl();
     setStage("running", "已批准，正在恢复执行");
     startNlPoll(st.run_id);
   } catch (e) {
     showError(e, "批准失败");
-  } finally {
     document.getElementById("btn-hitl-approve").disabled = false;
+    document.getElementById("btn-hitl-reject").disabled = false;
   }
 };
 document.getElementById("btn-hitl-reject").onclick = async () => {
@@ -335,6 +365,7 @@ document.getElementById("btn-hitl-reject").onclick = async () => {
   if (!st.approval_id) return;
   try {
     await api(`/agent/runs/${st.run_id}/hitl/${st.approval_id}/reject`, {method: "POST", body: "{}"});
+    lastApprovedId = null;
     await api("/demo/nl/dismiss", {method: "POST", body: JSON.stringify({run_id: st.run_id})});
     hideHitl();
     stopNlPoll();
@@ -342,7 +373,8 @@ document.getElementById("btn-hitl-reject").onclick = async () => {
     setStage("failed", "已拒绝并清理槽位");
     setNLStatus("已拒绝");
   } catch (e) {
-    showError(e, "拒绝失败");
+    const alreadyDecided = String(e.message || "").includes("pending") || String(e.message || "").includes("已批准");
+    showError(e, alreadyDecided ? "这条审批已经决定过（通常是已批准），不能再拒绝" : "拒绝失败");
   }
 };
 
@@ -358,7 +390,6 @@ function addHistoryFromPevr(result) {
     },
     result: {end_time: result.report.simulation_end_time},
     path_steps: result.path_steps,
-    report: result.report,
   };
   addHistory(response);
 }
@@ -386,14 +417,8 @@ function renderHistoryList() {
     const btn = document.createElement("button");
     btn.className = "history-item" + (entry.seq === activeHistoryId ? " active" : "");
     btn.innerHTML =
-      `<div>#${entry.seq} ${entry.timeLabel} · ${o.material_id} ${o.pickup} → ${o.dropoff}</div>` +
-      `<div class="sub">${entry.response.summary.simulation_status} · ${entry.response.summary.order_id} · ${entry.response.path_steps.length} 步` +
-      (entry.response.report ? ` · ${entry.response.report.summary}` : "") +
-      `</div>` +
-      (entry.response.report && entry.response.report.tool_names && entry.response.report.tool_names.length
-        ? `<div class="sub">工具 ${entry.response.report.tool_names.join(" → ")}</div>` : "") +
-      (entry.response.report && entry.response.report.evidence_refs && entry.response.report.evidence_refs.length
-        ? `<div class="sub">证据 ${entry.response.report.evidence_refs.slice(0, 6).join(" · ")}</div>` : "");
+      `<div>#${entry.seq} ${entry.timeLabel} · ${o.pickup} → ${o.dropoff}</div>` +
+      `<div class="sub">${entry.response.summary.simulation_status} · ${entry.response.path_steps.length} 步</div>`;
     btn.onclick = () => selectHistory(entry.seq);
     list.appendChild(btn);
   }
@@ -541,7 +566,7 @@ function drawGrid() {
 }
 
 function drawAxes() {
-  // 原点与 warehouse_v1.json 一致：x 向右 0..29，y 向下 0..19；图上明确标出。
+  // 原点与评测加难图一致：x 向右 0..29，y 向下 0..19；图上明确标出。
   ctx.fillStyle = "#0f172a";
   ctx.font = "11px sans-serif";
   ctx.textAlign = "center";
@@ -551,7 +576,7 @@ function drawAxes() {
   ctx.textAlign = "left";
   ctx.fillStyle = "#b45309";
   ctx.font = "bold 11px sans-serif";
-  ctx.fillText("原点(0,0) · x→右 · y↓下（与 warehouse_v1.json 一致）", ORIGIN_X + 2, ORIGIN_Y + GRID_H * CELL + 24);
+  ctx.fillText("原点(0,0) · x→右 · y↓下（与评测加难图一致）", ORIGIN_X + 2, ORIGIN_Y + GRID_H * CELL + 24);
   ctx.strokeStyle = "#b45309";
   ctx.lineWidth = 2;
   ctx.strokeRect(ORIGIN_X, ORIGIN_Y, CELL, CELL);

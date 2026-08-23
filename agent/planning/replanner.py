@@ -19,7 +19,12 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from agent.context.contracts import PlanTasksOutput, ReplanOutput
 from agent.planning.contracts import PlanTask, PlanTaskStatus, TaskContract
 from agent.planning.dag import validate_dag
-from agent.planning.validator import PlanValidationResult, validate_replanned_pevr_plan
+from agent.planning.validator import (
+    PlanValidationResult,
+    canonicalize_replanned_pevr_plan,
+    validate_charging_pevr_plan,
+    validate_replanned_pevr_plan,
+)
 from agent.tools.contracts import ToolName, ToolResult, ToolResultStatus, ToolSpec
 from agent.tools.schemas import AllocationResponse, RoutePlanResponse
 from agent.tools.snapshots import EnvironmentSnapshot
@@ -361,6 +366,7 @@ class LocalReplanner:
         if set(replacement_ids) & known_ids:
             raise ValueError("局部替换任务必须使用新 task_id")
         allowed_dependencies = (known_ids - invalidated) | set(replacement_ids)
+        cleaned: list[PlanTask] = []
         for task in replacements:
             unknown = set(task.dependencies) - allowed_dependencies
             if unknown:
@@ -371,7 +377,9 @@ class LocalReplanner:
                 raise ValueError("替换任务不能预先标记为 completed 或 running")
             if task.effect_id is not None:
                 raise ValueError("新替换任务不能携带旧 effect_id")
-
+            # Fast 可能把旧任务的 evidence_refs 抄进替换子图；pending 任务不允许预填运行证据。
+            cleaned.append(task.model_copy(update={"status": PlanTaskStatus.PENDING, "evidence_refs": []}))
+        replacements = cleaned
         retained_tasks: list[PlanTask] = []
         for task in plan.tasks:
             if task.task_id in invalidated:
@@ -385,7 +393,8 @@ class LocalReplanner:
                     task.model_copy(
                         update={
                             "status": PlanTaskStatus.PENDING,
-                            "evidence_refs": list(task.evidence_refs),
+                            "evidence_refs": [],
+                            "effect_id": None,
                         }
                     )
                 )
@@ -399,14 +408,33 @@ class LocalReplanner:
             ],
             unresolved_risks=list(dict.fromkeys([*plan.unresolved_risks, reason])),
         )
+        if not contract.is_charging_contract():
+            # 替换任务里的环境引用、seed、plan $ref 没有决策空间；不覆盖则
+            # Fast 抄硬地图/内联计划会把 v2 挡在门禁外，空影响克隆也无法落地。
+            rebuilt = canonicalize_replanned_pevr_plan(
+                rebuilt,
+                contract=contract,
+                expected_seed=expected_seed,
+            )
         validate_dag({task.task_id: task.dependencies for task in rebuilt.tasks})
-        plan_validation = validate_replanned_pevr_plan(
-            contract,
-            rebuilt,
-            completed_task_ids=completed,
-            tool_specs=tool_specs,
-            expected_seed=expected_seed,
-            expected_plan_version=target_version,
+        plan_validation = (
+            validate_charging_pevr_plan(
+                contract,
+                rebuilt,
+                tool_specs=tool_specs,
+                expected_seed=expected_seed,
+                expected_plan_version=target_version,
+                completed_task_ids=completed,
+            )
+            if contract.is_charging_contract()
+            else validate_replanned_pevr_plan(
+                contract,
+                rebuilt,
+                completed_task_ids=completed,
+                tool_specs=tool_specs,
+                expected_seed=expected_seed,
+                expected_plan_version=target_version,
+            )
         )
         if not plan_validation.valid:
             detail = "; ".join(

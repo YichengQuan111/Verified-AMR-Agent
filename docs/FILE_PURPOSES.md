@@ -1012,4 +1012,144 @@ Dockerfile、依赖锁和报告属于配置/文档/数据契约，本步无核�
 | 未跟踪 | `tutorial/README.md` | 写明手机不能用 127.0.0.1、同一 Wi-Fi、防火墙。 | 仅本地。 |
 | 修改 | `docs/HANDOFF_CONTEXT.md`、`docs/FILE_PURPOSES.md`、`docs/LESSONS_LEARNED.md` | 登记手册局域网预览与产品口绑定边界。 | 产品下一步仍是 `/demo` Fast 闭环。 |
 
+## 2026-08-22：Agent 八股增加本仓库模块框图（tutorial 仍不入库）
+
+用户要求在 Agent 八股里画一张详细框图：有哪些模块、各模块输入输出，并以本项目为例。本步无核心业务代码注释需求（仅手册壳子与框图数据含中文说明）。口径对齐 `docs/ARCHITECTURE.md` 与工具 Schema，不改运行时。
+
+| 变更 | 文件 | 作用 | 下游影响 |
+|---|---|---|---|
+| 未跟踪 | `tutorial/agent-arch.js` | 框图唯一数据源：PEVR 八站入/出、三层、18 个模块、九工具 I/O。 | overview 与 l02/l23 共用，避免两套说法。 |
+| 未跟踪 | `tutorial/app.js`、`tutorial/app.css`、`tutorial/index.html` | 渲染框图；项目总览全宽挂载；课文 `archDiagram` 开关。 | 仅手册。 |
+| 未跟踪 | `tutorial/learn.js`、`tutorial/README.md` | 第 02 / 23 课打开框图；说明打开入口。 | 课号未改。 |
+| 修改 | `docs/HANDOFF_CONTEXT.md`、`docs/FILE_PURPOSES.md` | 登记手册框图。 | 不是 P0；当前下一步仍是 `/demo` Fast 闭环。 |
+
+## 2026-08-22：P0-18 真实 Fast 在线 60 例 + 加难地图
+
+默认离线 `offline_deterministic_oracle` 不变。新增独立 `online_fast_closed_loop`：生产 `warehouse_v1.json` 不改，评测用货架墙地图并按 seed 叠加通道障碍；正向用例走真实 Fast PEVR + HITL 自动批准，安全/验证/权限反例仍走真实门禁 sidecar。在线完成率按观察终态如实记录，不套离线 oracle，也不预先调到某个百分比。
+
+| 变更 | 文件 | 作用 | 下游影响 |
+|---|---|---|---|
+| 新建 | `evals/p018/hard_map.py` | 生成 `warehouse_v1_hard` 货架墙、按 seed 放额外障碍、BFS 保证起点→取货→交付连通、`HardMapSnapshotProvider`。 | 在线 Harness、在线单测。 |
+| 新建 | `evals/p018/maps/warehouse_v1_hard.json` | 加难地图固定输入，供 SHA-256 指纹；本步无核心代码注释需求。 | `online_config.json`、复现报告。 |
+| 新建 | `evals/p018/online.py` | `OnlineFastHarness`：真实 Fast 闭环、HITL 自动批准/拒绝、独立计分、逐例进度 JSONL。 | CLI `run_eval.py`、脚本入口。 |
+| 新建 | `evals/p018/online_config.json` | `execution_mode=online_fast_closed_loop`、`online_service_required=true`、硬地图路径、每例 6 个额外障碍；本步无核心代码注释需求。 | 在线评测与离线 config 隔离。 |
+| 修改 | `evals/p018/dataset.py` | `load_config` 允许 `online_fast_closed_loop`。 | 在线 CLI。 |
+| 修改 | `evals/p018/run_eval.py` | 按 config 分发离线/在线；在线写 `p018_online_eval.json/.md`。退出码 0 表示 60 例已跑且零容忍为 0，完成率允许 <100%。 | 操作者、CI。 |
+| 修改 | `evals/p018/reporting.py` | Markdown 根据 `execution_mode` 写清在线/离线口径。 | 人读报告。 |
+| 新建 | `scripts/run_p018_online_eval.ps1` | 调用在线 config；不启动 Fast，由 Python 门禁检查。本步无核心代码注释需求。 | Windows 操作者。 |
+| 新建 | `tests/unit/test_p018_online.py` | 硬地图超集、障碍连通性、配置门禁、零容忍计分、Trace `_as_str`。 | 在线专项回归。 |
+| 修改 | `docs/P018_EVAL.md`、`evals/README.md`、`docs/RESUME_FACTS.md`、`docs/HANDOFF_CONTEXT.md`、`docs/LESSONS_LEARNED.md` | 登记在线入口、实测指标与离线/在线不得混写。 | 简历与后续 Agent。 |
+| 生成 | `tmp/p018_online_eval/p018_online_eval.json`、`.md`、`p018_online_progress.jsonl` | 2026-08-22 在线 60 例实测；不是源码交付物。 | 引用时核对应 `report_id=p018-online-4492088d953d0618`。 |
+
+## 2026-08-23：修复在线充电 missing_information 与 REPLAN 短接 fatal
+
+| 变更 | 文件 | 作用 | 下游影响 |
+|---|---|---|---|
+| 修改 | `evals/p018/hard_map.py` | 非空 `orders` 时暴露 `injected_orders`，对齐 PEVR understand 的 duck-type canonicalize。 | 在线充电/动态订单不再在 understand 被 `missing_information` 误杀。 |
+| 修改 | `tests/unit/test_p018_online.py` | 覆盖注入属性、canonicalize 清零 `missing_information`、种子回退无注入。 | 防止再漏同名属性。 |
+| 修改 | `agent/runtime/graph.py` | `_recover_graph_failure`：apply 失败后循环再 apply；终态码 `recovery_{action}`；reason 带真实异常。 | 生产 PEVR 与在线 60 例恢复路径。 |
+| 修改 | `agent/runtime/faults.py` | `local_replan_rejected` 精确归入 `PLAN_INFEASIBLE`，避免 `plan_invalid` 子串误伤。 | 分类器与图恢复共用。 |
+| 修改 | `tests/unit/test_p015_faults.py`、`tests/integration/test_p015_fault_recovery.py` | 分类器、第一次 apply 失败再成功、额度耗尽 `recovery_human` 反例。 | P0-15 回归。 |
+| 修改 | `docs/LESSONS_LEARNED.md`、`docs/HANDOFF_CONTEXT.md`、`docs/FILE_PURPOSES.md` | 登记两处 bug 的现象/原因/修法。本步文档无核心代码注释需求。 | 后续 Agent 不要把旧 45.5%/50% 当成修完后的在线率。 |
+
+## 2026-08-23：修复后重跑 P0-18 真实 Fast 在线 60 例
+
+本步无核心代码注释需求（只跑评测并登记报告路径）。
+
+| 变更 | 文件 | 作用 | 下游影响 |
+|---|---|---|---|
+| 生成 | `tmp/p018_online_eval_fix/p018_online_eval.json`、`.md`、`p018_online_progress.jsonl` | 修复 `injected_orders` / REPLAN 短接后的实测；不是源码。 | 对照 `report_id=p018-online-7430900da2a75e25`。当前引用见 `tmp/p018_online_eval_recovery/`。 |
+| 修改 | `docs/P018_EVAL.md`、`docs/RESUME_FACTS.md`、`docs/HANDOFF_CONTEXT.md`、`docs/LESSONS_LEARNED.md`、`evals/README.md` | 写入 24/44、4/10、零容忍 0 与充电仍非 `charged`。 | 简历与后续 Agent。 |
+
+## 2026-08-23：抬在线完成率/恢复率（空影响 v2、原文、Fast replan、充电合同、故障注入）
+
+未改离线 `evals/p018/oracle.py`，未减 `warehouse_v1_hard.json` 货架墙或每例 6 个 seed 通道障碍。本步核心代码已补中文注释。
+
+| 变更 | 文件 | 作用 | 下游影响 |
+|---|---|---|---|
+| 修改 | `agent/planning/contracts.py`、`agent/planning/__init__.py` | 新增 `ChargingGoal`；`TaskContract.orders` 可空；有 `charging` 则禁止运输订单。 | 充电与运输互斥的公共契约。 |
+| 修改 | `agent/runtime/state.py` | `RunState.orders` 允许空列表，并与合同订单 ID 集合对齐。 | Checkpoint/充电闭环。 |
+| 修改 | `agent/tools/snapshots.py` | `EnvironmentSnapshot.fault_code` 仅评测注入，生产保持 `None`。 | 在线异常例快照；C++ envelope 不读此字段。 |
+| 修改 | `agent/planning/validator.py` | `validate_charging_pevr_plan`；`canonicalize_replanned_pevr_plan` 在重规划落地前覆盖 $ref/环境/seed，不放宽首轮 plan_tasks。 | PEVR validate 与 LocalReplanner。 |
+| 修改 | `agent/planning/replanner.py` | 充电合同走充电校验器；apply 时清掉 pending 任务抄来的 `evidence_refs`。 | 局部重规划。 |
+| 修改 | `docs/schemas/TaskContract.schema.json`、`docs/schemas/RunState.schema.json` | 同源导出充电字段；本步无核心代码注释需求。 | Prompt/Schema 消费者。 |
+| 修改 | `agent/runtime/graph.py` | 空影响 v2（含 unfinish 已完成 route）；额度空转走 Fast `replan`；给 Fast 的 current_plan 去掉障碍并把内联 plan 压成 $ref；终态 HUMAN 也带 C++ 原文；充电合成 dispatch。 | 生产 PEVR 与在线 60 例。 |
+| 修改 | `evals/p018/hard_map.py` | 充电：`orders=[]`、`injected_charging`、AMR 放到充电站；异常例写 `fault_code`。 | 在线 harness。 |
+| 新建 | `evals/p018/fault_inject.py` | 评测侧包装 Registry：8 个期望完成异常例前 N 次失败；生产 `dispatch.faults` 仍为空。 | 仅 `online.py`。 |
+| 修改 | `evals/p018/online.py` | 不再注入占位运输单；充电注入仿真充电站；恢复率按 `replan_count`/新版本/重试计；进度 JSONL 可写入 `--output-dir`。 | 在线 CLI。 |
+| 修改 | `evals/p018/run_eval.py` | 把 `--output-dir` 传给在线 harness 写进度。 | 操作者。 |
+| 修改 | `tests/unit/test_p004_contracts.py`、`tests/unit/test_p013_pevr.py`、`tests/unit/test_p014_replanner.py`、`tests/unit/test_p015_faults.py`、`tests/integration/test_p015_fault_recovery.py`、`tests/unit/test_p018_online.py` | 充电互斥、空影响 v2、Fast replan 节点、终态原文、故障注入与恢复率反例。 | 回归。 |
+| 修改 | `docs/FILE_PURPOSES.md`、`docs/HANDOFF_CONTEXT.md`、`docs/LESSONS_LEARNED.md`、`docs/P018_EVAL.md`、`docs/RESUME_FACTS.md`、`evals/README.md` | 写入 22/44、9/10、充电 5/5 charged。本步文档无核心代码注释需求。 | 简历与后续 Agent。 |
+| 生成 | `tmp/p018_online_eval_recovery/` | 本步重跑在线 60 例；不是源码。 | 旧引用 `report_id=p018-online-fad484647c97878f`。 |
+
+## 2026-08-23：略降评测地图难度并修装货时刻 / 种子依赖
+
+生产 `warehouse_v1.json` 未改。目标是把在线任务完成率从 50% 抬到约 90%。离线 C++ 探测表明 14/20 失败与货架密度无关。
+
+| 变更 | 文件 | 作用 | 下游影响 |
+|---|---|---|---|
+| 修改 | `evals/p018/hard_map.py`、`evals/p018/maps/warehouse_v1_hard.json` | 通道对齐工位 y；额外障碍 6→2；快照可带 `completed_order_ids`；地图 version=3。JSON 无核心代码注释需求。 | 在线 Harness、指纹。 |
+| 修改 | `evals/p018/online_config.json` | `extra_obstacles_per_case=2`。本步无核心代码注释需求。 | 在线配置。 |
+| 修改 | `evals/p018/online.py` | 只注入主订单；种子前置写入 `completed_order_ids`；保留显式 `release_time=0`。 | 在线 60 例。 |
+| 修改 | `agent/runtime/graph.py` | `_build_simulation_plan` 不再清空快照 `completed_order_ids`。 | 生产 PEVR 与评测。 |
+| 修改 | `services/planner_cpp/src/fleet_plan_validator.cpp` | 装货事件=`route.pickup_time` 且当时在 pickup；允许 release 前预定位等待。 | 与 P0-09 A* 对齐。 |
+| 修改 | `services/planner_cpp/tests/fleet_plan_validator_tests.cpp`、`CMakeLists.txt` | 新增 `release_preposition_wait` CTest（15/15）。 | 回归。 |
+| 修改 | `tests/unit/test_p018_online.py` | ORDER-003 前置完成、release_time=5、config extra=2、地图 v3。 | 在线专项。 |
+| 修改 | `docs/FLEET_PLAN_VALIDATOR.md`、`docs/P018_EVAL.md`、`evals/README.md`、`docs/LESSONS_LEARNED.md`、`docs/HANDOFF_CONTEXT.md`、`docs/RESUME_FACTS.md`、`docs/FILE_PURPOSES.md` | 登记语义与实测。部分文档无核心代码注释需求。 | 简历与后续 Agent。 |
+| 生成 | `tmp/p018_online_eval_ease/` | 降难度后、HITL 转发修复前的在线 60 例（36/44）；不是源码。 | 对照。 |
+| 修改 | `evals/p018/fault_inject.py` | `execute` 关键字与生产 Registry 对齐；属性 `approval_verifier`/`security_required` 转发内层。 | 在线异常例。 |
+| 修改 | `agent/runtime/graph.py` | `_registry_execute` 对 `**kwargs` 包装器仍传入 HITL grant；安全模式把 verifier 写到内层 Registry。 | 生产 PEVR 与评测。 |
+| 修改 | `evals/p018/online.py` | waiting_approval 最多自动批准 3 次。 | 在线 Harness。 |
+| 修改 | `tests/unit/test_p018_online.py` | 断言包装 Registry 转发 grant 与 verifier。 | 回归。 |
+| 生成 | `tmp/p018_online_eval_ease_hitl/` | HITL grant 转发后、verifier 绑定前（37/44）；不是源码。 | 对照。 |
+| 生成 | `tmp/p018_online_eval_ease_verifier/` | 当前引用在线 60 例：`p018-online-fa1d397a8f60ad17`，43/44、10/10。不是源码。 | 简历与交接。 |
+
+## 2026-08-23：演示页对齐在线评测加难地图
+
+生产 `warehouse_v1.json` 未改。演示 UI / 轻量仿真链 / PEVR 演示 CLI 改读评测加难图，额外障碍保持全工位走廊连通。核心代码已补中文注释。
+
+| 变更 | 文件 | 作用 | 下游影响 |
+|---|---|---|---|
+| 修改 | `evals/p018/hard_map.py` | 新增 `extra_obstacles_for_demo` / `demo_corridors_open` / `overlay_demo_extras`；评测每例 extras 逻辑不变。 | 演示服务、PEVR CLI、单测。 |
+| 修改 | `services/demo/service.py` | `ENVIRONMENT_REF=warehouse_v1@eval-hard`；默认 `HardMapSnapshotProvider`；GET 地图 overlay 2 格 extras。 | `/demo/warehouse`、`/demo/simulate`、轻量 NL 链。 |
+| 修改 | `services/demo/nl_runner.py` | argv 固定传入 `--environment-ref warehouse_v1@eval-hard`。 | `/demo/nl/*` 闭环与规划同图。 |
+| 修改 | `scripts/run_p013_e2e.py` | 该 ref 时用加难 Provider + 演示 extras；默认 seed-v1 不变。 | 演示 CLI 与 P0-13 手工验收。 |
+| 修改 | `services/demo/contracts.py`、`apps/api/static/demo.html` | 契约说明与图例改为评测难度。HTML 无核心代码注释需求。 | 浏览器与 Schema 读者。 |
+| 修改 | `tests/unit/test_demo_api.py`、`tests/unit/test_demo_nl.py`、`tests/unit/test_p018_online.py` | 地图断言改加难图；argv 含 eval-hard；全走廊 extras 单测。 | 回归门禁。 |
+| 修改 | `docs/API.md`、`docs/P018_EVAL.md`、`evals/README.md`、`docs/HANDOFF_CONTEXT.md`、`docs/LESSONS_LEARNED.md`、`docs/FILE_PURPOSES.md` | 登记演示与评测同图、extras 语义不同。本步文档无核心代码注释需求。 | 交接与简历。 |
+| 修改 | `apps/api/routers/demo.py`、`apps/api/static/demo.html` | `GET /demo` 与 `/demo/warehouse` 加 `Cache-Control: no-store`；页眉显示 `environment_ref` 与障碍格数。本步 HTML 无核心代码注释需求。 | 避免旧 uvicorn/浏览器缓存把空旷图画回来。 |
+
+## 2026-08-23：演示 HITL 批准后死循环 / 拒绝不是 pending
+
+| 变更 | 文件 | 作用 | 下游影响 |
+|---|---|---|---|
+| 修改 | `agent/runtime/graph.py` | execute 遇到已批准的同一条 interrupt 时从 HITL store 取回 grant 继续，不再把同一 interrupt 抛回去。 | 演示 resume、P0-13 CLI。 |
+| 修改 | `agent/runtime/hitl.py` | Protocol/`InMemoryHITLStore` 增加 `get_grant`；已批准后再拒绝改为明确错误。 | 图恢复与 API 拒绝文案。 |
+| 修改 | `services/application/hitl_service.py` | PostgreSQL 拒绝已批准行时返回「审批已批准，不能再拒绝」。 | `/agent/runs/.../hitl/.../reject`。 |
+| 修改 | `services/demo/nl_runner.py` | 非 0/3 退出不再把旧 waiting JSON 当成待审批；resume 不覆盖首次日志。 | `/demo/nl/status`、排障。 |
+| 修改 | `apps/api/static/demo.html` | 同一 `approval_id` 批准后禁用批准/拒绝，避免连点拒绝撞 409。本步 HTML 无核心代码注释需求。 | 演示页。 |
+| 修改 | `tests/unit/test_p016_security.py`、`tests/unit/test_demo_nl.py` | 覆盖 store 取回 grant、以及 exit 1 + 旧 waiting 产物必须是 failed。 | 回归。 |
+| 修改 | `docs/HANDOFF_CONTEXT.md`、`docs/LESSONS_LEARNED.md`、`docs/FILE_PURPOSES.md` | 登记原因与修复。本步文档无核心代码注释需求。 | 交接。 |
+
+## 2026-08-23：演示页精简 HITL 审批卡与历史轨迹卡
+
+本步只改演示静态页与交接文档，无核心 Python/C++ 逻辑，因此无核心代码注释需求。
+
+| 变更 | 文件 | 作用 | 下游影响 |
+|---|---|---|---|
+| 修改 | `apps/api/static/demo.html` | HITL 卡只显示风险文案（`high_risk_write` →「高风险写操作」）与批准/拒绝；不再展示 run_id、approval_id、过期时间。历史轨迹卡只保留序号、时间、取送货点、仿真状态与步数；不渲染证据、工具名、报告摘要，历史内存对象也不再挂完整 `report`。 | 浏览器演示页；`GET /demo/nl/result` 仍返回证据字段，仅 UI 不展示。 |
+| 修改 | `docs/HANDOFF_CONTEXT.md`、`docs/FILE_PURPOSES.md` | 登记上述 UI 边界。本步文档无核心代码注释需求。 | 交接。 |
+
+## 2026-08-23：README 嵌入演示 GIF
+
+本步只改 README 与交接文档，无核心代码，因此无核心代码注释需求。
+
+| 变更 | 文件 | 作用 | 下游影响 |
+|---|---|---|---|
+| 新建 | `docs/media/demo_v0.gif` | 演示录屏转成的仓库首页动图（自然语言下单 / HITL / 轨迹）。本步无核心代码注释需求。 | GitHub README 相对路径引用。 |
+| 修改 | `README.md` | 标题下用相对路径嵌入该 GIF。本步无核心代码注释需求。 | GitHub 仓库页自动循环播放。 |
+| 修改 | `docs/HANDOFF_CONTEXT.md`、`docs/FILE_PURPOSES.md` | 登记媒体路径。本步文档无核心代码注释需求。 | 交接。 |
+
+
+
 

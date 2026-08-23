@@ -129,7 +129,8 @@ class RunState(RuntimeContract):
     task_contract: TaskContract
     plan_tasks: list[PlanTask]
     amr_states: list[AMRState] = Field(min_length=1)
-    orders: list[TransportOrder] = Field(min_length=1)
+    # 充电合同允许空订单；运输合同仍由 TaskContract 保证至少 1 条。
+    orders: list[TransportOrder] = Field(default_factory=list)
     observations: list[Observation]
     current_task_id: str | None = Field(max_length=128)
     completed_task_ids: list[str]

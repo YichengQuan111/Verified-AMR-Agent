@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import json
+from unittest.mock import patch
 
 import pytest
 
@@ -10,6 +12,7 @@ from agent.context import FinalReport
 from agent.planning import PlanTaskStatus
 from agent.runtime import (
     FaultCategory,
+    FaultClassifier,
     FaultRecoveryController,
     InMemoryHITLStore,
     RecoveryAction,
@@ -20,7 +23,7 @@ from agent.runtime import (
     PEVRInterrupt,
 )
 from agent.runtime.checkpoint import InMemoryRuntimeStore, make_effect_idempotency_key
-from agent.runtime.pevr import PEVRRequest
+from agent.runtime.pevr import PEVRRequest, PEVRStage
 from agent.security import Principal
 from agent.tools import (
     ToolError,
@@ -92,16 +95,28 @@ class _ProductionFaultRegistry(_FakeRegistry):
 
 
 class _ReplanAwareProvider(_FakeProvider):
-    """只在测试报告中接受已由 LocalReplanner 证明的新计划版本。"""
+    """报告节点采用当前计划版本，而不是写死 v2。"""
 
     def generate_structured(self, messages, response_model, **kwargs):
         generated = super().generate_structured(messages, response_model, **kwargs)
         if response_model is not FinalReport:
             return generated
+        content = ""
+        for message in reversed(list(messages)):
+            payload = message.content if hasattr(message, "content") else str(message)
+            if "plan_version" in payload:
+                content = payload
+                break
+        start = content.find("{")
+        plan_version = 2
+        if start >= 0:
+            envelope = json.loads(content[start:])
+            node_input = envelope.get("node_input") or envelope
+            plan_version = int(node_input.get("plan_version") or plan_version)
         report = generated.value.model_copy(
             update={
-                "plan_version": 2,
-                "state_version": f"run:{self.run_id}/plan:2",
+                "plan_version": plan_version,
+                "state_version": f"run:{self.run_id}/plan:{plan_version}",
             }
         )
         return generated.model_copy(update={"value": report})
@@ -502,3 +517,226 @@ def test_secure_replan_invalidates_old_approval_and_waits_on_new_plan() -> None:
     assert result.report.plan_version == 2
     assert result.report.approval_id == pending.approval_id
     assert result.report.approval_checkpoint_id == pending.checkpoint_id
+
+
+def test_first_apply_failure_retries_production_replan_instead_of_fake_fatal() -> None:
+    """第一次 apply 抛错后若策略仍是 REPLAN，必须再 apply，不能用 recovery_fatal 冒充额度。"""
+
+    run_id = "run-p015-apply-retry-after-reject"
+    base = _contract()
+    contract = base.model_copy(
+        update={"budgets": base.budgets.model_copy(update={"max_replans": 2, "max_retries": 2})}
+    )
+    store = InMemoryRuntimeStore()
+    registry = _ProductionFaultRegistry(
+        run_id,
+        category=ToolErrorCategory.UNSAFE_PLAN,
+        code="route_infeasible",
+        retryable=False,
+        failures=1,
+    )
+    apply_calls = {"n": 0}
+    original = PEVRGraphRunner._apply_production_replan
+
+    def fail_once_then_apply(self, *args, **kwargs):
+        apply_calls["n"] += 1
+        if apply_calls["n"] == 1:
+            raise ValueError("故障没有定位到可替换的未完成任务")
+        return original(self, *args, **kwargs)
+
+    with patch.object(PEVRGraphRunner, "_apply_production_replan", fail_once_then_apply):
+        result = PEVRGraphRunner(
+            _ReplanAwareProvider(contract, _plan(contract), run_id),
+            registry=registry,
+            checkpoint_store=store,
+            clock=lambda: NOW,
+        ).run(
+            PEVRRequest(
+                run_id=run_id,
+                raw_request="把 MAT-001 从 P1 运到 S3",
+                environment_ref=ENVIRONMENT_REF,
+                approval_granted=True,
+            )
+        )
+
+    assert apply_calls["n"] == 2
+    assert result.run_state.status is RunStatus.COMPLETED
+    assert result.run_state.plan_version == 2
+    assert result.run_state.replan_count == 1
+
+
+def test_local_replan_apply_exhausts_budget_with_real_error_not_fake_fatal() -> None:
+    """max_replans 用尽后应 HUMAN/FATAL，reason 含真实异常，且 apply 次数受额度约束。"""
+
+    run_id = "run-p015-apply-exhausted"
+    base = _contract()
+    contract = base.model_copy(
+        update={"budgets": base.budgets.model_copy(update={"max_replans": 2, "max_retries": 2})}
+    )
+    store = InMemoryRuntimeStore()
+    registry = _ProductionFaultRegistry(
+        run_id,
+        category=ToolErrorCategory.UNSAFE_PLAN,
+        code="route_infeasible",
+        retryable=False,
+    )
+    apply_calls = {"n": 0}
+
+    def always_reject(self, *args, **kwargs):
+        apply_calls["n"] += 1
+        raise ValueError("故障没有定位到可替换的未完成任务")
+
+    with patch.object(PEVRGraphRunner, "_apply_production_replan", always_reject):
+        with pytest.raises(PEVRExecutionError) as raised:
+            PEVRGraphRunner(
+                _FakeProvider(contract, _plan(contract), run_id),
+                registry=registry,
+                checkpoint_store=store,
+                clock=lambda: NOW,
+            ).run(
+                PEVRRequest(
+                    run_id=run_id,
+                    raw_request="把 MAT-001 从 P1 运到 S3",
+                    environment_ref=ENVIRONMENT_REF,
+                    approval_granted=True,
+                )
+            )
+
+    error = raised.value
+    assert error.code == "recovery_human"
+    assert "故障没有定位到可替换的未完成任务" in str(error)
+    assert "原始错误" in str(error)
+    assert "route_infeasible" in str(error)
+    assert "允许第" not in str(error)
+    assert apply_calls["n"] == 2
+    checkpoint = store.load_checkpoint(run_id)
+    assert checkpoint is not None
+    recovered_state = RunState.model_validate(checkpoint.graph_state["run_state"])
+    assert recovered_state.status is RunStatus.FAILED
+    assert recovered_state.replan_count == 0
+
+
+def test_human_after_successful_v2_keeps_original_validator_error() -> None:
+    """v2 落地后额度用尽转 HUMAN 时，终态仍必须带上 C++/工具原文。"""
+
+    run_id = "run-p015-v2-then-human"
+    base = _contract()
+    contract = base.model_copy(
+        update={"budgets": base.budgets.model_copy(update={"max_replans": 1, "max_retries": 0})}
+    )
+    store = InMemoryRuntimeStore()
+    registry = _ProductionFaultRegistry(
+        run_id,
+        category=ToolErrorCategory.UNSAFE_PLAN,
+        code="route_infeasible",
+        retryable=False,
+    )
+    with pytest.raises(PEVRExecutionError) as raised:
+        PEVRGraphRunner(
+            _FakeProvider(contract, _plan(contract), run_id),
+            registry=registry,
+            checkpoint_store=store,
+            clock=lambda: NOW,
+        ).run(
+            PEVRRequest(
+                run_id=run_id,
+                raw_request="把 MAT-001 从 P1 运到 S3",
+                environment_ref=ENVIRONMENT_REF,
+                approval_granted=True,
+            )
+        )
+
+    error = raised.value
+    assert error.code == "recovery_human"
+    assert "原始错误" in str(error)
+    assert "route_infeasible" in str(error)
+    checkpoint = store.load_checkpoint(run_id)
+    assert checkpoint is not None
+    recovered_state = RunState.model_validate(checkpoint.graph_state["run_state"])
+    assert recovered_state.plan_version == 2
+    assert recovered_state.replan_count == 1
+
+
+def test_empty_infeasible_impact_generates_v2_and_completes() -> None:
+    """validate 节点无 task_id 的 PLAN_INFEASIBLE 也必须真正写出 v2。"""
+
+    run_id = "run-p015-empty-impact-v2"
+    base = _contract()
+    contract = base.model_copy(
+        update={"budgets": base.budgets.model_copy(update={"max_replans": 2, "max_retries": 2})}
+    )
+    store = InMemoryRuntimeStore()
+    original_validate = PEVRGraphRunner._validate_node
+
+    def fail_first_validate(self, state):
+        plan = state.get("plan")
+        run_state = state.get("run_state")
+        if getattr(plan, "plan_version", 1) == 1 and not getattr(run_state, "completed_task_ids", []):
+            raise PEVRExecutionError(
+                PEVRStage.VALIDATE,
+                "plan_validation_failed",
+                "测试空影响集合",
+                fault=FaultClassifier.classify(
+                    {"code": "plan_validation_failed", "message": "测试空影响集合"},
+                    stage=PEVRStage.VALIDATE.value,
+                ),
+            )
+        return original_validate(self, state)
+
+    with patch.object(PEVRGraphRunner, "_validate_node", fail_first_validate):
+        result = PEVRGraphRunner(
+            _ReplanAwareProvider(contract, _plan(contract), run_id),
+            registry=_FakeRegistry(run_id),
+            checkpoint_store=store,
+            clock=lambda: NOW,
+        ).run(
+            PEVRRequest(
+                run_id=run_id,
+                raw_request="把 MAT-001 从 P1 运到 S3",
+                environment_ref=ENVIRONMENT_REF,
+                approval_granted=True,
+            )
+        )
+
+    assert result.run_state.status is RunStatus.COMPLETED
+    assert result.run_state.plan_version == 2
+    assert result.run_state.replan_count == 1
+    tools = [task.tool_name for task in result.run_state.plan_tasks]
+    assert ToolName.ALLOCATE_TASKS in tools
+    assert any(task.task_id.endswith("-R2") or "REPLAN" in task.task_id for task in result.run_state.plan_tasks)
+
+
+def test_second_apply_uses_model_replan_node() -> None:
+    """计划已是 v2 后的下一次 apply 必须走 Fast replan 节点。"""
+
+    run_id = "run-p015-model-replan"
+    base = _contract()
+    contract = base.model_copy(
+        update={"budgets": base.budgets.model_copy(update={"max_replans": 2, "max_retries": 2})}
+    )
+    store = InMemoryRuntimeStore()
+    registry = _ProductionFaultRegistry(
+        run_id,
+        category=ToolErrorCategory.UNSAFE_PLAN,
+        code="route_infeasible",
+        retryable=False,
+        failures=2,
+    )
+    result = PEVRGraphRunner(
+        _ReplanAwareProvider(contract, _plan(contract), run_id),
+        registry=registry,
+        checkpoint_store=store,
+        clock=lambda: NOW,
+    ).run(
+        PEVRRequest(
+            run_id=run_id,
+            raw_request="把 MAT-001 从 P1 运到 S3",
+            environment_ref=ENVIRONMENT_REF,
+            approval_granted=True,
+        )
+    )
+
+    assert result.run_state.status is RunStatus.COMPLETED
+    assert result.run_state.plan_version == 3
+    assert result.run_state.replan_count == 2
+    assert any(event.node == "replan" for event in store.list_trace_events(run_id))

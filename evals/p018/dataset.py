@@ -33,10 +33,19 @@ def load_config(path: str | Path = DEFAULT_CONFIG_PATH) -> dict[str, object]:
     payload = json.loads(config_path.read_text(encoding="utf-8"))
     if not isinstance(payload, dict):
         raise ValueError("P0-18 config.json 顶层必须是对象")
-    if payload.get("version") not in {"p0-18.v1", "p0-18.v2"}:
-        raise ValueError("P0-18 评测配置版本不匹配")
-    if payload.get("execution_mode") != "offline_deterministic_oracle":
-        raise ValueError("P0-18 默认只允许确定性离线 oracle 模式")
+    mode = payload.get("execution_mode")
+    version = payload.get("version")
+    if mode == "offline_deterministic_oracle":
+        if version not in {"p0-18.v1", "p0-18.v2"}:
+            raise ValueError("P0-18 离线评测配置版本不匹配")
+    elif mode == "online_fast_closed_loop":
+        if version != "p0-18.online.v1":
+            raise ValueError("P0-18 在线闭环配置版本不匹配")
+        model = payload.get("model")
+        if not isinstance(model, dict) or model.get("online_service_required") is not True:
+            raise ValueError("在线闭环必须设置 model.online_service_required=true")
+    else:
+        raise ValueError("P0-18 只允许 offline_deterministic_oracle 或 online_fast_closed_loop")
     return payload
 
 

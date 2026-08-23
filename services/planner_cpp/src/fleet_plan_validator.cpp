@@ -492,6 +492,8 @@ void validate_route_path(const FleetPlanRequest& request,
                request.start_time, std::nullopt, std::nullopt, 0);
   }
 
+  int first_pickup_index = -1;
+  int pickup_event_index = -1;
   for (std::size_t index = 0; index < route.path.size(); ++index) {
     const auto& step = route.path[index];
     if (step.time < request.start_time || step.time > request.max_time) {
@@ -601,17 +603,33 @@ void validate_route_path(const FleetPlanRequest& request,
                  order.order_id, {}, amr.amr_id, {}, step.position, {}, step.time,
                  std::nullopt, std::nullopt, std::nullopt, static_cast<int>(index));
     }
-    if (same_cell(step.position, pickup_it->second) && derived.pickup_index < 0) {
-      derived.pickup_index = static_cast<int>(index);
+    if (same_cell(step.position, pickup_it->second)) {
+      // 首次踏上 pickup 格可以早于 release_time（A* 预定位后等待）。
+      // 装卸事件时刻必须等于 route.pickup_time，且当时仍停在 pickup。
+      if (first_pickup_index < 0) {
+        first_pickup_index = static_cast<int>(index);
+      }
+      if (step.time == route.pickup_time) {
+        pickup_event_index = static_cast<int>(index);
+      }
     }
   }
 
   // pickup 允许在首状态发生；dropoff 必须是路径终点，符合 P0-09 的完整路线
   // 语义。若未来引入装卸动作，可以在此处扩展服务占用区间而不改变路径安全检查。
-  if (derived.pickup_index < 0) {
+  // pickup 事件对齐 A*：goal acceptance 要求 time>=release_time，允许提前到达
+  // 后在工位等待。Validator 不能把“首次踏上 pickup 格”当成装货时刻。
+  if (first_pickup_index < 0) {
     push_error(result, "pickup_not_reached", "路线没有到达订单 pickup 工位", order.order_id,
                {}, amr.amr_id, {}, pickup_it->second);
+  } else if (pickup_event_index < 0) {
+    push_error(result, "pickup_time_mismatch",
+               "pickup_time 必须对应路径上停留在 pickup 工位的时刻", order.order_id, {},
+               amr.amr_id, {}, pickup_it->second, {}, route.pickup_time,
+               route.path[first_pickup_index].time, route.pickup_time,
+               route.path[first_pickup_index].time, first_pickup_index);
   }
+  derived.pickup_index = pickup_event_index >= 0 ? pickup_event_index : first_pickup_index;
   if (!same_cell(route.path.back().position, dropoff_it->second)) {
     push_error(result, "dropoff_not_reached", "路线终点不是订单 dropoff 工位", order.order_id,
                {}, amr.amr_id, {}, route.path.back().position, dropoff_it->second,
@@ -621,17 +639,17 @@ void validate_route_path(const FleetPlanRequest& request,
     derived.dropoff_index = static_cast<int>(route.path.size() - 1);
   }
 
-  const int actual_pickup_time = derived.pickup_index < 0
+  const int actual_pickup_time = pickup_event_index < 0
                                      ? -1
-                                     : route.path[derived.pickup_index].time;
+                                     : route.path[pickup_event_index].time;
   const int actual_dropoff_time = derived.dropoff_index < 0
                                       ? -1
                                       : route.path[derived.dropoff_index].time;
-  if (derived.pickup_index >= 0 && route.pickup_time != actual_pickup_time) {
-    push_error(result, "pickup_time_mismatch", "pickup_time 与路径首次到达时刻不一致",
+  if (pickup_event_index >= 0 && route.pickup_time != actual_pickup_time) {
+    push_error(result, "pickup_time_mismatch", "pickup_time 必须对应路径上停留在 pickup 工位的时刻",
                order.order_id, {}, amr.amr_id, {}, pickup_it->second,
                {}, route.pickup_time, actual_pickup_time, route.pickup_time,
-               actual_pickup_time, derived.pickup_index);
+               actual_pickup_time, pickup_event_index);
   }
   if (derived.dropoff_index >= 0 && route.dropoff_time != actual_dropoff_time) {
     push_error(result, "dropoff_time_mismatch", "dropoff_time 与路径终点时刻不一致",
@@ -1045,7 +1063,7 @@ const std::vector<ValidationErrorDefinition>& error_dictionary() noexcept {
       {"pickup_before_release", "time_window", "pickup 早于 release_time", "order_id,amr_id,coordinate,time,observed,limit"},
       {"pickup_location_missing", "location_snapshot", "订单 pickup 工位不在位置快照中", "order_id"},
       {"pickup_not_reached", "route_geometry", "路线没有到达 pickup 工位", "order_id,amr_id,coordinate"},
-      {"pickup_time_mismatch", "route_timestamps", "pickup_time 与路线首次到达时刻不一致", "order_id,amr_id,coordinate,time,related_time"},
+      {"pickup_time_mismatch", "route_timestamps", "pickup_time 必须对应路径上停留在 pickup 工位的时刻", "order_id,amr_id,coordinate,time,related_time"},
       {"route_action_invalid", "route_geometry", "路径动作与位置/朝向不一致", "order_id,amr_id,coordinate,related_coordinate,time"},
       {"route_cost_invalid", "route_cost", "路径累计代价非法或倒退", "order_id,amr_id,coordinate,time,observed,limit"},
       {"route_empty", "route_geometry", "路线为空", "order_id,amr_id"},

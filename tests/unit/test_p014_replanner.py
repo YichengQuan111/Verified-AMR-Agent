@@ -157,6 +157,61 @@ def test_apply_replan_increments_version_and_preserves_completed_effect() -> Non
     assert result.plan_validation.valid is True
 
 
+def test_apply_rewrites_dirty_replacement_dataflow_before_pevr_gate() -> None:
+    """替换子图写错环境引用/内联 plan/缺 seed 时，apply 必须覆盖成真值并落地 v2。"""
+
+    contract = _contract()
+    plan = _plan(contract)
+    allocate = plan.tasks[0].model_copy(
+        update={"status": PlanTaskStatus.COMPLETED, "effect_id": "effect-allocate-dirty"}
+    )
+    plan = plan.model_copy(update={"tasks": [allocate, *plan.tasks[1:]]})
+    replanner = LocalReplanner()
+    analysis = replanner.analyze(
+        plan,
+        completed_task_ids=[allocate.task_id],
+        affected_entities=["tool:plan_multi_amr_routes"],
+    )
+    route, validate, dispatch = _replacement_chain(contract, allocate.task_id)
+    dirty = [
+        route.model_copy(
+            update={"tool_arguments": {**route.tool_arguments, "environment_ref": "warehouse_v1@wrong"}}
+        ),
+        validate.model_copy(
+            update={
+                "tool_arguments": {
+                    "plan": {"schema_version": "1.0", "blocked_cells": [{"x": 1, "y": 1}] * 20},
+                    "environment_ref": "warehouse_v1@wrong",
+                    "ruleset_version": "not-p0-10",
+                }
+            }
+        ),
+        dispatch.model_copy(
+            update={
+                "tool_arguments": {"plan": {"schema_version": "1.0"}, "seed": 99},
+                "evidence_refs": ["tool://stale-validate"],
+            }
+        ),
+    ]
+
+    result = _apply(replanner, plan, analysis, dirty, contract)
+
+    assert result.new_plan_version == 2
+    assert result.plan_validation.valid is True
+    new_validate = next(
+        task for task in result.plan.tasks if task.tool_name is ToolName.VALIDATE_FLEET_PLAN
+    )
+    new_dispatch = next(
+        task for task in result.plan.tasks if task.tool_name is ToolName.DISPATCH_SIMULATION
+    )
+    assert new_validate.tool_arguments["plan"] == {"$ref": "derived:simulation_plan"}
+    assert new_validate.tool_arguments["environment_ref"] == contract.environment_ref
+    assert new_validate.tool_arguments["ruleset_version"] == "p0-10.v1"
+    assert new_dispatch.tool_arguments["seed"] == 7
+    assert new_dispatch.tool_arguments["plan"] == {"$ref": "derived:simulation_plan"}
+    assert new_dispatch.evidence_refs == []
+
+
 def test_route_only_replacement_is_rejected_by_full_pevr_validation() -> None:
     """DAG 结构合法但缺 Validator/dispatch 的候选不能成为新计划版本。"""
 
@@ -313,3 +368,40 @@ def test_runtime_route_provenance_matches_actual_amr_and_path_cell() -> None:
     expected = {plan.tasks[2].task_id, plan.tasks[3].task_id}
     assert set(by_amr.invalidated_task_ids) == expected
     assert set(by_cell.invalidated_task_ids) == expected
+
+
+def test_apply_model_output_rejects_mismatched_invalidated_ids() -> None:
+    """LLM 给出的失效集合必须与确定性 analyze 一致，否则拒绝落地。"""
+
+    from agent.context.contracts import ReplanOutput
+
+    contract = _contract()
+    plan = _plan(contract)
+    specs = build_tool_registry().specs()
+    analysis = LocalReplanner().analyze(
+        plan,
+        completed_task_ids=[],
+        affected_entities=["tool:plan_multi_amr_routes"],
+        failed_tool_name=ToolName.PLAN_MULTI_AMR_ROUTES,
+    )
+    wrong = ReplanOutput(
+        previous_plan_version=1,
+        new_plan_version=2,
+        trigger_observation_id="observation://mismatch",
+        retained_task_ids=list(analysis.retained_task_ids),
+        invalidated_task_ids=["TASK-NOT-IN-ANALYSIS"],
+        replacement_tasks=_replacement_chain(contract, plan.tasks[0].task_id),
+        reason="故意提交不一致的失效集合",
+        requires_human=False,
+    )
+    with pytest.raises(ValueError, match="LLM invalidated_task_ids 与确定性影响集合不一致"):
+        LocalReplanner().apply_model_output(
+            plan,
+            wrong,
+            completed_task_ids=[],
+            affected_entities=["tool:plan_multi_amr_routes"],
+            failed_tool_name=ToolName.PLAN_MULTI_AMR_ROUTES,
+            contract=contract,
+            tool_specs=specs,
+            expected_seed=7,
+        )

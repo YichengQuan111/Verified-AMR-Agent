@@ -172,6 +172,79 @@ def canonicalize_normal_pevr_plan(
     return PlanTasksOutput.model_validate(payload), notes
 
 
+def canonicalize_replanned_pevr_plan(
+    plan: PlanTasksOutput,
+    *,
+    contract: TaskContract,
+    expected_seed: int,
+) -> PlanTasksOutput:
+    """局部重规划落地前覆盖固定事实和四工具数据流，不放宽 Validator。
+
+    首轮 ``plan_tasks`` 仍要求模型自己写出 ``$ref``，以便语义修复。替换子图
+    里这些字段没有决策空间：Fast 会把硬地图障碍或内联 SimulationPlan 抄进
+    ``ReplanOutput``，输出在上下文末尾被截断。覆盖后仍走完整
+    ``validate_replanned_pevr_plan``；缺工具、乱改完成锚点、审批标志错误
+    照旧拒绝。只改 pending 替换任务，不改写已完成 allocate/route 的证据。
+    """
+
+    normalized, _ = canonicalize_normal_pevr_plan(
+        plan,
+        contract=contract,
+        expected_seed=expected_seed,
+    )
+    by_tool: dict[ToolName, list[PlanTask]] = {}
+    for task in normalized.tasks:
+        by_tool.setdefault(task.tool_name, []).append(task)
+    if any(len(by_tool.get(name, [])) != 1 for name in NORMAL_PEVR_TOOL_CHAIN):
+        return normalized
+    allocate, route, validate, dispatch = (by_tool[name][0] for name in NORMAL_PEVR_TOOL_CHAIN)
+    rewritten: dict[str, PlanTask] = {}
+    if route.status is not PlanTaskStatus.COMPLETED:
+        route_args = dict(route.tool_arguments)
+        route_args["assignments"] = make_data_ref(f"task:{allocate.task_id}/output/assignments")
+        route_args["environment_ref"] = contract.environment_ref
+        rewritten[route.task_id] = route.model_copy(
+            update={
+                "dependencies": [allocate.task_id],
+                "tool_arguments": route_args,
+                "evidence_refs": [],
+                "effect_id": None,
+            }
+        )
+        route = rewritten[route.task_id]
+    if validate.status is not PlanTaskStatus.COMPLETED:
+        validate_args = dict(validate.tool_arguments)
+        validate_args["plan"] = make_data_ref("derived:simulation_plan")
+        validate_args["environment_ref"] = contract.environment_ref
+        validate_args["ruleset_version"] = "p0-10.v1"
+        rewritten[validate.task_id] = validate.model_copy(
+            update={
+                "dependencies": [route.task_id],
+                "tool_arguments": validate_args,
+                "evidence_refs": [],
+                "effect_id": None,
+            }
+        )
+        validate = rewritten[validate.task_id]
+    if dispatch.status is not PlanTaskStatus.COMPLETED:
+        dispatch_args = dict(dispatch.tool_arguments)
+        dispatch_args["plan"] = make_data_ref("derived:simulation_plan")
+        dispatch_args["seed"] = expected_seed
+        rewritten[dispatch.task_id] = dispatch.model_copy(
+            update={
+                "dependencies": [validate.task_id],
+                "tool_arguments": dispatch_args,
+                "evidence_refs": [],
+                "effect_id": None,
+            }
+        )
+    if not rewritten:
+        return normalized
+    return normalized.model_copy(
+        update={"tasks": [rewritten.get(task.task_id, task) for task in normalized.tasks]}
+    )
+
+
 def _issue(
     errors: list[PlanValidationIssue],
     code: str,
@@ -270,6 +343,111 @@ def validate_replanned_pevr_plan(
         expected_seed=expected_seed,
         expected_plan_version=expected_plan_version or plan.plan_version,
         completed_task_ids=completed_task_ids,
+    )
+
+
+def validate_charging_pevr_plan(
+    contract: TaskContract,
+    plan: PlanTasksOutput,
+    *,
+    tool_specs: Iterable[ToolSpec] = (),
+    expected_seed: int | None = None,
+    expected_plan_version: int | None = None,
+    completed_task_ids: Iterable[str] = (),
+) -> PlanValidationResult:
+    """充电合同只允许 dispatch_simulation，禁止再走运输四工具链。
+
+    空订单 idle plan 由执行器按快照构造；Planner 不能塞回占位 TransportOrder。
+    """
+
+    errors: list[PlanValidationIssue] = []
+    task_by_id = _task_map(plan, errors)
+    completed = set(completed_task_ids)
+    unknown_completed = completed - set(task_by_id)
+    if unknown_completed:
+        _issue(
+            errors,
+            "completed_task_unknown",
+            f"已完成集合包含未知任务: {', '.join(sorted(unknown_completed))}",
+        )
+    dependencies = {task.task_id: task.dependencies for task in plan.tasks}
+    try:
+        ordered_ids = topological_sort(dependencies)
+    except DAGValidationError as exc:
+        ordered_ids = sorted(task_by_id)
+        _issue(errors, "dag_invalid", str(exc))
+
+    target_version = expected_plan_version if expected_plan_version is not None else 1
+    if plan.plan_version != target_version:
+        _issue(errors, "plan_version_invalid", f"计划版本必须为 {target_version}")
+    if not contract.is_charging_contract():
+        _issue(errors, "charging_contract_required", "充电计划只能用于充电合同")
+    if len(plan.tasks) > contract.budgets.max_tool_steps:
+        _issue(
+            errors,
+            "tool_budget_exceeded",
+            f"计划任务数 {len(plan.tasks)} 超过工具步数预算 {contract.budgets.max_tool_steps}",
+        )
+
+    spec_by_name = {spec.tool_name: spec for spec in tool_specs}
+    for task in plan.tasks:
+        try:
+            validate_tool_arguments(task.tool_name, task.tool_arguments)
+        except (KeyError, TypeError, ValueError) as exc:
+            _issue(errors, "tool_arguments_invalid", str(exc), task.task_id)
+        if task.tool_name is not ToolName.DISPATCH_SIMULATION:
+            _issue(
+                errors,
+                "charging_tool_not_allowed",
+                "充电合同不能包含运输分配/路线/Validator 任务",
+                task.task_id,
+            )
+        if task.task_id in completed:
+            if task.status is not PlanTaskStatus.COMPLETED:
+                _issue(errors, "completed_task_status_invalid", "保留完成任务必须是 completed", task.task_id)
+        else:
+            if task.status is not PlanTaskStatus.PENDING:
+                _issue(errors, "task_status_invalid", "未完成任务必须是 pending", task.task_id)
+            if task.evidence_refs or task.effect_id is not None:
+                _issue(errors, "task_has_runtime_evidence", "新任务不能预填运行期证据或 effect_id", task.task_id)
+        spec = spec_by_name.get(task.tool_name)
+        if spec is not None and task.approval_required != spec.requires_approval:
+            _issue(
+                errors,
+                "approval_flag_mismatch",
+                f"任务 approval_required 必须与 ToolSpec.requires_approval={spec.requires_approval} 一致",
+                task.task_id,
+            )
+
+    dispatch = _find_single_task(task_by_id, ToolName.DISPATCH_SIMULATION, errors)
+    if dispatch is not None:
+        if dispatch.dependencies:
+            _issue(errors, "charging_dispatch_dependencies_invalid", "充电 dispatch 不能依赖运输任务", dispatch.task_id)
+        if not is_data_ref(dispatch.tool_arguments.get("plan"), "derived:simulation_plan"):
+            _issue(
+                errors,
+                "simulation_plan_ref_invalid",
+                "dispatch_simulation 只能引用受控派生 SimulationPlan",
+                dispatch.task_id,
+            )
+        seed = dispatch.tool_arguments.get("seed")
+        if not isinstance(seed, int) or isinstance(seed, bool):
+            _issue(errors, "simulation_seed_invalid", "dispatch_simulation 必须使用确定性的整数 seed", dispatch.task_id)
+        elif expected_seed is not None and seed != expected_seed:
+            _issue(
+                errors,
+                "simulation_seed_mismatch",
+                f"dispatch_simulation 的 seed 必须与本次请求一致: {expected_seed}",
+                dispatch.task_id,
+            )
+
+    errors.sort(key=lambda item: (item.task_id or "", item.code, item.message))
+    return PlanValidationResult(
+        valid=not errors,
+        plan_version=plan.plan_version,
+        topological_order=ordered_ids,
+        required_tool_names=[ToolName.DISPATCH_SIMULATION],
+        errors=errors,
     )
 
 
@@ -428,6 +606,7 @@ def _validate_pevr_plan(
 
 __all__ = [
     "canonicalize_normal_pevr_plan",
+    "canonicalize_replanned_pevr_plan",
     "NORMAL_PEVR_TOOL_CHAIN",
     "PlanValidationIssue",
     "PlanValidationResult",
@@ -435,4 +614,5 @@ __all__ = [
     "make_data_ref",
     "validate_normal_pevr_plan",
     "validate_replanned_pevr_plan",
+    "validate_charging_pevr_plan",
 ]

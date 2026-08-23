@@ -106,6 +106,37 @@
       "title": "ApprovalRequirement",
       "type": "object"
     },
+    "ChargingGoal": {
+      "additionalProperties": false,
+      "description": "充电合同的冻结目标；与运输订单互斥，不能靠占位 TransportOrder 混过去。",
+      "properties": {
+        "amr_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Amr Id",
+          "type": "string"
+        },
+        "charge_station": {
+          "maxLength": 32,
+          "minLength": 1,
+          "title": "Charge Station",
+          "type": "string"
+        },
+        "target_percent": {
+          "maximum": 100,
+          "minimum": 0,
+          "title": "Target Percent",
+          "type": "number"
+        }
+      },
+      "required": [
+        "amr_id",
+        "charge_station",
+        "target_percent"
+      ],
+      "title": "ChargingGoal",
+      "type": "object"
+    },
     "ConnectionStatus": {
       "description": "AMR 与控制系统的连接状态。",
       "enum": [
@@ -734,7 +765,7 @@
     },
     "TaskContract": {
       "additionalProperties": false,
-      "description": "把自然语言目标冻结为可验证、带预算的业务合同。",
+      "description": "把自然语言目标冻结为可验证、带预算的业务合同。\n\n运输合同必须有订单；充电合同必须有 ``charging`` 且 ``orders`` 为空。\n两者不能同时成立，避免把运输 ``completed`` 误记成 ``charged``。",
       "properties": {
         "contract_id": {
           "maxLength": 128,
@@ -757,9 +788,19 @@
           "items": {
             "$ref": "#/$defs/TransportOrder"
           },
-          "minItems": 1,
           "title": "Orders",
           "type": "array"
+        },
+        "charging": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ChargingGoal"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "environment_ref": {
           "maxLength": 256,
@@ -798,7 +839,6 @@
       "required": [
         "contract_id",
         "goal",
-        "orders",
         "environment_ref",
         "constraints",
         "completion_criteria",
@@ -1181,7 +1221,6 @@
       "items": {
         "$ref": "#/$defs/TransportOrder"
       },
-      "minItems": 1,
       "title": "Orders",
       "type": "array"
     },
@@ -1254,7 +1293,6 @@
     "task_contract",
     "plan_tasks",
     "amr_states",
-    "orders",
     "observations",
     "current_task_id",
     "completed_task_ids",

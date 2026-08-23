@@ -5,8 +5,9 @@
 - 不经过 ToolRegistry.dispatch_simulation，因此不写 Effect Ledger、不触发
   HITL 审批；本服务返回的轨迹只能作为可视化演示证据，不能当发布证据，
   ``--approve-dispatch`` 在这条链路上不存在。
-- 每次请求都从 warehouse_v1@seed-v1 重新读取固定快照，演示是无状态的：
-  刷新页面重跑同一订单得到同一份确定性结果。
+- 每次请求都从 warehouse_v1@eval-hard 重新读取固定快照（加难图 + 2 格全走廊
+  通道障碍，与在线评测同难度），演示是无状态的：刷新页面重跑同一订单得到
+  同一份确定性结果。生产 ``warehouse_v1.json`` 不改写。
 - C++ 请求 envelope 逐字段镜像 agent/tools/registry.py 的 P0-08/09/10 组装
   以及 agent/runtime/graph.py 的 SimulationPlan 组装，保证演示路径与生产
   路径面对同一个 C++ 判定；改动那两处时必须同步检查本文件。
@@ -30,8 +31,15 @@ from agent.tools.schemas import (
     RoutePlanResponse,
     ValidationResponse,
 )
-from agent.tools.snapshots import DefaultWarehouseSnapshotProvider, EnvironmentSnapshot
+from agent.tools.snapshots import EnvironmentSnapshot, SnapshotProviderProtocol
 from domains.amr_warehouse import TransportOrder, WarehouseMap
+from evals.p018.hard_map import (
+    HARD_ENVIRONMENT_REF,
+    HARD_MAP_PATH,
+    HardMapSnapshotProvider,
+    extra_obstacles_for_demo,
+    overlay_demo_extras,
+)
 from services.amr_simulator import (
     AMRSimulator,
     ChargingStationSpec,
@@ -89,8 +97,8 @@ class DemoServiceError(RuntimeError):
 class WarehouseDemoService:
     """面向演示 UI 的无状态编排：地图读取 + 受 Validator 门禁的仿真执行。"""
 
-    # 与 evals/P0-13 共用的固定 seed 引用；不接受调用方改环境。
-    ENVIRONMENT_REF = "warehouse_v1@seed-v1"
+    # 与在线评测同一加难环境引用；不接受调用方改环境。
+    ENVIRONMENT_REF = HARD_ENVIRONMENT_REF
     # 与 agent/runtime/graph.py DEFAULT_PAYLOAD_KG 保持一致；种子订单不带重量字段。
     DEMO_PAYLOAD_KG = 1.0
     # 与 P0-13 dispatch 默认 seed 一致，保证演示结果可复现。
@@ -103,19 +111,33 @@ class WarehouseDemoService:
     def __init__(
         self,
         *,
-        snapshot_provider: DefaultWarehouseSnapshotProvider | None = None,
+        snapshot_provider: SnapshotProviderProtocol | None = None,
         cpp_client: FixedCppJsonClient | None = None,
         data_root: str | Path | None = None,
     ) -> None:
-        # data_root 仅供测试注入；生产固定到仓库内 seed 目录，前端无法改路径。
+        # data_root 仅供测试注入 DefaultWarehouseSnapshotProvider；演示地图固定
+        # 读评测加难 JSON，前端无法改路径。
         self._data_root = Path(data_root) if data_root is not None else (
             Path(__file__).resolve().parents[2] / "domains" / "amr_warehouse" / "data"
         )
-        self._snapshot_provider = snapshot_provider or DefaultWarehouseSnapshotProvider(
-            data_root=self._data_root
+        try:
+            base_map = WarehouseMap.model_validate_json(
+                HARD_MAP_PATH.read_text(encoding="utf-8")
+            )
+        except (OSError, ValidationError) as exc:
+            raise DemoServiceError(
+                f"演示评测地图不可读: {exc}",
+                status_code=503,
+                code="demo_map_unavailable",
+                evidence={"path": str(HARD_MAP_PATH)},
+            ) from exc
+        # 2 个固定通道障碍对全部 P→S / 起点→P/C 仍连通，避免任意 NL 选点无解。
+        self._demo_extras = extra_obstacles_for_demo(base_map)
+        self._warehouse_cache = overlay_demo_extras(base_map, self._demo_extras)
+        self._snapshot_provider = snapshot_provider or HardMapSnapshotProvider(
+            extra_obstacles=self._demo_extras,
         )
         self._cpp_client = cpp_client or FixedCppJsonClient()
-        self._warehouse_cache: WarehouseMap | None = None
 
     def get_warehouse_map(self) -> DemoWarehouseMap:
         """返回规范化地图 + 初始 AMR 位姿 + 可演示订单清单。"""
@@ -251,26 +273,29 @@ class WarehouseDemoService:
         return self._snapshot_provider.get_snapshot(self.ENVIRONMENT_REF)
 
     def _warehouse_map(self) -> WarehouseMap:
-        """读取 warehouse_v1.json 的领域视图（快照只保留合并后的位置字典）。
+        """返回加难地图领域视图，并叠演示 2 格通道障碍。
 
         EnvironmentSnapshot 把 P/S/C 合并进 location_positions 且把障碍与临时
-        封路合并进 blocked_cells；前端图例需要分类清单，因此这里从同一
-        data_root 再读一次地图定义，与快照读取共用同一份文件，不产生第二
-        数据源的漂移风险。
+        封路合并进 blocked_cells；前端图例需要分类清单，因此这里读
+        ``warehouse_v1_hard.json`` 再 overlay 与 HardMapSnapshotProvider 同一组
+        extras，避免 UI 货架墙与 C++ 规划栅格不一致。
         """
 
         if self._warehouse_cache is None:
-            path = self._data_root / "warehouse_v1.json"
+            path = HARD_MAP_PATH
             try:
                 raw = json.loads(path.read_text(encoding="utf-8"))
             except (OSError, json.JSONDecodeError) as exc:
                 raise DemoServiceError(
-                    f"演示地图 seed 不可读: {exc}",
+                    f"演示评测地图不可读: {exc}",
                     status_code=503,
                     code="demo_map_unavailable",
                     evidence={"path": str(path)},
                 ) from exc
-            self._warehouse_cache = WarehouseMap.model_validate(raw)
+            warehouse = WarehouseMap.model_validate(raw)
+            extras = extra_obstacles_for_demo(warehouse)
+            self._demo_extras = extras
+            self._warehouse_cache = overlay_demo_extras(warehouse, extras)
         return self._warehouse_cache.model_copy(deep=True)
 
     @staticmethod

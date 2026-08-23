@@ -49,6 +49,8 @@ class EnvironmentSnapshot(SnapshotContract):
     start_time: int = Field(ge=0)
     max_time: int = Field(ge=1)
     workstation_capacities: dict[str, int]
+    # 仅评测注入：生产种子快照保持 None。C++ envelope 不读此字段。
+    fault_code: str | None = None
 
 
 class SnapshotProviderProtocol(Protocol):

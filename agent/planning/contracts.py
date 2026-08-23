@@ -107,13 +107,26 @@ class ExecutionBudgets(PlanningContract):
     max_retries: int = Field(default=2, ge=0, le=4)
 
 
+class ChargingGoal(PlanningContract):
+    """充电合同的冻结目标；与运输订单互斥，不能靠占位 TransportOrder 混过去。"""
+
+    amr_id: str = Field(min_length=1, max_length=128)
+    charge_station: str = Field(min_length=1, max_length=32)
+    target_percent: float = Field(ge=0, le=100)
+
+
 class TaskContract(PlanningContract):
-    """把自然语言目标冻结为可验证、带预算的业务合同。"""
+    """把自然语言目标冻结为可验证、带预算的业务合同。
+
+    运输合同必须有订单；充电合同必须有 ``charging`` 且 ``orders`` 为空。
+    两者不能同时成立，避免把运输 ``completed`` 误记成 ``charged``。
+    """
 
     contract_id: str = Field(min_length=1, max_length=128)
     schema_version: Literal["1.0"] = "1.0"
     goal: str = Field(min_length=1)
-    orders: list[TransportOrder] = Field(min_length=1)
+    orders: list[TransportOrder] = Field(default_factory=list)
+    charging: ChargingGoal | None = None
     environment_ref: str = Field(min_length=1, max_length=256)
     constraints: TaskConstraints
     completion_criteria: list[str] = Field(min_length=1)
@@ -124,7 +137,13 @@ class TaskContract(PlanningContract):
 
     @model_validator(mode="after")
     def validate_contract(self) -> "TaskContract":
-        """校验订单 ID、订单依赖 DAG、条件去重及高风险审批门禁。"""
+        """校验充电/运输互斥、订单 DAG、条件去重及高风险审批门禁。"""
+
+        if self.charging is None:
+            if not self.orders:
+                raise ValueError("运输合同必须包含至少 1 条订单")
+        elif self.orders:
+            raise ValueError("充电合同不能同时携带运输订单")
 
         order_ids = [order.order_id for order in self.orders]
         if len(order_ids) != len(set(order_ids)):
@@ -138,6 +157,11 @@ class TaskContract(PlanningContract):
         if self.risk_level in {RiskLevel.HIGH, RiskLevel.CRITICAL} and not self.approval.required:
             raise ValueError("high 或 critical 风险合同必须要求人工审批")
         return self
+
+    def is_charging_contract(self) -> bool:
+        """充电合同：有充电目标且没有运输订单。"""
+
+        return self.charging is not None and not self.orders
 
 
 class PlanTask(PlanningContract):
@@ -187,6 +211,7 @@ class PlanTask(PlanningContract):
 
 __all__ = [
     "ApprovalRequirement",
+    "ChargingGoal",
     "ExecutionBudgets",
     "FallbackStrategy",
     "PlanTask",

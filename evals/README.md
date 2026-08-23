@@ -30,6 +30,21 @@ Prompt、九个 ToolSpec、配置版本和 Git 指纹，并输出全部逐例 Tr
 低电量、跨角色泄漏、重复副作用、审批绕过）必须全部为 0。详细契约、指标和限制见
 `docs/P018_EVAL.md`。
 
+### 真实 Fast 在线闭环（加难地图，独立于离线 60/60）
+
+生产 `warehouse_v1.json` 不变。在线模式使用 `warehouse_v1_hard` 货架墙（通道对齐工位行）+ 每例 2 个
+seed 通道障碍，调用真实 Qwen3.6 Fast。完成率按观察终态记录，不预先调百分比。
+演示页 `/demo` 使用同一张加难图，但额外障碍是固定 2 格且保持全部 P→S 走廊连通，避免任意自然语言选点无解。
+
+```powershell
+.\scripts\run_p018_online_eval.ps1
+```
+
+报告默认写入 `tmp/p018_online_eval/`。2026-08-23 当前引用写入
+`tmp/p018_online_eval_ease_verifier/`（`p018-online-fa1d397a8f60ad17`，43/44、10/10、充电 5/5 charged、正常订单 20/20）。
+旧 `tmp/p018_online_eval_recovery/`（`p018-online-fad484647c97878f`，22/44、9/10）只作对照。退出码 0 只保证
+60 例已执行且零容忍为 0。实测率见 `docs/P018_EVAL.md` 与 `docs/RESUME_FACTS.md`。
+
 ## P0-19 策略对照实验
 
 P0-19 默认对固定 Workflow、ReAct、PEVR 做 `offline_independent_oracle` 独立执行；

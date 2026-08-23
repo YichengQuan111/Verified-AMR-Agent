@@ -459,6 +459,13 @@ class FaultClassifier:
         """故障分类优先级：冲突/超时/资源事实/不可行/未知。"""
 
         code = raw_code.lower().replace("-", "_")
+        # apply 失败必须用稳定码精确命中，且排在 timeout/plan_invalid 等子串规则之前。
+        # 旧码 local_replan_invalid 含子串 plan_invalid，会被收成“又一次计划不可行”，
+        # 决策仍是 REPLAN、reason 变成「允许第 N 次局部重规划」，真实异常被丢掉。
+        # 归入 PLAN_INFEASIBLE：默认再 REPLAN，额度未尽时图侧会真正再 apply；
+        # 耗尽则 HUMAN。若落到 UNKNOWN 会直接 FATAL，第二次 apply 永远走不到。
+        if code == "local_replan_rejected":
+            return FaultCategory.PLAN_INFEASIBLE
         if raw_category == ToolErrorCategory.CONFLICT.value or any(
             token in code for token in ("state_conflict", "checkpoint_conflict", "effect_conflict", "idempotency_key_reused")
         ):

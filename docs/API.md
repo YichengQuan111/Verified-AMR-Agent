@@ -31,7 +31,7 @@
 | GET | `/documents/{document_id}` | viewer/operator | 查询 ACL 允许的文档元数据，不返回正文 | 200 / 404 |
 | POST | `/evals/runs` | operator | 登记一个评测运行请求 | 201 |
 | GET | `/demo` | 匿名 | 托管演示页（纯静态 HTML，不含数据） | 200 |
-| GET | `/demo/warehouse` | 匿名 | 固定 seed 的规范化仓库地图快照（2026-08-22 晚起免 Token） | 200 |
+| GET | `/demo/warehouse` | 匿名 | 与在线评测同一加难地图的规范化快照（2026-08-22 晚起免 Token） | 200 |
 | POST | `/demo/order` | 匿名 | 任意自然语言下单（轻量演示链）：LLM 抽取 → 动态订单 → C++ 链 → 仿真 | 200 / 422 / 503 |
 | POST | `/demo/simulate` | operator | C++ 计划 → Validator 门禁 → Python 仿真的演示链路 | 200 / 404 / 422 / 503 |
 | POST | `/demo/launcher/start` | 匿名 | 受控启动白名单脚本 `scripts/start_local.ps1`（2026-08-22 晚起免 Token） | 200 / 503 |
@@ -49,7 +49,7 @@
 
 `/demo/*` 是为演示页提供的可视化-only 链路，**不写 Effect Ledger、不触发 HITL 审批、不能当发布证据**；正式闭环仍走 `scripts/run_p013_e2e.py`。
 
-- `GET /demo/warehouse`：返回 `DemoWarehouseMap`（[Schema](schemas/DemoWarehouseMap.schema.json)）：30×20 地图、障碍/临时封路/窄通道/禁行与单向边、P1–P6/S1–S6/C1/C2、4 台 AMR 初始位姿和可演示订单清单，全部来自 `warehouse_v1@seed-v1`，前端不得自行猜测。**2026-08-22 晚起匿名可读**（用户明确决策：本机演示免 Token；地图是 warehouse_v1 的只读视图，不含密钥）。
+- `GET /demo/warehouse`：返回 `DemoWarehouseMap`（[Schema](schemas/DemoWarehouseMap.schema.json)）：30×20 地图、障碍/临时封路/窄通道/禁行与单向边、P1–P6/S1–S6/C1/C2、4 台 AMR 初始位姿和可演示订单清单，来自 `warehouse_v1@eval-hard`（与在线评测同一张货架墙地图，外加 2 格保持全走廊连通的固定通道障碍）。前端不得自行猜测。**2026-08-22 晚起匿名可读**。生产种子 `warehouse_v1.json` 未改。
 - `POST /demo/order`（**任意自然语言下单，轻量演示链，匿名**）：请求体 `DemoNLOrderRequest`（[Schema](schemas/DemoNLOrderRequest.schema.json)，只有 `request`，1–500 字符，纯空白拒绝）。服务端用 Fast 经 `ModelProvider.generate_structured` 把文本抽成四要素（`DemoOrderExtraction`：material_id/pickup/dropoff/deadline，未提截止时间默认 120 秒），再按 warehouse_v1 地点白名单重建动态订单（订单 ID 由服务端生成 `NL-xxxxxxxx`，LLM 无权命名），随后走与 `/demo/simulate` 完全相同的 C++ Hungarian → A* → Validator → Python 仿真链。响应复用 `DemoSimulateResponse`；`summary.order` 携带实际执行的完整订单真值，前端历史清单只能以它为准。失败语义：Fast 离线 503 `fast_model_unavailable`；抽取两次不过 Schema 422 `nl_extract_failed`；地点不在地图内 422 `unknown_location`（附合法 P/S 清单）；Validator 拒绝 422 `fleet_plan_invalid` 且不带轨迹。**本端点不写 Effect Ledger、不需 HITL、不持久化历史、不作发布证据**——这是与 `/demo/nl/*` 闭环的本质区别。
 - `POST /demo/simulate`：请求体 `DemoSimulateRequest`（只有 `order_id`，默认 `ORDER-001`，必须是种子订单）。服务端依次调用真实 C++ Hungarian → A* → Validator，仅在 `valid=true` 后运行 Python `AMRSimulator`。响应 `DemoSimulateResponse`（[Schema](schemas/DemoSimulateResponse.schema.json)）包含内嵌地图、对照用 `routes`、`result`（SimulationResult 稳定子集：status/events/最终快照）、按 `(time, amr_id)` 排序的 `path_steps` 轨迹子集和 `summary`（order/order_id、validator_valid、error_count、completed_order_ids、simulation_status）。
 - Validator 拒绝时返回 HTTP 422 且 `detail.code=fleet_plan_invalid`，`detail.errors` 是 C++ 原始错误证据，响应不含任何轨迹字段；订单不存在返回 404 `demo_order_not_found`；C++ 进程不可用/超时返回 503。

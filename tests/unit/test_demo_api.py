@@ -69,8 +69,15 @@ class _OverloadPlanService(WarehouseDemoService):
         return plan.model_copy(update={"routes": [overloaded, *plan.routes[1:]]})
 
 
-def test_demo_warehouse_map_anonymous_and_matches_seed() -> None:
-    """地图接口：2026-08-22 晚起匿名可读（本机演示免 Token），字段与 warehouse_v1.json 逐格一致。"""
+def test_demo_warehouse_map_anonymous_and_matches_eval_hard() -> None:
+    """地图接口：匿名可读；字段与在线评测加难图 + 演示固定通道障碍一致。"""
+
+    from evals.p018.hard_map import (
+        HARD_ENVIRONMENT_REF,
+        RACK_XS,
+        build_hard_warehouse_map,
+        extra_obstacles_for_demo,
+    )
 
     client, _, _ = _make_app_and_tokens()
     with client:
@@ -79,10 +86,17 @@ def test_demo_warehouse_map_anonymous_and_matches_seed() -> None:
     body = response.json()
     assert body["width"] == 30
     assert body["height"] == 20
-    assert body["environment_ref"] == "warehouse_v1@seed-v1"
-    assert {cell["x"] for cell in body["obstacles"]} == {15}
-    assert {(c["x"], c["y"]) for c in body["obstacles"]} == {(15, 0), (15, 1)}
-    assert {(c["x"], c["y"]) for c in body["temporary_blocked_cells"]} == {(14, 19)}
+    assert body["environment_ref"] == HARD_ENVIRONMENT_REF
+    assert body["map_id"] == "warehouse_v1_hard"
+    assert body["version"] == 3
+    obstacle_xy = {(c["x"], c["y"]) for c in body["obstacles"]}
+    assert (15, 0) in obstacle_xy and (15, 1) in obstacle_xy
+    assert any(x in RACK_XS for x, _y in obstacle_xy)
+    warehouse = build_hard_warehouse_map()
+    extras = {(c.x, c.y) for c in extra_obstacles_for_demo(warehouse)}
+    temp = {(c["x"], c["y"]) for c in body["temporary_blocked_cells"]}
+    assert (16, 19) in temp
+    assert extras <= temp
     aisle = {a["aisle_id"]: a for a in body["narrow_aisles"]}["NA-01"]
     assert {(c["x"], c["y"]) for c in aisle["cells"]} == {(10, 17), (11, 17), (12, 17)}
     assert body["blocked_edges"] == [{"from": {"x": 5, "y": 0}, "to": {"x": 6, "y": 0}}]

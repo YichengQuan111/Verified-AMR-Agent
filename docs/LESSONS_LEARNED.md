@@ -682,8 +682,116 @@
 - 最终解决：同一 Wi-Fi 下只用 `tutorial/serve.ps1` 共享静态目录（`0.0.0.0:8765`）；手机打开局域网 IP。窄屏改为侧栏叠在正文上方并可滚动。
 - 后续避免：不要为了手机预览去改 FastAPI `:8010` 或模型 `:8080` 的绑定。访客 Wi-Fi / AP 隔离、电脑防火墙、手机 VPN 都会让局域网打不开。本机 `ipconfig` 里的 `172.30.*` 多半是 WSL/Hyper-V，不是手机该用的地址。
 
+## 2026-08-22 · 仿真 ExecutionStateStore 不能拿 Checkpoint 适配器顶替
 
+- 现象：在线 PEVR 在 HITL 批准后 dispatch 失败，P0-15 收成 `recovery_fatal`（“未知故障 fail closed”），`model_call_count` 看起来像没跑完。
+- 原因：`InMemoryRuntimeStore`（Checkpoint）没有 `put()`。仿真状态要走 `InMemoryExecutionStateStore.put/get`。把 checkpoint store 传给 `execution_store=` 会在 handler 里 `AttributeError`。
+- 最终解决：Harness 分开构造：`execution_store=InMemoryExecutionStateStore()`，`checkpoint_store=InMemoryRuntimeStore()`。
+- 后续避免：凡是 `build_tool_registry(..., execution_store=...)` 必须传实现 `put/get` 的 ExecutionStateStore；不要因为都叫 InMemory 就混用。
 
+## 2026-08-22 · Trace 字段是 Literal str，不能一律 `.value`
 
+- 现象：真实 Fast PEVR 已经跑完（约 100s、多次模型调用），报告组装时 `AttributeError: 'str' object has no attribute 'value'`，整例被记成 `online_harness_exception`、`model_call_count=0`。
+- 原因：`TraceEvent.event_type` / `status` 是 `Literal["node", ...]` 字符串；`FinalReportStatus` 才是 Enum。对 str 取 `.value` 会在成功路径上把结果丢掉。
+- 最终解决：统一 `_as_str()`：Enum 取 `.value`，其余直接 `str()`。PEVR 成功后的序列化失败也收敛进 `_pevr_failure`，并逐例写 `tmp/p018_online_eval/p018_online_progress.jsonl`。
+- 后续避免：序列化 Pydantic 事件前先看字段类型；不要假设所有 `status` 都是 Enum。
+
+## 2026-08-23 · 硬地图 Provider 漏了 injected_orders，充电会在 understand 被 fail-closed
+
+- 现象：P0-18 在线 60 例充电 5/5 `missing_information`，各 1 次模型调用，从未进分配/路径。
+- 原因：`_understand_node` 用 `getattr(snapshot_provider, "injected_orders", None)` 决定是否 canonicalize（覆盖快照订单并清零 `missing_information`）。演示 `DynamicOrderSnapshotProvider` 有该属性；`HardMapSnapshotProvider` 已把占位订单写进 `get_snapshot()`，但没暴露同名属性，duck-type 失败。充电 NL 不填运输必填项，模型留下 `missing_information` 后被门禁拒绝。空列表在 getattr 里是 falsy，和 `orders is None`（回退种子、不设属性）必须分开。
+- 最终解决：非空 `orders` 时设置 `injected_orders` 深拷贝，与演示 Provider 对齐。单测覆盖暴露属性、canonicalize 清空 `missing_information`、`orders=None` 不假装有注入。未改合同 Schema，也未把充电改成零订单。
+- 后续避免：凡是给 PEVR 用的 SnapshotProvider，只要快照订单是服务端注入的，就必须暴露 `injected_orders`；不要只改 `get_snapshot()` 而漏 duck-type 属性。不要为了完成率去改离线 `expected_outcome`。
+
+## 2026-08-23 · REPLAN 失败后不能硬编码 recovery_fatal，也不能靠 plan_invalid 子串再记一笔额度
+
+- 现象：加难地图上大量订单 2 次模型调用后 `recovery_fatal`，原因却是「允许第 2 次局部重规划」，`replan_count` 仍为 0。同一张图仍有 6 单完整成功，不是无路。
+- 原因：`_recover_graph_failure` 在 `_apply_production_replan` 抛错后，不论第二次决策是什么都抛 `recovery_fatal`。错误码 `local_replan_invalid` 含子串 `plan_invalid`，被分类器收成 `PLAN_INFEASIBLE`，额度自增、reason 写成「允许第 N 次…」，真实异常（例如 `ValueError: 故障没有定位到可替换的未完成任务`）被丢掉。
+- 最终解决：失败码改为稳定的 `local_replan_rejected`（精确映射 `PLAN_INFEASIBLE`，排在子串规则之前）。额度未尽且仍是 REPLAN 则真正再 apply；耗尽则 `recovery_human`/`recovery_fatal`，reason 优先真实 apply 异常。循环另受 `max_replans` 硬上限。
+- 后续避免：看恢复是否发生要查 `replan_count` 和新计划版本，不要读「允许第 N 次」文案。分类器不要用易碰撞的子串码。`invalidated_task_ids` 仍为空时现在会用尽 apply 次数后 `recovery_human`，不会 magically 找出子图，也不放宽 Validator。
+
+## 2026-08-23 · 充电对齐后会把占位运输单跑完，不能当成 charged
+
+- 现象：修复 `injected_orders` 后 5 个充电例 4 次模型调用 + HITL，观察 `completed`、评测仍失败（期望 `charged`）。任务完成率 24/44 含这 5 例，是因为观察终态属于正向集合。
+- 原因：harness 为满足 `TaskContract` 最少 1 条订单而注入占位 `TransportOrder`；canonicalize 之后模型按运输主链执行，仿真完成订单而不是充电终态。
+- 最终解决：当时重跑如实记录充电完成率仍为 0。同日后续已改为独立 `ChargingGoal` 合同（空订单 + `charging.completed`），见下条；本条只解释占位单为什么会把完成率算进运输 `completed`。
+- 后续避免：若要测充电，合同/NL/计分必须是充电终态，不能靠占位运输单混过去。
+
+## 2026-08-23 · PLAN_INFEASIBLE 空影响集合必须写回 affected_entities 才能生成 v2
+
+- 现象：加难地图上大量订单 2 次模型调用后 `recovery_human`，`replan_count=0`，原因是 `故障没有定位到可替换的未完成任务`。
+- 原因：Validator/C++ 失败常被收成 `PLAN_INFEASIBLE` 且 `task_id`/影响集合为空。`apply_replan` 会再 `analyze()`，只改局部 analysis 而不写回 `decision.fault.affected_entities` 等于没换子图。
+- 最终解决：仅当类别是 `PLAN_INFEASIBLE` 且影响集合为空时，把计划里未完成的 `plan_multi_amr_routes` / `validate_fleet_plan` / `dispatch_simulation` 并进 `tool_names` 并 `model_copy` 写回 decision。同时必须把这三条从 `completed_task_ids` 拿掉（unfinish）：C++ 拒绝时 route 往往已 completed，`analyze` 的 `invalidated = direct - completed` 否则只会克隆 validate/dispatch，继续拿同一份 `derived_plan`。非 `PLAN_INFEASIBLE` 保持原错误。第一次 apply 用确定性克隆出 v2；仍失败再走 Fast `replan`。
+- 后续避免：看恢复是否发生要查 `replan_count` 和新 `plan_version`，不要读额度文案。不要把空影响 fallback 扩到未知故障。clone 已完成的 route 时不要指望 A* 自动换路。
+
+## 2026-08-23 · 终态 reason 必须留下 Validator/C++ 原文
+
+- 现象：LocalReplanner apply 失败后终态只剩 `recovery_human` 和「额度耗尽」，现场第一个 PEVR 错误被丢掉。
+- 原因：第二次 `handle_failure(local_replan_rejected)` 覆盖了第一次故障 message；终端只拼 apply 异常和额度句。
+- 最终解决：`_compose_terminal_recovery_reason` 固定带 `原始错误: {第一次错误}`。v2 已经落地后再因额度 HUMAN、没有第二次 apply 异常时，`apply_error` 为空也不能只抛额度文案。
+- 后续避免：分类器 message 截断到 2000 时仍要能从终态反查原始 `plan_validation_failed` / C++ code。不要只在 `last_replan_error is not None` 分支里拼接原文。
+
+## 2026-08-23 · 额度空转后再走 replan 节点，不要一上来就扩 Smart
+
+- 现象：确定性克隆出的 v2 若仍过不了门禁，只循环 clone 不会改变 DAG 结构。
+- 原因：第一次失败往往是 LLM DAG/`plan_validation_failed`；克隆只换 task ID。
+- 最终解决：`plan_version>1` 或 `apply_attempts>1` 时调用 P0-05 `replan()` + `apply_model_replan`。单测用 FakeProvider 从 `node_input.current_plan` 克隆子图；反例：LLM `invalidated_task_ids` 与 analyze 不一致则拒绝。不改 `max_replans`、不改 `ReplanOutput` schema、不启用 Smart。
+- 后续避免：FakeProvider 不能在 `ReplanOutput` 分支之前 `del messages`。空影响单测必须用真实 `FaultDecision.model_copy`，不能塞简易 namespace。
+
+## 2026-08-23 · 充电必须单独成合同，按 charging.completed 计分
+
+- 现象：占位 `TransportOrder` 让 5 个充电例走完运输主链，观察 `completed`、期望 `charged`。
+- 原因：`TaskContract` 曾要求至少 1 条订单；harness 注入假运输单。
+- 最终解决：`ChargingGoal` 与订单互斥；understand 走 `injected_charging`；plan 合成仅 `dispatch_simulation` 的 idle plan；AMR 放到充电站坐标；评测 Registry 注入 `SimulatorConfig.charging_stations`（默认 `{}` 不会充电）；计分只认仿真 `charging.completed` 且电量达标。生产 `dispatch.faults` 仍为空。
+- 后续避免：不要把运输 `completed` 改写成 `charged`。充电 retrieve 仍要 live RAG；仿真必须带充电站配置。
+
+## 2026-08-23 · 异常恢复率不要用硬地图碰巧完成来充数
+
+- 现象：未注入故障时，8 个期望完成的异常例只是在硬地图上再跑一遍订单，恢复率随碰巧完成抖动。
+- 原因：生产 `dispatch_simulation.faults` 必须保持空序列；评测又没有包装 Registry。
+- 最终解决：快照写入 `fault_code`；`FaultInjectingRegistry` 只包装评测 `execute`，前 N 次返回失败 `ToolResult`。恢复率：期望 replan 的例要求 `replan_count>=1` 且 `plan_version>=2`；timeout 看 `retry_count`；duplicate 看 completed 且无重复副作用；007/008 仍 sidecar。失败例也从 Checkpoint 读回计数。
+- 后续避免：不要把 `evaluation_passed or 硬地图 completed` 当成恢复成功。不要把注入能力暴露给生产 ToolRegistry。
+
+## 2026-08-23 · 给 Fast replan 的 current_plan 不能抄硬地图，也不能删掉 plan $ref
+
+- 现象：第二次 apply 走 `ReplanOutput` 时 JSON 在约 300 行被截断；或者门禁报 `simulation_plan_ref_invalid` / `environment_ref_mismatch`。
+- 原因：硬地图 `blocked_cells` 被 Fast 原样抄进输出。Compact 若直接丢掉 `plan` 键，模型就省略 `$ref`，落地失败。替换任务若带着旧 `evidence_refs`，会报 `task_has_runtime_evidence`。`_clone_replan_subgraph` 曾是 staticmethod 却调用 `self`，第一次 clone 直接 `NameError`。
+- 最终解决：compact 只去掉障碍数组，把内联 `plan` 压成 `{"$ref":"derived:simulation_plan"}`。`canonicalize_replanned_pevr_plan` 在 LocalReplanner.apply 里覆盖环境引用/seed/$ref/链依赖。pending 替换任务清空 `evidence_refs`。clone 改为 classmethod，且不再剥执行参数。
+- 后续避免：给模型的 current_plan 只保留数据流引用和标量；落地前用合同真值覆盖固定字段。不要在 staticmethod 里写 `self`。
+
+## 2026-08-23 · A* 对同一分配+同一地图是确定性的，v2 不自动抬订单完成率
+
+- 现象：C++ 拒绝后 `plan_version=2`、`replan_count=1`，再执行仍 `fleet_plan_invalid`。
+- 原因：unfinish 后重新跑 A*，输入（分配、障碍、起终点）没变，路径相同，Validator 再拒一次。当时误以为是货架墙无解。
+- 最终解决：接受那一轮正常订单完成仍约 6/20。**后续已证实真正卡点不是货架**：ORDER-002 的 `pickup_before_release`（首次踏上工位 vs 装货事件）和 ORDER-003 种子依赖被当成活订单。
+- 后续避免：不要把 `fleet_plan_invalid` 一律写成“地图太难”。先看 Validator 错误码。
+
+## 2026-08-23 · 在线 6/20 不是货架太密，是装货时刻和种子依赖
+
+- 现象：加难地图上正常订单 6/20；减障碍到 0 仍是同一 6 例（全是 `release_time=0` 的 ORDER-001）。
+- 原因：P0-09 A* 允许 `t<release_time` 预定位并在 pickup 等待，`pickup_time` 是装货事件。P0-10 却把**首次踏上 pickup 格**当成装货，报 `pickup_before_release`/`pickup_time_mismatch`。ORDER-003 种子依赖 ORDER-001：评测把前置当成第二条活订单，Hungarian 无法分配主单，understand 也会因合同漏写前置 SCHEMA 失败。
+- 最终解决：Validator 以 `route.pickup_time` 且当时停在 pickup 为装货事件；评测只注入主订单，种子前置写入 `completed_order_ids`；通道对齐工位行、每例额外障碍 6→2。生产 `warehouse_v1.json` 未改。C++ 离线探测 20/20 过 Hungarian+A*+Validator。在线最终 **43/44**。
+- 后续避免：改评测地图前先跑无 LLM 的 C++ 可行性。不要为抬完成率去改离线 oracle。
+
+## 2026-08-23 · 评测包装 Registry 丢掉 HITL grant / verifier
+
+- 现象：正常订单 20/20 后，8 个期望完成的异常例在 `dispatch_simulation` 报 `approval_required` 或 `approval_verifier_unconfigured`。
+- 原因：`FaultInjectingRegistry.execute` 只有 `**kwargs`，PEVR 用 `inspect.signature` 判断时不传入 grant；包装器不是 `ToolRegistry` 子类，安全模式把 verifier 写在包装对象上，内层生产表仍是 `None`。
+- 最终解决：包装器关键字与生产 `execute` 对齐并转发属性；`_registry_execute` 把 `**kwargs` 视为可接受 grant；图初始化把 verifier 写到 `_inner`。
+- 后续避免：任何评测包装必须是生产 Registry 的签名超集，且 `isinstance(..., ToolRegistry)` 不能作为唯一绑定条件。
+
+## 2026-08-23 · 演示不能直接复用评测每例的通道障碍
+
+- 现象：在线 60 例按 seed 只保证「这一单」起点→P→S 连通。演示页允许任意自然语言选 P/S。
+- 原因：把 ORDER-001 的 2 个 extras 原样画进演示图，可能堵住别的 P→S，UI 与规划会出现「看得见货架、下单却无解」。
+- 最终解决：演示用 `extra_obstacles_for_demo`，在通道上放同样 2 格，但 BFS 要求全部 AMR 起点、全部 P、全部 S、充电站仍四邻域可达；规划 Provider 与 GET 地图 overlay 同一组 extras。
+- 后续避免：演示地图与评测地图可以同货架墙，不要同「按单例 seed 生成的 extras」。生产 `warehouse_v1.json` 继续只服务离线/生产种子路径。
+
+## 2026-08-23 · 演示 HITL 批准后同一张卡死循环
+
+- 现象：自然语言闭环停在 `waiting_approval`；点「批准并继续执行」后又弹出同一张 HITL。再点「拒绝」报审批不是 pending。
+- 原因：approve 已把行写成 approved。resume 若没把 grant 放进 `PEVRRequest`，execute 仍看到 checkpoint 里的 interrupt，再次 `raise PEVRInterrupt`（exit 3），产物还是 waiting。页面以为还要审。拒绝打到已批准行，store 只允许 pending。
+- 最终解决：已批准时从 store `get_grant` 恢复并继续 dispatch。status 在 CLI 非 0/3 退出时即使有旧 waiting JSON 也报 failed。拒绝已批准返回「审批已批准，不能再拒绝」。页面记住刚批准的 `approval_id`，同一张卡禁用按钮。
+- 后续避免：不要把「产物 JSON 仍是 waiting」当成唯一真相；要看进程退出码和数据库审批状态。HITL 是一次性决定，approved 后只能 resume，不能再 reject。
 
 

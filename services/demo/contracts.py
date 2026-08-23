@@ -46,9 +46,9 @@ class DemoContract(BaseModel):
 class DemoWarehouseMap(DemoContract):
     """GET /demo/warehouse 的规范化地图快照；前端不得自行猜测任何地图元素。
 
-    字段直接复用 domains.amr_warehouse 的已验证模型，保证 UI 图例与
-    warehouse_v1.json 逐格一致；amrs/orders 来自同一 seed 的快照读取，
-    因此初始位姿与可选订单和 C++ 规划看到的完全一致。
+    字段直接复用 domains.amr_warehouse 的已验证模型。演示页与 C++ 规划
+    共用 ``warehouse_v1@eval-hard``（货架墙 + 固定 2 格全走廊通道障碍）；
+    工位 ID 仍与生产 ``warehouse_v1.json`` 一致。amrs/orders 来自同一快照。
     """
 
     environment_ref: str
@@ -76,7 +76,7 @@ class DemoWarehouseMap(DemoContract):
 class DemoSimulateRequest(DemoContract):
     """POST /demo/simulate 请求体；只允许选择种子数据中已存在的订单 ID。
 
-    服务端会校验 order_id 属于 warehouse_v1@seed-v1；未知 ID 返回 404，
+    服务端会校验 order_id 属于 warehouse_v1@eval-hard 快照；未知 ID 返回 404，
     而不是默默跑一份前端编造的订单。
     """
 

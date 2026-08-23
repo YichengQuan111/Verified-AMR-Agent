@@ -147,6 +147,33 @@ void test_dependency() {
   expect_located(result, "task_dependency_time_order");
 }
 
+void test_release_preposition_wait() {
+  // A* 允许 t<release 先到 pickup 再等待。装货时刻是 pickup_time，不是首次踏上工位。
+  auto request = base_request();
+  request.amrs = {make_amr("A1", GridPosition{0, 0})};
+  request.orders = {make_order("O1", "P1", "D1")};
+  request.orders[0].release_time = 5;
+  request.orders[0].deadline = 20;
+  request.locations = {
+      Location{"P1", GridPosition{1, 0}},
+      Location{"D1", GridPosition{2, 0}},
+  };
+  request.workstation_capacities = {{"P1", 1}, {"D1", 1}};
+  request.routes = {make_route(
+      "A1", "O1", 5.0, 5, 6,
+      {step({0, 0}, 90, 0, RouteAction::kStart, 0.0),
+       step({1, 0}, 90, 1, RouteAction::kMove, 1.0),
+       step({1, 0}, 90, 2, RouteAction::kWait, 2.0),
+       step({1, 0}, 90, 3, RouteAction::kWait, 3.0),
+       step({1, 0}, 90, 4, RouteAction::kWait, 4.0),
+       step({1, 0}, 90, 5, RouteAction::kWait, 5.0),
+       step({2, 0}, 90, 6, RouteAction::kMove, 6.0)})};
+  const auto result = validator::validate_fleet_plan(request);
+  expect(result.valid && result.status == "valid",
+         "waiting at pickup until release_time must be a valid load event");
+  expect(result.errors.empty(), "pre-position wait must not emit pickup_before_release");
+}
+
 void test_time_window() {
   auto request = base_request();
   request.orders[0].release_time = 3;
@@ -399,6 +426,7 @@ void run_case(const std::string& name) {
   if (name == "valid") return test_valid();
   if (name == "dependency") return test_dependency();
   if (name == "time_window") return test_time_window();
+  if (name == "release_preposition_wait") return test_release_preposition_wait();
   if (name == "load") return test_load();
   if (name == "battery") return test_battery();
   if (name == "forbidden_zone") return test_forbidden_zone();

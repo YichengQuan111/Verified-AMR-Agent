@@ -417,3 +417,149 @@ def test_terminal_run_state_cannot_be_reopened_by_a_late_fault() -> None:
 
     with pytest.raises(ValueError, match="终态 RunState"):
         controller.record_on_run_state(state, decision)
+
+
+def test_local_replan_rejected_is_plan_infeasible_not_unknown_or_fatal() -> None:
+    """apply 失败稳定码必须再走 REPLAN，不能靠 plan_invalid 子串，也不能落入 UNKNOWN。"""
+
+    signal = FaultClassifier.classify(
+        {
+            "code": "local_replan_rejected",
+            "message": "局部重规划未通过完整门禁: ValueError: 故障没有定位到可替换的未完成任务",
+        }
+    )
+    assert signal.category is FaultCategory.PLAN_INFEASIBLE
+    assert signal.raw_code == "local_replan_rejected"
+
+    contract = _contract().model_copy(
+        update={"budgets": _contract().budgets.model_copy(update={"max_replans": 2})}
+    )
+    controller = FaultRecoveryController(contract)
+    source = {
+        "code": "local_replan_rejected",
+        "message": "ValueError: 故障没有定位到可替换的未完成任务",
+    }
+    decisions = [controller.handle_failure(source) for _ in range(3)]
+    assert [item.action for item in decisions] == [
+        RecoveryAction.REPLAN,
+        RecoveryAction.REPLAN,
+        RecoveryAction.HUMAN,
+    ]
+    assert controller.budget_usage.replans == 2
+
+
+def test_empty_plan_infeasible_impact_invalidates_unfinished_route_chain() -> None:
+    """PLAN_INFEASIBLE 且空影响集合时，未完成 route/validate/dispatch 必须被标失效。"""
+
+    from agent.planning.replanner import LocalReplanner
+
+    plan = _plan(_contract())
+    controller = FaultRecoveryController(_contract())
+    decision = controller.handle_failure({"code": "plan_validation_failed", "message": "测试空影响"})
+    assert decision.fault.category is FaultCategory.PLAN_INFEASIBLE
+    assert decision.fault.task_id is None
+    expanded = PEVRGraphRunner._expand_empty_plan_infeasible_impact(decision, plan)
+    analysis = LocalReplanner().analyze(
+        plan,
+        completed_task_ids=[],
+        affected_entities=expanded.fault.affected_entities,
+    )
+    names = {task.tool_name for task in plan.tasks if task.task_id in analysis.invalidated_task_ids}
+    assert names == {
+        ToolName.PLAN_MULTI_AMR_ROUTES,
+        ToolName.VALIDATE_FLEET_PLAN,
+        ToolName.DISPATCH_SIMULATION,
+    }
+    assert plan.tasks[0].task_id in analysis.retained_task_ids
+
+
+def test_empty_impact_non_infeasible_stays_unlocated() -> None:
+    """非 PLAN_INFEASIBLE 的空影响集合不能偷偷改成换子图。"""
+
+    from agent.planning.replanner import LocalReplanner
+
+    plan = _plan(_contract())
+    controller = FaultRecoveryController(_contract())
+    decision = controller.handle_failure({"code": "state_conflict", "message": "身份冲突"})
+    expanded = PEVRGraphRunner._expand_empty_plan_infeasible_impact(decision, plan)
+    assert expanded.fault.affected_entities.tool_names == decision.fault.affected_entities.tool_names
+    analysis = LocalReplanner().analyze(
+        plan,
+        completed_task_ids=[],
+        affected_entities=expanded.fault.affected_entities,
+        failed_task_id=expanded.fault.task_id,
+        failed_tool_name=expanded.fault.tool_name,
+    )
+    assert analysis.invalidated_task_ids == []
+
+
+def test_empty_impact_unfinishes_completed_route_before_analyze() -> None:
+    """C++ 拒绝时 route 虽已 completed，空影响 fallback 也必须把它移出完成集。"""
+
+    from agent.planning.replanner import LocalReplanner
+
+    contract = _contract()
+    base = _plan(contract)
+    allocate = base.tasks[0].model_copy(
+        update={"status": PlanTaskStatus.COMPLETED, "effect_id": "effect-allocate"}
+    )
+    route = base.tasks[1].model_copy(update={"status": PlanTaskStatus.COMPLETED})
+    plan = base.model_copy(update={"tasks": [allocate, route, *base.tasks[2:]]})
+    snapshot = DefaultWarehouseSnapshotProvider().get_snapshot(contract.environment_ref)
+    state = RunState(
+        run_id="run-p015-unfinish",
+        status=RunStatus.EXECUTING,
+        plan_version=1,
+        task_contract=contract,
+        plan_tasks=list(plan.tasks),
+        amr_states=list(snapshot.amrs),
+        orders=list(contract.orders),
+        observations=[],
+        current_task_id=None,
+        completed_task_ids=[allocate.task_id, route.task_id],
+        failed_task_ids=[],
+        created_at=NOW,
+        updated_at=NOW,
+        replan_count=0,
+    )
+    controller = FaultRecoveryController(contract)
+    decision = controller.handle_failure({"code": "plan_validation_failed", "message": "fleet_plan_invalid"})
+    expanded = PEVRGraphRunner._expand_empty_plan_infeasible_impact(decision, plan)
+    updated_state, updated_plan = PEVRGraphRunner._unfinish_empty_impact_tasks(state, plan, expanded)
+    assert allocate.task_id in updated_state.completed_task_ids
+    assert route.task_id not in updated_state.completed_task_ids
+    analysis = LocalReplanner().analyze(
+        updated_plan,
+        completed_task_ids=updated_state.completed_task_ids,
+        affected_entities=expanded.fault.affected_entities,
+    )
+    names = {
+        task.tool_name
+        for task in updated_plan.tasks
+        if task.task_id in analysis.invalidated_task_ids
+    }
+    assert ToolName.PLAN_MULTI_AMR_ROUTES in names
+    assert ToolName.VALIDATE_FLEET_PLAN in names
+    assert ToolName.DISPATCH_SIMULATION in names
+    assert allocate.task_id in analysis.retained_task_ids
+
+
+def test_compact_plan_for_replan_strips_blocked_cells() -> None:
+    """Fast replan 的 current_plan 不能把硬地图障碍数组再抄进输出。"""
+
+    contract = _contract()
+    plan = _plan(contract)
+    fat = plan.tasks[1].model_copy(
+        update={"tool_arguments": {**plan.tasks[1].tool_arguments, "blocked_cells": [{"x": 1, "y": 1}] * 80}}
+    )
+    bulky = plan.model_copy(update={"tasks": [plan.tasks[0], fat, *plan.tasks[2:]]})
+    compact = PEVRGraphRunner._compact_plan_for_replan(bulky)
+    assert "blocked_cells" not in compact.tasks[1].tool_arguments
+    assert bulky.tasks[1].tool_arguments["blocked_cells"]
+    inline = plan.tasks[2].model_copy(
+        update={"tool_arguments": {**plan.tasks[2].tool_arguments, "plan": {"schema_version": "1.0", "x": 1}}}
+    )
+    compacted_validate = PEVRGraphRunner._compact_plan_for_replan(
+        plan.model_copy(update={"tasks": [*plan.tasks[:2], inline, plan.tasks[3]]})
+    )
+    assert compacted_validate.tasks[2].tool_arguments["plan"] == {"$ref": "derived:simulation_plan"}

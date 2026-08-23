@@ -188,6 +188,8 @@ class PostgresHITLStore(HITLStoreProtocol):
                 record = repository.get(approval_id, for_update=True)
                 if record is None:
                     raise KeyError("审批请求不存在")
+                if record.status == HITLStatus.APPROVED.value:
+                    raise PermissionError("审批已批准，不能再拒绝")
                 if record.status != HITLStatus.PENDING.value:
                     raise PermissionError("审批请求不是 pending 状态")
                 if record.expires_at is not None and record.expires_at <= current:

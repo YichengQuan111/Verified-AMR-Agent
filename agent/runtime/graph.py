@@ -34,14 +34,23 @@ from agent.context import (
     NodeRoute,
     PlanTasksOutput,
     PromptNodeName,
+    ReplanOutput,
     build_node_context,
     compose_report,
     plan_tasks,
+    replan,
     understand_goal,
     verify_observation,
 )
 from agent.context.contracts import FinalReportStatus, ObservationVerification, VerificationDecision
-from agent.planning import PlanTask, PlanTaskStatus, TaskContract
+from agent.planning import (
+    ChargingGoal,
+    FallbackStrategy,
+    PlanTask,
+    PlanTaskStatus,
+    RiskLevel,
+    TaskContract,
+)
 from agent.planning.replanner import (
     TaskResourceProvenance,
     build_task_resource_provenance,
@@ -50,6 +59,7 @@ from agent.planning.validator import (
     NORMAL_PEVR_TOOL_CHAIN,
     PlanValidationResult,
     canonicalize_normal_pevr_plan,
+    validate_charging_pevr_plan,
     validate_normal_pevr_plan,
     validate_replanned_pevr_plan,
 )
@@ -96,6 +106,7 @@ from agent.runtime.state import (
     RunStatus,
 )
 from agent.runtime.faults import (
+    FaultCategory,
     FaultClassifier,
     FaultRecoveryController,
     FaultSignal,
@@ -335,11 +346,25 @@ class PEVRGraphRunner:
             security_required=security_required,
             approval_verifier=self._registry_approval_verifier if security_required else None,
         )
-        # 调用方注入的正式 ToolRegistry 也必须切到同一安全模式；fake registry
-        # 没有这些属性时仍由 _registry_execute 的签名兼容逻辑保护旧测试。
-        if security_required and isinstance(self.registry, ToolRegistry):
-            self.registry.security_required = True
-            self.registry.approval_verifier = self._registry_approval_verifier
+        # 调用方注入的正式 ToolRegistry 也必须切到同一安全模式；评测包装器
+        # 不是 ToolRegistry 子类，但会把属性转发到内层。fake registry 没有
+        # 这些属性时仍由 _registry_execute 的签名兼容逻辑保护旧测试。
+        if security_required:
+            targets: list[Any] = [self.registry]
+            inner = getattr(self.registry, "_inner", None)
+            if inner is not None:
+                targets.append(inner)
+            for candidate in targets:
+                if isinstance(candidate, ToolRegistry):
+                    candidate.security_required = True
+                    candidate.approval_verifier = self._registry_approval_verifier
+                    break
+            else:
+                for candidate in targets:
+                    if hasattr(candidate, "approval_verifier"):
+                        candidate.security_required = True
+                        candidate.approval_verifier = self._registry_approval_verifier
+                        break
         self.snapshot_provider = snapshot_provider or DefaultWarehouseSnapshotProvider()
         self.checkpoint_store = checkpoint_store
         # 自动恢复必须有可重启事实；无 Store 的纯单测继续暴露原异常，生产组装
@@ -569,7 +594,13 @@ class PEVRGraphRunner:
         request: PEVRRequest,
         error: Exception,
     ) -> PEVRGraphState:
-        """从最近 Checkpoint 分类一次失败并返回 retry/replan 状态或持久化终态。"""
+        """从最近 Checkpoint 分类一次失败并返回 retry/replan 状态或持久化终态。
+
+        生产局部重规划在 apply 失败后不会直接 fatal：额度未尽且决策仍是
+        REPLAN 时会再次 apply；耗尽或升级为 HUMAN/FALLBACK/FATAL 时抛出
+        ``recovery_{action}``，reason 必须同时保留 apply 异常和第一次
+        Validator/C++ 原文，不能只剩额度文案。
+        """
 
         checkpoint = self._load_checkpoint(request.run_id)
         if checkpoint is None:
@@ -601,7 +632,17 @@ class PEVRGraphRunner:
             clock=self._clock,
         )
         decision = controller.handle_failure(error)
-        if decision.action is RecoveryAction.REPLAN and isinstance(plan, PlanTasksOutput):
+        last_replan_error: Exception | None = None
+        apply_attempts = 0
+        # 循环上限绑定合同 max_replans，不替代控制器的额度自增；即使分类器
+        # 误把耗尽后的决策仍标成 REPLAN，也不会无限 apply。
+        max_apply_attempts = int(contract.budgets.max_replans)
+        while (
+            decision.action is RecoveryAction.REPLAN
+            and isinstance(plan, PlanTasksOutput)
+            and apply_attempts < max_apply_attempts
+        ):
+            apply_attempts += 1
             try:
                 return self._apply_production_replan(
                     restored,
@@ -610,57 +651,178 @@ class PEVRGraphRunner:
                     run_state=run_state,
                     plan=plan,
                     request=request,
+                    apply_attempts=apply_attempts,
                 )
             except Exception as replan_error:
-                # LocalReplanner/完整门禁拒绝候选时不能沿用旧计划继续；把原始
-                # replan 决策和新的 deterministic failure 一并写入 fatal 终态。
+                # LocalReplanner/完整门禁拒绝时不能沿用旧计划。旧实现不论第二次
+                # 决策是什么都硬编码 recovery_fatal，且错误码 local_replan_invalid
+                # 被 plan_invalid 子串收成又一次 REPLAN：额度加了，apply 没落地。
+                last_replan_error = replan_error
                 preparing = controller.record_on_run_state(run_state, decision)
-                terminal_controller = FaultRecoveryController(
+                controller = FaultRecoveryController(
                     contract,
                     usage=decision.budget_usage,
                     run_state=preparing,
                     clock=self._clock,
                 )
-                terminal = terminal_controller.handle_failure(
+                run_state = preparing
+                restored["run_state"] = preparing
+                restored["budget_usage"] = decision.budget_usage.to_budget_usage()
+                # 稳定码不含 plan_invalid；message 必须带真实异常类型和正文。
+                # 保留原故障的 task/tool，第二次 analyze 才有机会定位未完成子图。
+                rejected_message = self._format_local_replan_rejected_message(replan_error)
+                decision = controller.handle_failure(
                     {
-                        "code": "local_replan_invalid",
-                        "message": f"局部重规划未通过完整门禁: {type(replan_error).__name__}",
+                        "code": "local_replan_rejected",
+                        "message": rejected_message,
                     },
                     stage=PEVRStage.EXECUTE.value,
+                    task_id=decision.fault.task_id,
+                    tool_name=decision.fault.tool_name,
                 )
-                terminal_state = terminal_controller.record_on_run_state(preparing, terminal)
-                self._persist_recovery_decision(
-                    restored,
-                    run_state=terminal_state,
-                    decision=terminal,
-                    stage=PEVRStage.EXECUTE,
+
+        if last_replan_error is not None:
+            # apply 已失败：若动作仍是 REPLAN，说明碰到了 max_replans 硬上限，
+            # 按 fatal 收口，避免外层恢复循环把同一失败再套一遍。
+            error_text = self._compose_terminal_recovery_reason(
+                original_error=error,
+                apply_error=last_replan_error,
+                budget_reason=decision.reason,
+            )
+            action = decision.action
+            persist_decision = decision
+            if action is RecoveryAction.REPLAN:
+                action = RecoveryAction.FATAL
+                persist_decision = decision.model_copy(
+                    update={
+                        "action": action,
+                        "terminal": True,
+                        "reason": error_text,
+                    }
                 )
-                raise PEVRExecutionError(
-                    PEVRStage.EXECUTE,
-                    "recovery_fatal",
-                    terminal.reason,
-                    fault=terminal.fault,
-                ) from replan_error
+            else:
+                persist_decision = decision.model_copy(update={"reason": error_text})
+            recorded = controller.record_on_run_state(run_state, persist_decision)
+            stage = self._fault_stage(persist_decision.fault)
+            self._persist_recovery_decision(
+                restored,
+                run_state=recorded,
+                decision=persist_decision,
+                stage=stage,
+            )
+            raise PEVRExecutionError(
+                stage,
+                f"recovery_{action.value}",
+                error_text,
+                fault=persist_decision.fault,
+            ) from last_replan_error
 
         recorded = controller.record_on_run_state(run_state, decision)
         stage = self._fault_stage(decision.fault)
-        self._persist_recovery_decision(
-            restored,
-            run_state=recorded,
-            decision=decision,
-            stage=stage,
-        )
         if decision.action is RecoveryAction.RETRY:
+            self._persist_recovery_decision(
+                restored,
+                run_state=recorded,
+                decision=decision,
+                stage=stage,
+            )
             restored["run_state"] = recorded
             restored["budget_usage"] = decision.budget_usage.to_budget_usage()
             restored["stage"] = stage
             return restored
+        error_text = self._compose_terminal_recovery_reason(
+            original_error=error,
+            apply_error=None,
+            budget_reason=decision.reason,
+        )
+        persist_decision = decision.model_copy(update={"reason": error_text})
+        recorded = controller.record_on_run_state(run_state, persist_decision)
+        self._persist_recovery_decision(
+            restored,
+            run_state=recorded,
+            decision=persist_decision,
+            stage=stage,
+        )
         raise PEVRExecutionError(
             stage,
-            f"recovery_{decision.action.value}",
-            decision.reason,
-            fault=decision.fault,
+            f"recovery_{persist_decision.action.value}",
+            error_text,
+            fault=persist_decision.fault,
         ) from error
+
+    @staticmethod
+    def _format_replan_apply_error(replan_error: Exception) -> str:
+        """把 apply 失败压成可审计短句，供终态 reason 与分类器 message 共用。"""
+
+        return f"{type(replan_error).__name__}: {replan_error}".strip()
+
+    @classmethod
+    def _format_local_replan_rejected_message(cls, replan_error: Exception) -> str:
+        """构造 local_replan_rejected 的 message；长度受 FaultSignal 2000 上限约束。"""
+
+        prefix = "局部重规划未通过完整门禁: "
+        text = cls._format_replan_apply_error(replan_error)
+        message = f"{prefix}{text}"
+        if len(message) > 2000:
+            return message[:1999] + "…"
+        return message
+
+    @classmethod
+    def _compose_terminal_recovery_reason(
+        cls,
+        *,
+        original_error: Exception,
+        apply_error: Exception | None,
+        budget_reason: str,
+    ) -> str:
+        """终态必须留下第一次 Validator/C++ 原文；有 apply 失败时一并写入。
+
+        v2 已经落地后再被 HUMAN 收口时，apply_error 为空，不能只剩额度文案。
+        """
+
+        original = str(original_error).strip() or type(original_error).__name__
+        original_code = getattr(original_error, "code", None)
+        if original_code and str(original_code) not in original:
+            original = f"{original_code}: {original}"
+        parts: list[str] = []
+        apply_text = ""
+        if apply_error is not None:
+            apply_text = cls._format_replan_apply_error(apply_error)
+            parts.append(apply_text)
+        parts.append(f"原始错误: {original}")
+        budget = (budget_reason or "").strip()
+        if budget and budget not in apply_text and budget not in original:
+            parts.append(budget)
+        return "；".join(parts)
+
+    @staticmethod
+    def _expand_empty_plan_infeasible_impact(decision: Any, plan: PlanTasksOutput) -> Any:
+        """PLAN_INFEASIBLE 且影响集合为空时，把未完成 route/validate/dispatch 标失效。
+
+        ``apply_replan`` 会重新 ``analyze()``，因此必须写回 ``decision.fault.affected_entities``，
+        不能只改局部 analysis。非 PLAN_INFEASIBLE 保持原错误，作为反例。
+        """
+
+        if decision.fault.category is not FaultCategory.PLAN_INFEASIBLE:
+            return decision
+        present = {task.tool_name for task in plan.tasks}
+        extra = [
+            name
+            for name in (
+                ToolName.PLAN_MULTI_AMR_ROUTES,
+                ToolName.VALIDATE_FLEET_PLAN,
+                ToolName.DISPATCH_SIMULATION,
+            )
+            if name in present
+        ]
+        if not extra:
+            return decision
+        entities = decision.fault.affected_entities
+        merged = list(dict.fromkeys([*entities.tool_names, *extra]))
+        updated_entities = entities.model_copy(update={"tool_names": merged})
+        return decision.model_copy(
+            update={"fault": decision.fault.model_copy(update={"affected_entities": updated_entities})}
+        )
 
     def _apply_production_replan(
         self,
@@ -671,8 +833,9 @@ class PEVRGraphRunner:
         run_state: RunState,
         plan: PlanTasksOutput,
         request: PEVRRequest,
+        apply_attempts: int = 1,
     ) -> PEVRGraphState:
-        """克隆唯一受影响未完成子图，经 LocalReplanner 完整复验后写新版本。"""
+        """第一次用确定性克隆生成 v2；额度空转后再走 Fast replan 节点出替换子图。"""
 
         state_tasks = {task.task_id: task for task in run_state.plan_tasks}
         synchronized_plan = plan.model_copy(
@@ -689,21 +852,61 @@ class PEVRGraphRunner:
             runtime_resources=restored.get("resource_provenance", []),
         )
         if not analysis.invalidated_task_ids:
+            decision = self._expand_empty_plan_infeasible_impact(decision, synchronized_plan)
+            # analyze 会把 completed 任务排除在 invalidated 之外。C++ 刚拒绝的
+            # route 若仍算完成，就只会克隆 validate/dispatch，继续拿同一份
+            # derived_plan 送进 Validator。空影响 fallback 必须把这三条工具链
+            # 从 completed 拿掉，真正换子图；仍不碰已完成的 allocate。
+            run_state, synchronized_plan = self._unfinish_empty_impact_tasks(
+                run_state,
+                synchronized_plan,
+                decision,
+            )
+            restored["run_state"] = run_state
+            restored["plan"] = synchronized_plan
+            analysis = controller.replanner.analyze(
+                synchronized_plan,
+                completed_task_ids=run_state.completed_task_ids,
+                affected_entities=decision.fault.affected_entities,
+                failed_task_id=decision.fault.task_id,
+                failed_tool_name=decision.fault.tool_name,
+                runtime_resources=restored.get("resource_provenance", []),
+            )
+        if not analysis.invalidated_task_ids:
             raise ValueError("故障没有定位到可替换的未完成任务")
-        replacements = self._clone_replan_subgraph(
-            synchronized_plan,
-            invalidated_task_ids=analysis.invalidated_task_ids,
-            new_plan_version=synchronized_plan.plan_version + 1,
-        )
-        recovery = controller.apply_replan(
-            run_state,
-            synchronized_plan,
-            decision,
-            replacements,
-            tool_specs=self.registry.specs(),
-            expected_seed=request.seed,
-            runtime_resources=restored.get("resource_provenance", []),
-        )
+        use_model_replan = synchronized_plan.plan_version > 1 or apply_attempts > 1
+        if use_model_replan:
+            output = self._request_model_replan(
+                restored,
+                synchronized_plan=self._compact_plan_for_replan(synchronized_plan),
+                analysis=analysis,
+                decision=decision,
+                original_error=decision.fault.message,
+            )
+            recovery = controller.apply_model_replan(
+                run_state,
+                synchronized_plan,
+                output,
+                decision,
+                tool_specs=self.registry.specs(),
+                expected_seed=request.seed,
+                runtime_resources=restored.get("resource_provenance", []),
+            )
+        else:
+            replacements = self._clone_replan_subgraph(
+                synchronized_plan,
+                invalidated_task_ids=analysis.invalidated_task_ids,
+                new_plan_version=synchronized_plan.plan_version + 1,
+            )
+            recovery = controller.apply_replan(
+                run_state,
+                synchronized_plan,
+                decision,
+                replacements,
+                tool_specs=self.registry.specs(),
+                expected_seed=request.seed,
+                runtime_resources=restored.get("resource_provenance", []),
+            )
         completed = set(recovery.state.completed_task_ids)
         kept_results: list[ToolResult] = []
         kept_task_ids: list[str | None] = []
@@ -717,6 +920,10 @@ class PEVRGraphRunner:
         route_retained = any(
             task.task_id in completed and task.tool_name is ToolName.PLAN_MULTI_AMR_ROUTES
             for task in recovery.replan_result.plan.tasks
+        )
+        charging_retained = (
+            isinstance(restored.get("contract"), TaskContract)
+            and restored["contract"].is_charging_contract()
         )
         # 计划版本变化后旧审批摘要必然失效；即使故障发生在审批之后，也必须
         # 回到新的 waiting checkpoint，不能把旧 grant 带到新计划。
@@ -751,8 +958,9 @@ class PEVRGraphRunner:
                 "plan_normalization_notes": [
                     *restored.get("plan_normalization_notes", []),
                     f"p015_replan:{recovery.replan_result.new_plan_version}",
+                    *(["p015_model_replan"] if use_model_replan else []),
                 ],
-                "derived_plan": restored.get("derived_plan") if route_retained else None,
+                "derived_plan": restored.get("derived_plan") if (route_retained or charging_retained) else None,
                 "tool_results": kept_results,
                 "tool_task_ids": kept_task_ids,
                 "resource_provenance": [
@@ -782,8 +990,56 @@ class PEVRGraphRunner:
         )
         return restored
 
-    @staticmethod
+    def _request_model_replan(
+        self,
+        state: PEVRGraphState,
+        *,
+        synchronized_plan: PlanTasksOutput,
+        analysis: Any,
+        decision: Any,
+        original_error: str,
+    ) -> ReplanOutput:
+        """额度空转后调用 P0-05 replan，让 Fast 给出替换子图；不扩 Smart。"""
+
+        request = state["request"]
+        contract = cast(TaskContract, state["contract"])
+        run_state = cast(RunState, state["run_state"])
+        context = build_node_context(
+            node_name=PromptNodeName.REPLAN,
+            request_id=f"{request.run_id}:replan:v{synchronized_plan.plan_version}",
+            node_input={
+                "current_plan_version": synchronized_plan.plan_version,
+                "new_plan_version": synchronized_plan.plan_version + 1,
+                "trigger_observation_id": f"observation://{request.run_id}:replan",
+                "retained_task_ids": list(analysis.retained_task_ids),
+                "invalidated_task_ids": list(analysis.invalidated_task_ids),
+                "completed_task_ids": list(analysis.completed_task_ids),
+                "original_error": original_error,
+                "fault_category": decision.fault.category.value,
+                "fault_code": decision.fault.raw_code,
+                "current_plan": synchronized_plan.model_dump(mode="json"),
+                "required_normal_chain": [tool.value for tool in NORMAL_PEVR_TOOL_CHAIN],
+            },
+            budget_limits=contract.budgets,
+            budget_usage=state["budget_usage"],
+            requested_output_tokens=self._requested_output_tokens(
+                request,
+                contract.budgets,
+                state["budget_usage"],
+            ),
+            run_state=run_state,
+            rag_evidence=state.get("rag_evidence", []),
+            generated_at=self._clock(),
+        )
+        result = replan(self.provider, context)
+        self._append_model_trace(state, result, node=PromptNodeName.REPLAN.value)
+        state["budget_usage"] = result.usage_after
+        state["model_call_count"] = state.get("model_call_count", 0) + 1
+        return cast(ReplanOutput, self._node_output_or_fail(result, PEVRStage.EXECUTE, "replan"))
+
+    @classmethod
     def _clone_replan_subgraph(
+        cls,
         plan: PlanTasksOutput,
         *,
         invalidated_task_ids: list[str],
@@ -830,6 +1086,93 @@ class PEVRGraphRunner:
                 )
             )
         return replacements
+
+    @staticmethod
+    def _empty_impact_fallback_task_ids(plan: PlanTasksOutput, decision: Any) -> set[str]:
+        """空影响 fallback 写入的 route/validate/dispatch 任务 ID。"""
+
+        tools = {
+            ToolName.PLAN_MULTI_AMR_ROUTES,
+            ToolName.VALIDATE_FLEET_PLAN,
+            ToolName.DISPATCH_SIMULATION,
+        }
+        named = set(decision.fault.affected_entities.tool_names)
+        return {
+            task.task_id
+            for task in plan.tasks
+            if task.tool_name in tools and task.tool_name in named
+        }
+
+    @classmethod
+    def _unfinish_empty_impact_tasks(
+        cls,
+        run_state: RunState,
+        plan: PlanTasksOutput,
+        decision: Any,
+    ) -> tuple[RunState, PlanTasksOutput]:
+        """把 fallback 工具链从 completed 拿掉，让 analyze/apply 真正替换它们。"""
+
+        fallback_ids = cls._empty_impact_fallback_task_ids(plan, decision)
+        if not fallback_ids:
+            return run_state, plan
+
+        def reset_task(task: PlanTask) -> PlanTask:
+            if task.task_id not in fallback_ids:
+                return task
+            return task.model_copy(
+                update={
+                    "status": PlanTaskStatus.PENDING,
+                    "evidence_refs": [],
+                    "effect_id": None,
+                }
+            )
+
+        return (
+            run_state.model_copy(
+                update={
+                    "plan_tasks": [reset_task(task) for task in run_state.plan_tasks],
+                    "completed_task_ids": [
+                        task_id
+                        for task_id in run_state.completed_task_ids
+                        if task_id not in fallback_ids
+                    ],
+                }
+            ),
+            plan.model_copy(update={"tasks": [reset_task(task) for task in plan.tasks]}),
+        )
+
+    @staticmethod
+    def _strip_bulky_tool_arguments(arguments: Any) -> Any:
+        """重规划替换任务不抄地图障碍；执行器会按快照重新注入。"""
+
+        if not isinstance(arguments, Mapping):
+            return arguments
+        stripped: dict[str, Any] = {}
+        for key, value in arguments.items():
+            if key in {"blocked_cells", "blocked_edges", "one_way_edges"}:
+                continue
+            if key == "plan" and isinstance(value, Mapping):
+                stripped[str(key)] = {"$ref": "derived:simulation_plan"}
+                continue
+            stripped[str(key)] = value
+        return stripped
+
+    @classmethod
+    def _compact_plan_for_replan(cls, plan: PlanTasksOutput) -> PlanTasksOutput:
+        """给 Fast replan 的 current_plan 去掉障碍数组，避免输出 JSON 被截断。"""
+
+        return plan.model_copy(
+            update={
+                "tasks": [
+                    task.model_copy(
+                        update={
+                            "tool_arguments": cls._strip_bulky_tool_arguments(task.tool_arguments)
+                        }
+                    )
+                    for task in plan.tasks
+                ]
+            }
+        )
 
     def _persist_recovery_decision(
         self,
@@ -1675,7 +2018,10 @@ class PEVRGraphRunner:
         contract = cast(TaskContract, self._node_output_or_fail(result, PEVRStage.UNDERSTAND, "understand_goal"))
         # 动态订单快照：LLM 合同对齐到服务端重建的订单真值后再做逐字段相等校验，
         # 不放松 order_snapshot_mismatch。种子默认 Provider 没有 injected_orders。
-        if getattr(self.snapshot_provider, "injected_orders", None):
+        # 充电合同走 injected_charging，禁止再灌占位 TransportOrder。
+        if getattr(self.snapshot_provider, "injected_charging", None):
+            contract = self._canonicalize_charging_contract(contract, snapshot)
+        elif getattr(self.snapshot_provider, "injected_orders", None):
             contract = self._canonicalize_contract_against_snapshot(contract, snapshot)
         self._validate_contract_against_snapshot(contract, snapshot)
         now = self._clock()
@@ -1743,12 +2089,74 @@ class PEVRGraphRunner:
             }
         )
 
+    def _canonicalize_charging_contract(
+        self,
+        contract: TaskContract,
+        snapshot: EnvironmentSnapshot,
+    ) -> TaskContract:
+        """把充电合同冻结为快照真值：空订单、指定 AMR/充电站，并清零 missing_information。"""
+
+        injected = getattr(self.snapshot_provider, "injected_charging", None)
+        goal = injected if isinstance(injected, ChargingGoal) else contract.charging
+        if goal is None:
+            raise PEVRExecutionError(
+                PEVRStage.UNDERSTAND,
+                "charging_goal_missing",
+                "充电快照没有可对齐的充电目标",
+            )
+        constraints = contract.constraints.model_copy(
+            update={
+                "map_width": snapshot.map_width,
+                "map_height": snapshot.map_height,
+                "blocked_cells": list(snapshot.blocked_cells),
+            }
+        )
+        return contract.model_copy(
+            update={
+                "orders": [],
+                "charging": goal.model_copy(deep=True),
+                "environment_ref": snapshot.environment_ref,
+                "constraints": constraints,
+                "missing_information": [],
+                "completion_criteria": ["目标 AMR 在指定充电站达到目标电量并产生 charging.completed"],
+            }
+        )
+
     @staticmethod
     def _validate_contract_against_snapshot(contract: TaskContract, snapshot: EnvironmentSnapshot) -> None:
-        """确认合同订单与当前快照逐字段相等，且没有未解决的执行必需信息。"""
+        """确认合同与当前快照一致，且没有未解决的执行必需信息。"""
 
         if contract.environment_ref != snapshot.environment_ref:
             raise PEVRExecutionError(PEVRStage.UNDERSTAND, "environment_ref_mismatch", "合同环境与固定快照不一致")
+        if contract.constraints.map_width != snapshot.map_width or contract.constraints.map_height != snapshot.map_height:
+            raise PEVRExecutionError(PEVRStage.UNDERSTAND, "map_size_mismatch", "合同地图尺寸与固定快照不一致")
+        if contract.constraints.blocked_cells != snapshot.blocked_cells:
+            raise PEVRExecutionError(PEVRStage.UNDERSTAND, "blocked_cells_mismatch", "合同封路与固定环境快照不一致")
+        if contract.missing_information:
+            raise PEVRExecutionError(PEVRStage.UNDERSTAND, "missing_information", "正常闭环不能带未解决的执行必需信息")
+        if contract.is_charging_contract():
+            goal = contract.charging
+            assert goal is not None
+            amr_ids = {item.amr_id for item in snapshot.amrs}
+            if goal.amr_id not in amr_ids:
+                raise PEVRExecutionError(
+                    PEVRStage.UNDERSTAND,
+                    "charging_amr_not_found",
+                    f"充电合同引用了未知 AMR: {goal.amr_id}",
+                )
+            if goal.charge_station not in snapshot.location_positions:
+                raise PEVRExecutionError(
+                    PEVRStage.UNDERSTAND,
+                    "charging_station_not_found",
+                    f"充电合同引用了未知充电站: {goal.charge_station}",
+                )
+            if contract.orders:
+                raise PEVRExecutionError(
+                    PEVRStage.UNDERSTAND,
+                    "charging_order_not_allowed",
+                    "充电合同不能携带运输订单",
+                )
+            return
         snapshot_orders = {item.order_id: item for item in snapshot.orders}
         for order in contract.orders:
             if order.order_id not in snapshot_orders or order != snapshot_orders[order.order_id]:
@@ -1764,12 +2172,6 @@ class PEVRGraphRunner:
                         "location_not_found",
                         f"订单 {order.order_id} 引用了未知工位: {location_id}",
                     )
-        if contract.constraints.map_width != snapshot.map_width or contract.constraints.map_height != snapshot.map_height:
-            raise PEVRExecutionError(PEVRStage.UNDERSTAND, "map_size_mismatch", "合同地图尺寸与固定快照不一致")
-        if contract.constraints.blocked_cells != snapshot.blocked_cells:
-            raise PEVRExecutionError(PEVRStage.UNDERSTAND, "blocked_cells_mismatch", "合同封路与固定环境快照不一致")
-        if contract.missing_information:
-            raise PEVRExecutionError(PEVRStage.UNDERSTAND, "missing_information", "正常闭环不能带未解决的执行必需信息")
 
     def _retrieve_node(self, state: PEVRGraphState) -> dict[str, Any]:
         """通过真实 P0-12 RAG 工具取得 ACL 过滤后的冻结证据。"""
@@ -1778,8 +2180,12 @@ class PEVRGraphRunner:
         contract = cast(TaskContract, state["contract"])
         run_state = cast(RunState, state["run_state"])
         query = (
-            f"{contract.goal}；请参考仓储运输 SOP、交通冲突、电量安全余量、"
-            "Validator 和运输完成条件。"
+            f"{contract.goal}；请参考仓储电量安全余量、充电 SOP 和充电完成事件。"
+            if contract.is_charging_contract()
+            else (
+                f"{contract.goal}；请参考仓储运输 SOP、交通冲突、电量安全余量、"
+                "Validator 和运输完成条件。"
+            )
         )
         retrieve_arguments = {
             "query": query,
@@ -1830,6 +2236,26 @@ class PEVRGraphRunner:
         request = state["request"]
         contract = cast(TaskContract, state["contract"])
         run_state = cast(RunState, state["run_state"])
+        if contract.is_charging_contract():
+            plan = self._synthetic_charging_plan(contract, expected_seed=request.seed)
+            derived_plan = self._idle_charging_simulation_plan(contract)
+            planned_state = self._replace_run_state(
+                run_state,
+                plan_version=plan.plan_version,
+                plan_tasks=list(plan.tasks),
+                status=RunStatus.VALIDATING,
+                current_task_id=None,
+            )
+            return {
+                "stage": PEVRStage.PLAN,
+                "stage_trace": self._mark_stage(state, PEVRStage.PLAN),
+                "plan": plan,
+                "plan_normalization_notes": ["charging_synthetic_dispatch"],
+                "derived_plan": derived_plan,
+                "run_state": planned_state,
+                "budget_usage": state["budget_usage"],
+                "model_call_count": state.get("model_call_count", 0),
+            }
         specs = [
             {
                 "tool_name": spec.tool_name.value,
@@ -1856,7 +2282,7 @@ class PEVRGraphRunner:
                     cell.model_dump(mode="json")
                     for cell in contract.constraints.blocked_cells
                 ],
-                "latest_deadline": max(order.deadline for order in contract.orders),
+                "latest_deadline": max((order.deadline for order in contract.orders), default=120),
                 "ruleset_version": "p0-10.v1",
                 "simulation_seed": request.seed,
             },
@@ -1978,9 +2404,18 @@ class PEVRGraphRunner:
         contract = cast(TaskContract, state["contract"])
         plan = cast(PlanTasksOutput, state["plan"])
         run_state = cast(RunState, state["run_state"])
-        # 首轮计划固定 version=1；LocalReplanner 产出的 v2+ 必须走重规划门禁，
-        # 否则会把合法替换子图误判为 plan_version_invalid / 预填证据。
-        if plan.plan_version > 1 or run_state.completed_task_ids:
+        if contract.is_charging_contract():
+            validation = validate_charging_pevr_plan(
+                contract,
+                plan,
+                tool_specs=self.registry.specs(),
+                expected_seed=request.seed,
+                expected_plan_version=plan.plan_version,
+                completed_task_ids=run_state.completed_task_ids,
+            )
+        elif plan.plan_version > 1 or run_state.completed_task_ids:
+            # 首轮计划固定 version=1；LocalReplanner 产出的 v2+ 必须走重规划门禁，
+            # 否则会把合法替换子图误判为 plan_version_invalid / 预填证据。
             validation = validate_replanned_pevr_plan(
                 contract,
                 plan,
@@ -2037,12 +2472,17 @@ class PEVRGraphRunner:
             parameters = inspect.signature(self.registry.execute).parameters
         except (TypeError, ValueError):
             parameters = {}
-        accepts_key = "idempotency_key" in parameters
+        # 评测 FaultInjectingRegistry 用 **kwargs 转发；只认显式参数名时
+        # 会把已核对的 HITL grant 丢掉，dispatch 就会报 approval_required。
+        accepts_var_kw = any(
+            param.kind is inspect.Parameter.VAR_KEYWORD for param in parameters.values()
+        )
+        accepts_key = "idempotency_key" in parameters or accepts_var_kw
         if accepts_key and idempotency_key is not None:
             kwargs["idempotency_key"] = idempotency_key
-        if "principal" in parameters and principal is not None:
+        if ("principal" in parameters or accepts_var_kw) and principal is not None:
             kwargs["principal"] = principal
-        if "approval_grant" in parameters and approval_grant is not None:
+        if ("approval_grant" in parameters or accepts_var_kw) and approval_grant is not None:
             kwargs["approval_grant"] = approval_grant
         result = self.registry.execute(tool_name, arguments, **kwargs)
         if idempotency_key is not None and not accepts_key and result.idempotency_key != idempotency_key:
@@ -2383,25 +2823,45 @@ class PEVRGraphRunner:
                                     "approval_rejected",
                                     "HITL 审批已拒绝，拒绝继续执行副作用",
                                 )
-                            raise PEVRInterrupt(existing_interrupt)
-                        pause_state = {
-                            **state,
-                            "run_state": run_state,
-                            "tool_results": results,
-                            "tool_task_ids": task_ids,
-                            "derived_plan": derived_plan,
-                            "observations": observations,
-                            "resource_provenance": resource_provenance,
-                            "budget_usage": usage,
-                        }
-                        interrupt = self._request_hitl_interrupt(
-                            state=pause_state,
-                            task=task,
-                            plan=plan,
-                            validation=validation,
-                            run_state=run_state,
-                        )
-                        raise PEVRInterrupt(interrupt)
+                            # 演示页先匿名 approve 再 resume：grant 可能只在数据库里，
+                            # 不在本次 request 上。已批准时必须取回票据继续执行，
+                            # 不能把同一条 interrupt 再抛出去，否则 CLI 反复 exit 3，
+                            # 页面会以为还要审批，拒绝则会撞上「不是 pending」。
+                            if stored_request is not None and stored_request.status is HITLStatus.APPROVED:
+                                get_grant = getattr(self.hitl_store, "get_grant", None)
+                                recovered = (
+                                    get_grant(existing_interrupt.approval_id)
+                                    if callable(get_grant)
+                                    else None
+                                )
+                                if recovered is None:
+                                    raise PEVRExecutionError(
+                                        PEVRStage.EXECUTE,
+                                        "approval_grant_missing",
+                                        "HITL 已批准但存储中没有可恢复的 grant",
+                                    )
+                                candidate = recovered
+                            if candidate is None:
+                                raise PEVRInterrupt(existing_interrupt)
+                        else:
+                            pause_state = {
+                                **state,
+                                "run_state": run_state,
+                                "tool_results": results,
+                                "tool_task_ids": task_ids,
+                                "derived_plan": derived_plan,
+                                "observations": observations,
+                                "resource_provenance": resource_provenance,
+                                "budget_usage": usage,
+                            }
+                            interrupt = self._request_hitl_interrupt(
+                                state=pause_state,
+                                task=task,
+                                plan=plan,
+                                validation=validation,
+                                run_state=run_state,
+                            )
+                            raise PEVRInterrupt(interrupt)
                     approved_grant = self._verify_hitl_grant(
                         state=state,
                         task=task,
@@ -2523,7 +2983,28 @@ class PEVRGraphRunner:
                     )
             elif task.tool_name is ToolName.DISPATCH_SIMULATION:
                 simulation = SimulationResult.model_validate(result.output)
-                if simulation.status.value != "completed" or any(item.status.value != "completed" for item in simulation.orders):
+                if contract.is_charging_contract():
+                    if not self._charging_completed(simulation, contract):
+                        raise PEVRExecutionError(
+                            PEVRStage.EXECUTE,
+                            "charging_not_completed",
+                            "充电合同要求仿真发出 charging.completed 且电量达到目标",
+                            fault=FaultClassifier.classify(
+                                {
+                                    "code": "charging_not_completed",
+                                    "message": "充电合同要求仿真发出 charging.completed 且电量达到目标",
+                                    "output": result.output,
+                                },
+                                stage=PEVRStage.EXECUTE.value,
+                                task_id=task.task_id,
+                                tool_name=task.tool_name,
+                                idempotent=spec.idempotent,
+                                has_side_effects=spec.has_side_effects,
+                            ),
+                        )
+                elif simulation.status.value != "completed" or any(
+                    item.status.value != "completed" for item in simulation.orders
+                ):
                     raise PEVRExecutionError(
                         PEVRStage.EXECUTE,
                         "simulation_not_completed",
@@ -2582,7 +3063,10 @@ class PEVRGraphRunner:
             )
 
         if derived_plan is None:
-            raise PEVRExecutionError(PEVRStage.EXECUTE, "simulation_plan_missing", "路线任务未产生 SimulationPlan")
+            if contract.is_charging_contract():
+                derived_plan = self._idle_charging_simulation_plan(contract)
+            else:
+                raise PEVRExecutionError(PEVRStage.EXECUTE, "simulation_plan_missing", "路线任务未产生 SimulationPlan")
         return {
             "stage": PEVRStage.EXECUTE,
             "stage_trace": self._mark_stage(state, PEVRStage.EXECUTE),
@@ -2615,6 +3099,7 @@ class PEVRGraphRunner:
             observation for observation in state["observations"] if observation.task_id == dispatch_task.task_id
         )
         simulation = SimulationResult.model_validate(dispatch_result.output)
+        charging_done = contract.is_charging_contract() and self._charging_completed(simulation, contract)
         context = build_node_context(
             node_name=PromptNodeName.VERIFY_OBSERVATION,
             request_id=f"{request.run_id}:verify",
@@ -2630,6 +3115,7 @@ class PEVRGraphRunner:
                     "end_time": simulation.end_time,
                     "orders": [item.model_dump(mode="json") for item in simulation.orders],
                     "event_count": len(simulation.events),
+                    "charging_completed": charging_done,
                 },
                 "all_plan_tasks_completed": set(run_state.completed_task_ids) == {task.task_id for task in plan.tasks},
                 "expected_decision": "finish",
@@ -2649,14 +3135,18 @@ class PEVRGraphRunner:
         result = verify_observation(self.provider, context)
         self._append_model_trace(state, result, node=PromptNodeName.VERIFY_OBSERVATION.value)
         verification = cast(ObservationVerification, self._node_output_or_fail(result, PEVRStage.VERIFY, "verify_observation"))
-        expected_orders = {order.order_id for order in contract.orders}
-        actual_completed = {
-            item.order_id for item in simulation.orders if item.status.value == "completed"
-        }
-        if not verification.verified or actual_completed != expected_orders:
-            raise PEVRExecutionError(PEVRStage.VERIFY, "observation_not_verified", verification.reason)
-        if verification.decision not in {VerificationDecision.FINISH, VerificationDecision.CONTINUE}:
-            raise PEVRExecutionError(PEVRStage.VERIFY, "verification_decision_not_finish", verification.reason)
+        if contract.is_charging_contract():
+            if not self._charging_completed(simulation, contract):
+                raise PEVRExecutionError(PEVRStage.VERIFY, "observation_not_verified", "充电事件未完成")
+        else:
+            expected_orders = {order.order_id for order in contract.orders}
+            actual_completed = {
+                item.order_id for item in simulation.orders if item.status.value == "completed"
+            }
+            if not verification.verified or actual_completed != expected_orders:
+                raise PEVRExecutionError(PEVRStage.VERIFY, "observation_not_verified", verification.reason)
+            if verification.decision not in {VerificationDecision.FINISH, VerificationDecision.CONTINUE}:
+                raise PEVRExecutionError(PEVRStage.VERIFY, "verification_decision_not_finish", verification.reason)
         completed_state = self._replace_run_state(
             run_state,
             status=RunStatus.COMPLETED,
@@ -2701,8 +3191,16 @@ class PEVRGraphRunner:
                 "run_status": run_state.status.value,
                 "state_version": f"run:{request.run_id}/plan:{run_state.plan_version}",
                 "plan_version": run_state.plan_version,
-                "verified_completed_order_ids": sorted(item.order_id for item in simulation.orders if item.status.value == "completed"),
-                "incomplete_order_ids": sorted(item.order_id for item in simulation.orders if item.status.value != "completed"),
+                "verified_completed_order_ids": (
+                    []
+                    if contract.is_charging_contract()
+                    else sorted(item.order_id for item in simulation.orders if item.status.value == "completed")
+                ),
+                "incomplete_order_ids": (
+                    []
+                    if contract.is_charging_contract()
+                    else sorted(item.order_id for item in simulation.orders if item.status.value != "completed")
+                ),
                 "evidence_refs": all_evidence_refs,
                 "citations": citations,
                 "metrics": {
@@ -2731,16 +3229,29 @@ class PEVRGraphRunner:
         result = compose_report(self.provider, context)
         self._append_model_trace(state, result, node=PromptNodeName.COMPOSE_REPORT.value)
         llm_report = cast(FinalReport, self._node_output_or_fail(result, PEVRStage.FINISH, "compose_report"))
-        expected_orders = {order.order_id for order in contract.orders}
-        if (
-            llm_report.run_id != request.run_id
-            or llm_report.plan_version != run_state.plan_version
-            or llm_report.final_status is not FinalReportStatus.COMPLETED
-            or set(llm_report.completed_order_ids) != expected_orders
-            or llm_report.incomplete_order_ids
-            or not set(llm_report.evidence_refs).intersection(all_evidence_refs)
-        ):
-            raise PEVRExecutionError(PEVRStage.FINISH, "report_fact_mismatch", "LLM 报告与真实闭环事实不一致")
+        if contract.is_charging_contract():
+            if not self._charging_completed(simulation, contract):
+                raise PEVRExecutionError(PEVRStage.FINISH, "report_fact_mismatch", "充电合同终态缺少 charging.completed")
+            llm_report = llm_report.model_copy(
+                update={
+                    "run_id": request.run_id,
+                    "plan_version": run_state.plan_version,
+                    "final_status": FinalReportStatus.COMPLETED,
+                    "completed_order_ids": [],
+                    "incomplete_order_ids": [],
+                }
+            )
+        else:
+            expected_orders = {order.order_id for order in contract.orders}
+            if (
+                llm_report.run_id != request.run_id
+                or llm_report.plan_version != run_state.plan_version
+                or llm_report.final_status is not FinalReportStatus.COMPLETED
+                or set(llm_report.completed_order_ids) != expected_orders
+                or llm_report.incomplete_order_ids
+                or not set(llm_report.evidence_refs).intersection(all_evidence_refs)
+            ):
+                raise PEVRExecutionError(PEVRStage.FINISH, "report_fact_mismatch", "LLM 报告与真实闭环事实不一致")
         actual_usage = result.usage_after
         normalized_report = FinalReport.model_validate(
             {
@@ -2921,13 +3432,102 @@ class PEVRGraphRunner:
             return arguments
         return arguments
 
+    def _synthetic_charging_plan(self, contract: TaskContract, *, expected_seed: int) -> PlanTasksOutput:
+        """充电合同只合成 dispatch_simulation，禁止再注入运输四工具链。"""
+
+        dispatch_id = "TASK-CHARGE-DISPATCH"
+        return PlanTasksOutput(
+            plan_version=1,
+            tasks=[
+                PlanTask(
+                    task_id=dispatch_id,
+                    dependencies=[],
+                    tool_name=ToolName.DISPATCH_SIMULATION,
+                    tool_arguments={"plan": {"$ref": "derived:simulation_plan"}, "seed": expected_seed},
+                    target_amr=contract.charging.amr_id if contract.charging is not None else None,
+                    pickup=None,
+                    dropoff=None,
+                    workstation=contract.charging.charge_station if contract.charging is not None else None,
+                    preconditions=["目标 AMR 已位于充电站"],
+                    completion_criteria=["仿真发出 charging.completed 且电量达到目标"],
+                    time_budget=120,
+                    energy_budget=0,
+                    risk_level=RiskLevel.LOW,
+                    approval_required=True,
+                    fallback_strategy=FallbackStrategy.HUMAN,
+                    status=PlanTaskStatus.PENDING,
+                    evidence_refs=[],
+                    effect_id=None,
+                )
+            ],
+            planning_assumptions=["充电合同由执行器构造 idle SimulationPlan，不走 Hungarian/A*/Validator"],
+            unresolved_risks=[],
+        )
+
+    def _idle_charging_simulation_plan(self, contract: TaskContract) -> SimulationPlan:
+        """空订单、空路线的合法仿真 envelope；AMR 必须已经停在充电站坐标上。"""
+
+        snapshot = self.snapshot_provider.get_snapshot(contract.environment_ref)
+        return SimulationPlan(
+            schema_version="1.0",
+            environment_ref=snapshot.environment_ref,
+            map_width=snapshot.map_width,
+            map_height=snapshot.map_height,
+            blocked_cells=[item.model_copy(deep=True) for item in snapshot.blocked_cells],
+            blocked_edges=[{"from": edge["from"], "to": edge["to"]} for edge in snapshot.blocked_edges],
+            one_way_edges=[{"from": edge["from"], "to": edge["to"]} for edge in snapshot.one_way_edges],
+            amrs=[item.model_copy(deep=True) for item in snapshot.amrs],
+            orders=[],
+            location_positions={key: value.model_copy(deep=True) for key, value in snapshot.location_positions.items()},
+            completed_order_ids=[],
+            routes=[],
+            start_time=snapshot.start_time,
+            max_time=snapshot.max_time,
+            config=ValidatorConfig(
+                maximum_load_kg=contract.constraints.maximum_load_kg,
+                energy_per_cell_percent=1.0,
+                battery_safety_reserve_percent=15.0,
+                new_task_battery_threshold_percent=20.0,
+                critical_battery_threshold_percent=10.0,
+                minimum_safety_distance_cells=1,
+                default_workstation_capacity=1,
+            ),
+            workstation_capacities=dict(snapshot.workstation_capacities),
+            ruleset_version="p0-10.v1",
+        )
+
+    @staticmethod
+    def _charging_completed(simulation: SimulationResult, contract: TaskContract) -> bool:
+        """只认 charging.completed 事件，不能把运输 completed 误记成 charged。"""
+
+        goal = contract.charging
+        if goal is None:
+            return False
+        events = [
+            event
+            for event in simulation.events
+            if event.event_type == "charging.completed"
+            and (event.amr_id is None or event.amr_id == goal.amr_id)
+        ]
+        if not events:
+            return False
+        amr = next((item for item in simulation.amrs if item.amr_id == goal.amr_id), None)
+        if amr is None:
+            return False
+        return float(amr.battery) + 1e-9 >= float(goal.target_percent)
+
     def _build_simulation_plan(
         self,
         contract: TaskContract,
         route: RoutePlanResponse,
         route_arguments: Mapping[str, Any],
     ) -> SimulationPlan:
-        """把 A* 输出包装成 P0-10/P0-11 共同的完整计划 envelope。"""
+        """把 A* 输出包装成 P0-10/P0-11 共同的完整计划 envelope。
+
+        ``completed_order_ids`` 必须沿用快照：评测里 ORDER-003 的前置
+        ORDER-001 已记完成；若这里写死空列表，Hungarian/Validator 会再次
+        把依赖当成未完成。
+        """
 
         snapshot = self.snapshot_provider.get_snapshot(contract.environment_ref)
         max_time = int(route_arguments.get("max_time", snapshot.max_time))
@@ -2949,7 +3549,7 @@ class PEVRGraphRunner:
             amrs=[item.model_copy(deep=True) for item in snapshot.amrs],
             orders=[item.model_copy(deep=True) for item in contract.orders],
             location_positions={key: value.model_copy(deep=True) for key, value in snapshot.location_positions.items()},
-            completed_order_ids=[],
+            completed_order_ids=list(snapshot.completed_order_ids),
             routes=routes,
             start_time=snapshot.start_time,
             max_time=max_time,

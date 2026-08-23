@@ -28,6 +28,12 @@ from agent.tools.snapshots import (  # noqa: E402
     DefaultWarehouseSnapshotProvider,
     DynamicOrderSnapshotProvider,
 )
+from evals.p018.hard_map import (  # noqa: E402
+    HARD_ENVIRONMENT_REF,
+    HardMapSnapshotProvider,
+    build_hard_warehouse_map,
+    extra_obstacles_for_demo,
+)
 from domains.amr_warehouse import TransportOrder  # noqa: E402
 from services.config import load_settings  # noqa: E402
 from services.demo.order_json import (  # noqa: E402
@@ -122,7 +128,12 @@ def main() -> int:
     principal = authenticator.authenticate_token(_load_jwt_token(args))
     authorize_operator(principal)
     provider = ModelProvider(settings.model_gateway)
-    snapshot_provider = DefaultWarehouseSnapshotProvider()
+    if args.environment_ref == HARD_ENVIRONMENT_REF:
+        # 演示闭环与在线评测共用加难图；额外障碍必须保持全部工位走廊连通。
+        extras = extra_obstacles_for_demo(build_hard_warehouse_map())
+        snapshot_provider = HardMapSnapshotProvider(extra_obstacles=extras)
+    else:
+        snapshot_provider = DefaultWarehouseSnapshotProvider()
     if args.order_json is not None:
         order_path = resolve_demo_nl_order_json_path(args.order_json, repository_root=PROJECT_ROOT)
         dynamic_order: TransportOrder = load_demo_nl_order_json(order_path)

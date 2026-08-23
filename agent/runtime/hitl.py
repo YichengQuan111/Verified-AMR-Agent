@@ -187,6 +187,9 @@ class HITLStoreProtocol(Protocol):
     def get_request(self, approval_id: str) -> HITLRequest | None:
         ...
 
+    def get_grant(self, approval_id: str) -> ApprovalGrant | None:
+        ...
+
 
 def canonical_hitl_digest(value: Any) -> str:
     """对 HITL 事实计算不含空白和随机顺序的 SHA-256 摘要。"""
@@ -263,6 +266,20 @@ class InMemoryHITLStore:
             value = self._requests.get(approval_id)
             return value.model_copy(deep=True) if value is not None else None
 
+    def get_grant(self, approval_id: str) -> ApprovalGrant | None:
+        """只返回已经 approved 的完整签名票据；pending/拒绝行没有 grant。"""
+
+        with self._lock:
+            request = self._requests.get(approval_id)
+            grant = self._grants.get(approval_id)
+            if (
+                request is None
+                or grant is None
+                or request.status is not HITLStatus.APPROVED
+            ):
+                return None
+            return grant.model_copy(deep=True)
+
     def approve(
         self,
         approval_id: str,
@@ -326,6 +343,8 @@ class InMemoryHITLStore:
                 raise KeyError("审批请求不存在")
             if request.expires_at <= current:
                 raise PermissionError("审批请求已过期")
+            if request.status is HITLStatus.APPROVED:
+                raise PermissionError("审批已批准，不能再拒绝")
             if request.status is not HITLStatus.PENDING:
                 raise PermissionError("审批请求不是 pending 状态")
             rejected = request.model_copy(update={"status": HITLStatus.REJECTED})

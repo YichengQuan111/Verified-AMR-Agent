@@ -62,12 +62,24 @@ def report_to_markdown(report: EvalReport) -> str:
 
     metrics = report.metrics
     zero = metrics.zero_tolerance.model_dump(mode="json")
+    repro = report.reproducibility
+    mode = str(repro.get("execution_mode") or "offline_deterministic_oracle")
+    if mode == "online_fast_closed_loop":
+        mode_line = (
+            "- 运行模式：`online_fast_closed_loop`。本报告使用真实 Qwen3.6 Fast、加难地图和按 seed 少量额外障碍；"
+            "完成率/恢复率按观察终态重算，不能改写成离线 oracle 60/60。"
+        )
+    else:
+        mode_line = (
+            "- 运行模式：`offline_deterministic_oracle`。本报告记录 Fast/GGUF/Prompt/ToolSpec 版本，但默认不启动模型服务；"
+            "不能把本结果解释成在线 LLM 生成验收。"
+        )
     lines = [
         "# P0-18：60 例自动评测报告",
         "",
         f"- 报告：`{report.report_id}`；状态：**{report.status}**；版本：`{report.report_version}`",
         f"- 数据集：`{report.dataset_id}` / `{report.dataset_version}`；逐例结果：{metrics.case_count}；评测符合预期：{metrics.evaluation_pass_count}",
-        "- 运行模式：`offline_deterministic_oracle`。本报告记录 Fast/GGUF/Prompt/ToolSpec 版本，但默认不启动模型服务；不能把本结果解释成在线 LLM 生成验收。",
+        mode_line,
         "",
         "## 数据集组成",
         "",

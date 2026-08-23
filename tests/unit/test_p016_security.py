@@ -467,3 +467,55 @@ def test_pevr_interrupt_persists_and_resumes_exactly_once() -> None:
             principal=principal,
             approval_granted=True,
         )
+
+
+def test_pevr_resume_loads_approved_grant_from_store_without_request_copy() -> None:
+    """演示页批准后 resume 可能只带 principal、不带 grant；图必须从 store 取回票据。
+
+    若已批准仍把同一条 interrupt 再抛出，CLI 会反复 exit 3，页面会循环弹出
+    HITL，拒绝则会报「不是 pending」。
+    """
+
+    from agent.tools.snapshots import DefaultWarehouseSnapshotProvider
+    from tests.unit.test_p013_pevr import (
+        ENVIRONMENT_REF,
+        _FakeProvider,
+        _FakeRegistry,
+        _contract,
+        _plan,
+    )
+
+    run_id = "run-p016-store-grant"
+    registry = _FakeRegistry(run_id)
+    checkpoints = InMemoryRuntimeStore()
+    hitl = InMemoryHITLStore(signing_secret="h" * 40)
+    principal = _principal("operator-1", UserRole.OPERATOR)
+    clock_time = datetime(2026, 8, 21, 12, 0, tzinfo=timezone.utc)
+    runner = PEVRGraphRunner(
+        _FakeProvider(_contract(), _plan(_contract()), run_id),
+        registry=registry,
+        snapshot_provider=DefaultWarehouseSnapshotProvider(),
+        checkpoint_store=checkpoints,
+        hitl_store=hitl,
+        security_required=True,
+        clock=lambda: clock_time,
+    )
+    request = PEVRRequest(
+        run_id=run_id,
+        raw_request="把 MAT-001 从 P1 运到 S3",
+        environment_ref=ENVIRONMENT_REF,
+        seed=7,
+        principal=principal,
+    )
+    with pytest.raises(PEVRInterrupt) as interrupted:
+        runner.run(request)
+    interrupt = interrupted.value.interrupt
+    hitl.approve(
+        interrupt.approval_id,
+        principal=principal,
+        now=clock_time + timedelta(seconds=1),
+    )
+    result = runner.run(request)
+    assert result.run_state.status.value == "completed"
+    assert result.report.approval_id == interrupt.approval_id
+    assert [name for name, _ in registry.calls].count(ToolName.DISPATCH_SIMULATION) == 1

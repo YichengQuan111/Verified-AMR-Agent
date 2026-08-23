@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime, timezone
+import json
 from types import SimpleNamespace
 from typing import Any
 
@@ -14,6 +15,7 @@ from agent.context.contracts import (
     NodeRoute,
     ObservationVerification,
     PlanTasksOutput,
+    ReplanOutput,
     VerificationDecision,
 )
 from agent.planning import (
@@ -50,6 +52,7 @@ from agent.tools.schemas import (
 from agent.tools.snapshots import DefaultWarehouseSnapshotProvider
 from domains.amr_warehouse import Heading
 from services.amr_simulator.contracts import (
+    SimulationEvent,
     SimulationOrderState,
     SimulationOrderStatus,
     SimulationResult,
@@ -131,6 +134,40 @@ def _task(
         status=PlanTaskStatus.PENDING,
         evidence_refs=[],
         effect_id=None,
+    )
+
+
+def _fake_replan_output(messages: list[Any]) -> ReplanOutput:
+    """测试 Provider 按 node_input 克隆失效子图，满足 apply_model_replan 一致性门禁。"""
+
+    content = ""
+    for message in reversed(list(messages)):
+        payload = message.content if hasattr(message, "content") else str(message)
+        if "invalidated_task_ids" in payload:
+            content = payload
+            break
+    start = content.find("{")
+    if start < 0:
+        raise AssertionError("replan 上下文缺少 JSON")
+    envelope = json.loads(content[start:])
+    node_input = envelope.get("node_input") or envelope
+    plan = PlanTasksOutput.model_validate(node_input["current_plan"])
+    invalidated = list(node_input["invalidated_task_ids"])
+    retained = list(node_input["retained_task_ids"])
+    replacements = PEVRGraphRunner._clone_replan_subgraph(
+        plan,
+        invalidated_task_ids=invalidated,
+        new_plan_version=int(node_input["new_plan_version"]),
+    )
+    return ReplanOutput(
+        previous_plan_version=int(node_input["current_plan_version"]),
+        new_plan_version=int(node_input["new_plan_version"]),
+        trigger_observation_id=str(node_input.get("trigger_observation_id") or "observation://replan"),
+        retained_task_ids=retained,
+        invalidated_task_ids=invalidated,
+        replacement_tasks=replacements,
+        reason="测试 Fast 替换受影响未完成子图",
+        requires_human=False,
     )
 
 
@@ -217,7 +254,8 @@ class _FakeProvider:
         raise AssertionError("PEVR runner 不应调用普通文本生成")
 
     def generate_structured(self, messages, response_model, **kwargs):
-        del messages, kwargs
+        incoming_messages = messages
+        del kwargs
         if response_model is TaskContract:
             value = self.contract
         elif response_model is PlanTasksOutput:
@@ -227,26 +265,33 @@ class _FakeProvider:
                 observation_id="observation://dispatch",
                 verified=True,
                 decision=VerificationDecision.FINISH,
-                reason="仿真完成且全部订单有完成状态证据",
+                reason=(
+                    "充电完成且存在 charging.completed 证据"
+                    if self.contract.is_charging_contract()
+                    else "仿真完成且全部订单有完成状态证据"
+                ),
                 evidence_refs=[f"tool://{self.run_id}:plan:1:task:TASK-DISPATCH"],
                 affected_entities=[],
                 next_task_id=None,
             )
         elif response_model is FinalReport:
+            completed_orders = [] if self.contract.is_charging_contract() else ["ORDER-001"]
             value = FinalReport(
                 run_id=self.run_id,
                 final_status=FinalReportStatus.COMPLETED,
                 state_version=f"run:{self.run_id}/plan:1",
                 plan_version=1,
                 generated_at=_now(),
-                summary="正常闭环完成 ORDER-001",
-                completed_order_ids=["ORDER-001"],
+                summary="充电闭环完成" if self.contract.is_charging_contract() else "正常闭环完成 ORDER-001",
+                completed_order_ids=completed_orders,
                 incomplete_order_ids=[],
                 evidence_refs=[f"tool://{self.run_id}:retrieve"],
                 unresolved_risks=[],
                 budget_usage=TokenUsage().model_copy(update={}) if False else BudgetUsageForFake(),
             )
-        else:  # pragma: no cover - response models are the four P0-05 nodes
+        elif response_model is ReplanOutput:
+            value = _fake_replan_output(incoming_messages)
+        else:  # pragma: no cover - response models are the P0-05 nodes
             raise AssertionError(response_model)
         content = value.model_dump_json()
         call = ModelCallResult(
@@ -349,30 +394,61 @@ class _FakeRegistry:
             }
         elif name is ToolName.DISPATCH_SIMULATION:
             snapshot = DefaultWarehouseSnapshotProvider().get_snapshot(ENVIRONMENT_REF)
-            output = SimulationResult(
-                simulation_id="simulation-fake",
-                seed=7,
-                status=SimulationStatus.COMPLETED,
-                start_time=0,
-                end_time=10,
-                validation_result={"status": "valid", "valid": True, "errors": []},
-                amrs=snapshot.amrs,
-                orders=[
-                    SimulationOrderState(
-                        order_id="ORDER-001",
-                        status=SimulationOrderStatus.COMPLETED,
-                        assigned_amr_id="AMR-01",
-                        payload_kg=1.0,
-                        pickup_time=2,
-                        dropoff_time=10,
-                        blocked_reason=None,
-                    )
-                ],
-                workstations=[],
-                charging_stations=[],
-                observations=[],
-                events=[],
-            ).model_dump(mode="json")
+            plan = arguments.get("plan") if isinstance(arguments.get("plan"), dict) else {}
+            if not plan.get("orders"):
+                amr = snapshot.amrs[0]
+                output = SimulationResult(
+                    simulation_id="simulation-fake-charge",
+                    seed=int(arguments.get("seed") or 7),
+                    status=SimulationStatus.COMPLETED,
+                    start_time=0,
+                    end_time=4,
+                    validation_result={"status": "valid", "valid": True, "errors": []},
+                    amrs=[amr.model_copy(update={"battery": 90.0})],
+                    orders=[],
+                    workstations=[],
+                    charging_stations=[],
+                    observations=[],
+                    events=[
+                        SimulationEvent(
+                            event_id="evt-charge-done",
+                            simulation_id="simulation-fake-charge",
+                            time=3,
+                            event_type="charging.completed",
+                            severity="info",
+                            amr_id=amr.amr_id,
+                            order_id=None,
+                            workstation_id=None,
+                            charging_station_id="C1",
+                            payload={"target_percent": 90},
+                        )
+                    ],
+                ).model_dump(mode="json")
+            else:
+                output = SimulationResult(
+                    simulation_id="simulation-fake",
+                    seed=7,
+                    status=SimulationStatus.COMPLETED,
+                    start_time=0,
+                    end_time=10,
+                    validation_result={"status": "valid", "valid": True, "errors": []},
+                    amrs=snapshot.amrs,
+                    orders=[
+                        SimulationOrderState(
+                            order_id="ORDER-001",
+                            status=SimulationOrderStatus.COMPLETED,
+                            assigned_amr_id="AMR-01",
+                            payload_kg=1.0,
+                            pickup_time=2,
+                            dropoff_time=10,
+                            blocked_reason=None,
+                        )
+                    ],
+                    workstations=[],
+                    charging_stations=[],
+                    observations=[],
+                    events=[],
+                ).model_dump(mode="json")
         else:  # pragma: no cover - normal PEVR validator forbids other tools
             raise AssertionError(name)
         return ToolResult(

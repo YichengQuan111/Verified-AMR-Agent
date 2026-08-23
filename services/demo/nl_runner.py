@@ -118,7 +118,14 @@ class ControlledNLRunner:
         if process is not None and exit_code is None:
             state = "running"
             default_message = "PEVR 闭环运行中（LLM 理解 → 规划 → C++ 校验）"
-        elif output is not None and output.get("status") == "waiting_approval":
+        elif (
+            output is not None
+            and output.get("status") == "waiting_approval"
+            and (exit_code is None or exit_code == 3)
+        ):
+            # 只有 CLI 仍在等待（exit 3）或句柄丢失（API 重启）时才展示 HITL。
+            # resume 失败若 exit 1 却留下旧 waiting JSON，不能再当成待审批，
+            # 否则页面会循环弹出同一张已批准卡片，拒绝也会变成「不是 pending」。
             state = "waiting_approval"
             default_message = "计划在 dispatch 前暂停，等待匿名审批"
         elif exit_code == 0 and output is not None and "report" in output:
@@ -207,7 +214,7 @@ class ControlledNLRunner:
             resume_approval_id=approval_id,
             order_json=order_json,
         )
-        self._spawn(run_id, argv)
+        self._spawn(run_id, argv, clear_log=False)
         return self.status(run_id, message="已批准，正在从 Checkpoint 恢复执行")
 
     def dismiss(self, run_id: str) -> DemoNLRunStatus:
@@ -316,6 +323,8 @@ class ControlledNLRunner:
             str(self._output_path(run_id)),
             "--jwt-token-file",
             str(token_path),
+            "--environment-ref",
+            WarehouseDemoService.ENVIRONMENT_REF,
         ]
         if order_json is not None:
             argv.extend(["--order-json", str(order_json)])
@@ -325,13 +334,22 @@ class ControlledNLRunner:
             argv.extend(["--resume-approved", resume_approval_id])
         return argv
 
-    def _spawn(self, run_id: str, argv: list[str]) -> None:
-        """异步拉起 CLI；输出落盘到 per-run 日志，HTTP 不被 LLM 延迟阻塞。"""
+    def _spawn(self, run_id: str, argv: list[str], *, clear_log: bool = True) -> None:
+        """异步拉起 CLI；输出落盘到 per-run 日志，HTTP 不被 LLM 延迟阻塞。
+
+        首次启动清空日志；resume 追加分隔线，保留批准前的 HITL/错误上下文。
+        """
 
         log_path = self._log_path(run_id)
         try:
             self._tmp_dir.mkdir(parents=True, exist_ok=True)
-            log_path.write_text("", encoding="utf-8")
+            if clear_log or not log_path.exists():
+                log_path.write_text("", encoding="utf-8")
+            else:
+                with log_path.open("a", encoding="utf-8") as handle:
+                    handle.write(
+                        f"\n--- resume {datetime.now(timezone.utc).isoformat()} ---\n"
+                    )
             self._process = self._process_starter(
                 argv,
                 log_path=log_path,

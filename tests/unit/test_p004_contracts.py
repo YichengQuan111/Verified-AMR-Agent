@@ -524,6 +524,27 @@ def test_completed_run_state_requires_all_tasks_completed() -> None:
     assert state.status.value == "completed"
 
 
+def test_charging_contract_allows_empty_orders_and_rejects_placeholder_mix() -> None:
+    """充电合同与运输订单互斥；不能靠占位 TransportOrder 混过去。"""
+
+    payload = task_contract_payload()
+    payload["orders"] = []
+    payload["charging"] = {"amr_id": "AMR-01", "charge_station": "C1", "target_percent": 90}
+    contract = TaskContract.model_validate(payload)
+    assert contract.is_charging_contract()
+    assert contract.orders == []
+
+    mixed = task_contract_payload()
+    mixed["charging"] = {"amr_id": "AMR-01", "charge_station": "C1", "target_percent": 90}
+    with pytest.raises(ValidationError, match="充电合同不能同时携带运输订单"):
+        TaskContract.model_validate(mixed)
+
+    empty = task_contract_payload()
+    empty["orders"] = []
+    with pytest.raises(ValidationError, match="运输合同必须包含至少 1 条订单"):
+        TaskContract.model_validate(empty)
+
+
 def test_export_schemas_writes_exact_utf8_json(tmp_path: Path) -> None:
     exported = export_schemas(tmp_path)
 

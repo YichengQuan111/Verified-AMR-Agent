@@ -299,8 +299,10 @@ def test_nl_happy_path_waiting_approve_resume_result(tmp_path: Path) -> None:
         assert Path(argv[1]) == (REPOSITORY_ROOT / "scripts" / "run_p013_e2e.py").resolve()
         assert argv[argv.index("--request") + 1] == "请把 MAT-001 从 P3 运到 S3。"
         assert argv[argv.index("--run-id") + 1] == run_id
+        assert argv[argv.index("--jwt-token-file") + 1]
         token_file = Path(argv[argv.index("--jwt-token-file") + 1])
         assert token_file.read_text(encoding="utf-8") == "test-operator-token"
+        assert argv[argv.index("--environment-ref") + 1] == "warehouse_v1@eval-hard"
         assert "--approve-and-resume" not in argv  # 本模块永不自动批准
         order_json = Path(argv[argv.index("--order-json") + 1])
         assert order_json.name.startswith("demo_nl_order_")
@@ -399,6 +401,26 @@ def test_nl_failed_exit_reports_log_tail(tmp_path: Path) -> None:
         assert st["state"] == "failed"
         assert st["exit_code"] == 1
         assert "模型连接失败" in st["log_tail"]
+
+
+def test_nl_failed_exit_does_not_reuse_stale_waiting_artifact(tmp_path: Path) -> None:
+    """resume 失败若 exit 1 但留下旧 waiting JSON，状态必须是 failed 而不是继续 HITL。"""
+
+    client, _, operator = _make_app_and_tokens()
+    started: list[_FakeProcess] = []
+    runner = _make_runner(tmp_path, started)
+    client.app.dependency_overrides[get_demo_nl_runner] = lambda: runner
+    client.app.dependency_overrides[get_model_provider] = lambda: _extract_provider()
+    with client:
+        resp = client.post("/demo/nl/run", json={"request": "请把 MAT-001 从 P3 运到 S3。"})
+        run_id = resp.json()["run_id"]
+        _write_output(tmp_path, run_id, _waiting_artifact(run_id, "appr-stale"))
+        started[0].log_path.write_text("resume 失败\n审批票据无效\n", encoding="utf-8")
+        started[0].exit_code = 1
+        st = client.get(f"/demo/nl/status/{run_id}").json()
+        assert st["state"] == "failed"
+        assert st["exit_code"] == 1
+        assert "审批票据无效" in st["log_tail"]
 
 
 def test_nl_status_recovers_from_artifacts_after_restart(tmp_path: Path) -> None:

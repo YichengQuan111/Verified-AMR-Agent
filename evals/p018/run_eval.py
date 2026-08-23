@@ -1,9 +1,10 @@
 """P0-18 60 例评测 CLI。
 
 默认只接受仓库内固定 dataset/config，并把 JSON 与 Markdown 报告写到 ``tmp``。
-退出码 0 表示 60 例都符合预期且七个零容忍项全为 0；退出码 2 表示 Harness
-真实观察到意外失败或安全违规。负向安全案例正确返回 denied/blocked 不会导致
-退出码 2，但会在报告中保留失败轨迹和原因。
+离线模式退出码 0 表示 60 例都符合预期且七个零容忍项全为 0。在线闭环退出码 0
+表示 60 例均已执行且零容忍项为 0，完成率允许低于 100%。退出码 2 表示 Harness
+崩溃、零容忍非零或离线契约失败。负向安全案例正确返回 denied/blocked 不会单
+独导致退出码 2。
 """
 
 from __future__ import annotations
@@ -12,7 +13,7 @@ import argparse
 import json
 from pathlib import Path
 
-from .dataset import DEFAULT_CONFIG_PATH, DEFAULT_DATASET_PATH
+from .dataset import DEFAULT_CONFIG_PATH, DEFAULT_DATASET_PATH, load_config
 from .reporting import write_report
 from .runner import DEFAULT_OUTPUT_DIR, run_harness
 
@@ -32,28 +33,52 @@ def main(argv: list[str] | None = None) -> int:
     """运行 Harness、落盘双格式报告并返回可自动化判断的退出码。"""
 
     args = build_parser().parse_args(argv)
-    report = run_harness(
-        dataset_path=args.dataset,
-        config_path=args.config,
-        verification_timeout_seconds=args.verification_timeout,
-    )
-    json_path, markdown_path = write_report(report, output_dir=args.output_dir)
-    print(
-        json.dumps(
-            {
-                "status": report.status,
-                "report_id": report.report_id,
-                "report_digest": report.report_digest,
-                "case_count": report.metrics.case_count,
-                "evaluation_pass_count": report.metrics.evaluation_pass_count,
-                "zero_tolerance": report.metrics.zero_tolerance.model_dump(mode="json"),
-                "json_report": str(json_path.resolve()),
-                "markdown_report": str(markdown_path.resolve()),
-            },
-            ensure_ascii=False,
-            sort_keys=True,
+    config = load_config(args.config)
+    if str(config.get("execution_mode")) == "online_fast_closed_loop":
+        from .online import run_online_harness
+
+        report = run_online_harness(
+            dataset_path=args.dataset,
+            config_path=args.config,
+            verification_timeout_seconds=args.verification_timeout,
+            output_dir=args.output_dir,
         )
+        json_name, markdown_name = "p018_online_eval.json", "p018_online_eval.md"
+    else:
+        report = run_harness(
+            dataset_path=args.dataset,
+            config_path=args.config,
+            verification_timeout_seconds=args.verification_timeout,
+        )
+        json_name, markdown_name = "p018_eval.json", "p018_eval.md"
+    json_path, markdown_path = write_report(
+        report,
+        output_dir=args.output_dir,
+        json_name=json_name,
+        markdown_name=markdown_name,
     )
+    payload = {
+        "status": report.status,
+        "report_id": report.report_id,
+        "report_digest": report.report_digest,
+        "execution_mode": str(config.get("execution_mode")),
+        "case_count": report.metrics.case_count,
+        "evaluation_pass_count": report.metrics.evaluation_pass_count,
+        "zero_tolerance": report.metrics.zero_tolerance.model_dump(mode="json"),
+        "json_report": str(json_path.resolve()),
+        "markdown_report": str(markdown_path.resolve()),
+    }
+    agent = report.metrics.agent
+    if "task_completion_rate" in agent:
+        payload["task_completion_rate"] = agent.get("task_completion_rate")
+        payload["task_completion_count"] = agent.get("task_completion_count")
+        payload["positive_case_count"] = agent.get("positive_case_count")
+        payload["model_call_count"] = agent.get("model_call_count")
+    recovery = report.metrics.recovery
+    if "recovery_rate" in recovery:
+        payload["recovery_rate"] = recovery.get("recovery_rate")
+        payload["recovery_terminal_correct_count"] = recovery.get("recovery_terminal_correct_count")
+    print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
     return 0 if report.status == "passed" else 2
 
 

@@ -150,3 +150,126 @@ Fast 服务已在测试后停止，8080 无监听。该失败不改变 P0-18 离
 zero tolerance 结果均保持既有口径：所有通过率为 1.0，七项零容忍均为 0。该报告仍是
 `offline_deterministic_oracle`，不能写成 60 例在线 Fast 模型质量验收；在线 Fast 证据另见
 `docs/TEST_REPORT.md`。
+
+## 真实 Fast 在线闭环（加难地图）
+
+默认命令仍是上面的离线 oracle。在线 60 例是独立模式，**不改写**离线 60/60，也不预先调完成率。
+
+前置：Qwen3.6 Fast 已在 `127.0.0.1:8080` 监听，Compose 中 PostgreSQL/Qdrant 可用，项目 `.env` 已加载。生产种子 `domains/amr_warehouse/data/warehouse_v1.json` 保持原样。演示 UI（`/demo`）现与在线评测共用 `warehouse_v1@eval-hard`，额外 2 格通道障碍对全部工位走廊保持连通（不是评测每例那组 seed 障碍）。
+
+```powershell
+.\scripts\run_p018_online_eval.ps1
+```
+
+或：
+
+```powershell
+& 'E:\Anaconda\envs\torch128\python.exe' -m evals.p018.run_eval `
+  --config evals\p018\online_config.json `
+  --output-dir .\tmp\p018_online_eval
+```
+
+配置为 `evals/p018/online_config.json`：`execution_mode=online_fast_closed_loop`、
+`online_service_required=true`、地图 `evals/p018/maps/warehouse_v1_hard.json`（货架墙，
+通道对齐取货/交付行），每例再按固定 seed 叠加 **2** 个通道障碍且 BFS 保持起点→取货→交付连通。
+
+分流：
+
+- 正常订单/充电、可恢复异常、审批 resume/reject：真实 Fast PEVR + HITL 自动批准或拒绝；
+- `rag_answerable`：真实 Hybrid RAG，不跑完整 PEVR；
+- 安全/验证/权限/预期阻断异常：sidecar 走原离线 Harness 的真实 RBAC/CTest/pytest 门禁；
+- `prompt_injection_text`：sidecar 门禁 + 真实 Fast `plan_tasks`（不可信 RAG 文本）。
+
+在线计分不消费要求 `model_call_count=0` 的离线 oracle 键。任务完成率分母是期望正向终态的用例（completed/charged/answered/verified）；异常恢复率分母是 10 例 `exception_local_replan`。零容忍仍从观察重算。退出码 0 表示 60 例都执行完且七项零容忍合计为 0，**允许完成率/恢复率低于 100%**。
+
+报告：
+
+- 修复前（2026-08-22）：`tmp/p018_online_eval/p018_online_eval.json`
+- 修复后重跑（2026-08-23）：`tmp/p018_online_eval_fix/p018_online_eval.json`、`.md`
+- 运行中进度：对应目录下的 `p018_online_progress.jsonl`
+
+2026-08-22 实测（Fast 在线、加难地图、墙钟约 44 分钟，退出码 0；**修复 `injected_orders` / REPLAN 短接之前**）：
+
+| 指标 | 数值 |
+| --- | --- |
+| 报告 | `p018-online-4492088d953d0618` |
+| digest | `4492088d953d061877f059bddf29de02cdddbdc9cc1b711216483442b0056bfd` |
+| 评测符合预期 | 36/60 |
+| 任务完成率 | 20/44 = 45.5% |
+| 异常恢复率 | 5/10 = 50.0% |
+| 模型调用 | 86 |
+| 七项零容忍 | 全部 0 |
+| 正常订单完成 | 6/20 |
+| 充电完成 | 0/5（`missing_information`） |
+| RAG/审批评测通过 | 10/10 |
+| 验证 | 5/5 |
+| 安全阻断 | 10/10 |
+
+2026-08-23 重跑（同一加难地图与 Fast，墙钟约 49 分钟 / 2947519 ms，退出码 0；代码已修 `injected_orders` 与 REPLAN 短接）：
+
+| 指标 | 数值 |
+| --- | --- |
+| 报告 | `p018-online-7430900da2a75e25` |
+| digest | `7430900da2a75e258dcbe4aaec9a5551c464d70a93fc99a45ccc11f7e1a2939b` |
+| 评测符合预期 | 35/60 |
+| 任务完成率 | 24/44 = 54.5% |
+| 异常恢复率 | 4/10 = 40.0% |
+| 模型调用 | 99 |
+| 七项零容忍 | 全部 0 |
+| 正常订单完成 | 6/20（与修复前同一批 4 次调用走完的例） |
+| 充电 | 0/5 达到 `charged`；5/5 走完 PEVR 但观察为运输 `completed`（占位订单被执行） |
+| RAG/审批评测通过 | 10/10 |
+| 验证 | 5/5 |
+| 安全阻断 | 10/10 |
+
+失败订单的终态码从 `recovery_fatal`+「允许第 2 次局部重规划」变为 `recovery_human`（额度耗尽或 `ValueError: 故障没有定位到可替换的未完成任务`）。`replan_count` 仍多为 0：LocalReplanner 仍没写出新计划版本。
+
+不要把上述数字改写成离线 60/60，也不要反向把离线契约回归改写成在线质量分。
+
+2026-08-23 抬完成率/恢复率后重跑（同一加难地图与 Fast，墙钟 2241374 ms / 约 37 分钟，退出码 0）：
+
+| 指标 | 数值 |
+| --- | --- |
+| 报告 | `p018-online-fad484647c97878f` |
+| digest | `fad484647c97878f52c7f3025058a2a894d62d8bfbef9e38ceabcbe18a98c072` |
+| 评测符合预期 | 38/60 |
+| 任务完成率 | 22/44 = 50.0% |
+| 异常恢复率 | 9/10 = 90.0% |
+| 模型调用 | 96 |
+| 七项零容忍 | 全部 0 |
+| 正常订单完成 | 6/20 |
+| 充电 | 5/5 `charged`（`charging_completion_rate=1.0`） |
+| RAG/审批评测通过 | 10/10 |
+| 验证 | 5/5 |
+| 安全阻断 | 10/10 |
+
+对照 `p018-online-7430900da2a75e25`：恢复率 4/10→9/10。完成率 24/44→22/44，因为旧 24 把 5 个充电记成运输 `completed`（本轮仍计入正向，但是 `charged`），并把未注入故障的异常例碰巧完成算进去。本轮 C++ 拒绝后 `replan_count=1`、`plan_version=2`，终态带 `原始错误: fleet_plan_invalid`。`exception-009` 仍在 understand 因 ORDER-003 依赖未知 ORDER-001 失败，是恢复率漏的 1 例。
+
+对外引用当前在线率时用 **fad484647c97878f** 仅作 50% 对照。2026-08-23 降评测地图并修装货/HITL 后当前引用见下表。不要把离线 60/60 与本表混写。
+
+2026-08-23 略降评测地图 + 装货语义 + HITL 包装后重跑（墙钟 2506181 ms / 约 42 分钟，退出码 0）：
+
+| 指标 | 数值 |
+| --- | --- |
+| 报告 | `p018-online-fa1d397a8f60ad17` |
+| digest | `fa1d397a8f60ad17c61a49cb0b424c9a0720d638dc8854582cd764878320bfdb` |
+| 评测符合预期 | 59/60 |
+| 任务完成率 | 43/44 = 97.7% |
+| 异常恢复率 | 10/10 = 100% |
+| 模型调用 | 133 |
+| 七项零容忍 | 全部 0 |
+| 正常订单完成 | 20/20 |
+| 充电 | 5/5 `charged` |
+| RAG/审批评测通过 | 10/10 |
+| 验证 | 5/5 |
+| 安全阻断 | 10/10 |
+| 未完成正向例 | `p018-exception-004`（`TOOL_STEP_BUDGET_EXHAUSTED`） |
+
+输出目录：`tmp/p018_online_eval_ease_verifier/`。生产地图未改。每例额外障碍 2。不要把 43/44 写成离线 60/60。
+
+专项测试：
+
+```powershell
+& 'E:\Anaconda\envs\torch128\python.exe' -m pytest `
+  tests\unit\test_p018_online.py tests\unit\test_p018_eval.py -q -p no:cacheprovider
+```

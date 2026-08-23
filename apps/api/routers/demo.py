@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from fastapi.responses import HTMLResponse
 
 from agent.security import Principal
@@ -60,19 +60,25 @@ def demo_page() -> HTMLResponse:
     """托管单文件演示页；页面与闭环接口均匿名（2026-08-22 用户指令）。"""
 
     page_path = Path(__file__).resolve().parents[1] / "static" / "demo.html"
-    return HTMLResponse(page_path.read_text(encoding="utf-8"))
+    return HTMLResponse(
+        page_path.read_text(encoding="utf-8"),
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 @router.get("/demo/warehouse", response_model=DemoWarehouseMap)
 def get_demo_warehouse(
+    response: Response,
     service: WarehouseDemoService = Depends(get_demo_service),
 ) -> DemoWarehouseMap:
-    """匿名读取固定 seed 地图快照；前端不得自行猜测地图。
+    """匿名读取评测加难地图快照；前端不得自行猜测地图。
 
-    2026-08-22 晚起按用户指令放开匿名：地图只是 warehouse_v1 的只读视图，
-    不含密钥/订单外数据；免 Token 让本机演示页开箱即用。
+    2026-08-22 晚起按用户指令放开匿名。2026-08-23 起返回
+    ``warehouse_v1@eval-hard``（货架墙 + 2 格全走廊通道障碍），不是生产空旷图。
+    ``Cache-Control: no-store`` 避免浏览器把改图前的 JSON 一直用下去。
     """
 
+    response.headers["Cache-Control"] = "no-store"
     try:
         return service.get_warehouse_map()
     except DemoServiceError as exc:
