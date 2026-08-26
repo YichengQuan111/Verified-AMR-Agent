@@ -1,8 +1,8 @@
 # AMR Agent 项目交接上下文
 
-最后更新：2026-08-23
+最后更新：2026-08-26
 当前实现里程碑记录：P0-00～P0-20 代码已落地。2026-08-21 原审计文档仍是 **FAIL** 快照；本步已启动 Qwen3.6 Fast 与 Compose，并实测 HITL 三连、全量 smoke、RAG holdout 与 P0-18/P0-19。**H06 演示视频仍为 0 个媒体文件**，未在真实 Fast dispatch 窗口再做 OS 强杀，七类异常仍以 FakeRegistry 生产图测试为准，因此发布 Verdict **仍不能写成 PASS**。同日按用户明确指令新增**演示 UI 扩展**（`/demo` 页面 + `/demo/*` API，可视化评测加难地图 `warehouse_v1@eval-hard` 与真实 C++ 链路仿真轨迹），该扩展偏离 `docs/scope.md` 的「完整前端 P0 外」排除项，差异已在本文件末条登记；它不是 P0 Release PASS，也不替代 H06。2026-08-22 已实测独立的 P0-18 **真实 Fast 在线 60 例**（加难地图），不得与离线 oracle 60/60 混写。2026-08-23 略降评测地图并修装货时刻/种子依赖/HITL 包装后重跑：`p018-online-fa1d397a8f60ad17`，任务完成率 **43/44（97.7%）**，异常恢复率 **10/10（100%）**，正常订单 **20/20**，充电 5/5 `charged`，评测符合预期 59/60，零容忍 0。旧引用 `p018-online-fad484647c97878f`（22/44、9/10）只作对照。
-当前下一步：README 已嵌入 `docs/media/demo_v0.gif`。推送到 GitHub 后仓库首页会循环播放。生产 `warehouse_v1.json` 未改。不要用 Docker `:8000`。
+当前下一步：README 已在“核心闭环”章节嵌入 `docs/media/core_loop_architecture.png`，标题下的 `docs/media/demo_v0.gif` 继续保留。生产 `warehouse_v1.json` 未改。不要用 Docker `:8000`。
 
 ## 1. 文档用途与维护要求
 
@@ -2098,5 +2098,14 @@ DAG 使用 `agent.planning.dag.topological_sort()` 中的 Kahn 算法：计算�
 - 未完成：未 `git add`/`commit`/`push`（用户未要求提交）。未跑 `scripts/run_smoke.ps1`。该 GIF 不是 H06 正式演示视频交付物。
 - 公共接口：无 Schema/API 变更。
 - 验证：确认 `docs/media/demo_v0.gif` 存在且 README 相对路径正确。未跑 pytest。
+- 不要改生产 `warehouse_v1.json`。不要改离线 oracle。不要用 Docker `:8000`。
+
+### 2026-08-26 · README 嵌入核心闭环架构图
+
+- 完成：将用户提供的 PNG 保存为 `docs/media/core_loop_architecture.png`，并在 README“核心闭环”的文字流程后通过相对路径嵌入。本步无核心代码注释需求（仅文档/媒体）。
+- 未完成：未运行 `scripts/run_smoke.ps1` 或 pytest；本步不修改运行时代码、公共契约、数据库、评测或生产地图。
+- 公共接口：无 Schema/API 变更。
+- 设计决策：保留原文字流程以便检索与无图场景阅读，架构图作为详细视觉说明；图片进入仓库资源目录，不引用会失效的本机临时路径。
+- 验证：源图与仓库副本 SHA-256 一致，PNG 尺寸为 2545×855；README 相对路径可解析；`git diff --check` 通过。
 - 不要改生产 `warehouse_v1.json`。不要改离线 oracle。不要用 Docker `:8000`。
 

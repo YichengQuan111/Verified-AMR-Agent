@@ -17,6 +17,8 @@
   → 带引用的证据报告
 ```
 
+![Verified AMR Agent 核心闭环架构](docs/media/core_loop_architecture.png)
+
 ## 功能特性
 
 - **自然语言下单**：本地 Qwen 3.6 35B A3B 模型把任意运输请求抽取为结构化订单；演示链即抽即走，正式链进入完整 PEVR 闭环。
