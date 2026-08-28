@@ -1,0 +1,75 @@
+{
+  "eval_config_id": "amr-p019-online-config",
+  "version": "p0-19.online.v1",
+  "execution_mode": "online_fast_three_strategy_closed_loop",
+  "p018_dataset_path": "evals/p018/dataset.json",
+  "p018_config_path": "evals/p018/online_config.json",
+  "model": {
+    "profile": "fast",
+    "alias": "qwen3.6-fast",
+    "family": "Qwen3.6",
+    "quantization": "IQ4_NL",
+    "context_window": 16384,
+    "temperature": 0.1,
+    "reasoning_enabled": false
+  },
+  "shared_pevr_entry_budgets": {
+    "max_total_seconds": 300,
+    "max_input_tokens": 30000,
+    "max_output_tokens": 5000,
+    "max_tool_steps": 8
+  },
+  "strategies": [
+    {
+      "id": "fixed_workflow",
+      "production_path": false,
+      "fault_recovery_enabled": false,
+      "description": "复用八阶段固定图，异常后立即停止；不重试、不重规划。"
+    },
+    {
+      "id": "react",
+      "production_path": false,
+      "fault_recovery_enabled": false,
+      "description": "复用同一固定图；仅在评测边界由 Fast 做一次结构化 retry/stop 决策。"
+    },
+    {
+      "id": "pevr",
+      "production_path": true,
+      "fault_recovery_enabled": true,
+      "description": "原生产 PEVR 自动恢复与 max_retries=2/max_replans=2 原生预算，不作收紧。"
+    }
+  ],
+  "react_controller": {
+    "prompt_id": "amr.eval.p019.react_recovery",
+    "prompt_version": "1.0.0",
+    "max_retries": 1,
+    "max_replans": 0,
+    "max_output_tokens": 256,
+    "raw_chain_of_thought_stored": false,
+    "deterministic_safety_gate": "retryable && idempotent && (!has_side_effects || side_effect_not_found)"
+  },
+  "schedule": {
+    "policy": "latin_square_interleaved",
+    "patterns": [
+      ["fixed_workflow", "react", "pevr"],
+      ["react", "pevr", "fixed_workflow"],
+      ["pevr", "fixed_workflow", "react"]
+    ]
+  },
+  "resource_sampling": {
+    "interval_seconds": 0.5,
+    "gpu_interval_seconds": 5.0,
+    "include_eval_process": true,
+    "include_listeners": [8080, 18080],
+    "gpu_query": "nvidia-smi"
+  },
+  "smart_comparison": {
+    "alias": "qwen3.8-smart",
+    "status": "deferred",
+    "requested_case_count": 15,
+    "started": false,
+    "completed": false,
+    "reason": "Qwen3.8 Smart 当前硬禁用；在线三策略仅使用同一 Qwen3.6 Fast。",
+    "backlog_key": "P0-19-SMART-COMPARISON"
+  }
+}

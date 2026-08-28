@@ -43,7 +43,8 @@
           "default": "p018_trace",
           "enum": [
             "p018_trace",
-            "p018_independent_oracle"
+            "p018_independent_oracle",
+            "online_wall_clock"
           ],
           "title": "Source",
           "type": "string"
@@ -196,6 +197,7 @@
           "default": "not_observed",
           "enum": [
             "p018_trace",
+            "online_trace",
             "not_observed"
           ],
           "title": "Source",

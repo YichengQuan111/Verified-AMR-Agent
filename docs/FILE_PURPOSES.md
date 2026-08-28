@@ -1160,6 +1160,57 @@ Dockerfile、依赖锁和报告属于配置/文档/数据契约，本步无核�
 | 修改 | `README.md` | 在“核心闭环”文字流程后嵌入架构图，同时保留可检索的文字说明。本步无核心代码注释需求。 | GitHub 仓库页可直接查看完整闭环关系。 |
 | 修改 | `docs/HANDOFF_CONTEXT.md`、`docs/FILE_PURPOSES.md` | 登记本步完成内容、验证范围与媒体职责。本步无核心代码注释需求。 | 后续维护者可追踪图片来源、位置与 README 用途。 |
 
+## 2026-08-28：P0-19 三策略同 60 例真实 Fast 完整闭环
+
+本步为 Fixed Workflow、有界 ReAct、生产 PEVR 增加独立在线评测适配，并完成 180 条真实
+Fast 运行。新增/修改的核心 Python 已补中文模块说明、docstring 和关键分支注释，重点解释策略
+隔离、模型调用前安全门、完整 Trace、资源采样、manifest 恢复和失败关闭行为；没有修改 C++
+核心代码，因此无 C++ 注释需求。JSON、Schema、PowerShell、依赖锁和 Markdown 不支持或不需要
+核心代码注释。`tmp/p019_online_strategy_compare/` 是可复核运行证据和断点进度，不是源码交付物；
+`__pycache__/`、`.pytest_cache/`、`build/` 仍是自动生成物。
+
+| 变更 | 文件 | 作用 | 调用方/下游 |
+|---|---|---|---|
+| 修改 | `evals/p018/online.py` | 新增 `OnlineControlStrategy`、严格 ReAct 恢复决定和三策略 Harness；保留共享 PEVR 图与完整 P0-17 Trace，按真实调用统计 Token/次数，并为每策略隔离运行身份。Fixed 禁恢复；ReAct 最多一次经安全门允许的模型 retry；PEVR 保持生产恢复默认值。 | P0-18 单策略在线入口、P0-19 在线执行器和专项测试；不是新的生产 Agent 入口。 |
+| 修改 | `evals/p018/online_config.json` | 把已经漂移的 Fast manifest/launcher SHA-256 校正到当前受控文件；地图、模型参数、Prompt、工具、预算和计分均未变化。 | P0-18/P0-19 在线启动预检与复现证据；公共评测配置。 |
+| 新建 | `evals/p019/online.py` | 实现三策略 Fast 预检、Latin-square 180 条调度、进度 manifest/`--resume`、逐例进程资源采样、三套 P0-18 子报告和 P0-19 在线聚合。 | `reporting.run_and_write`、CLI、在线专项测试；不被生产 PEVR 导入。 |
+| 新建 | `evals/p019/online_config.json` | 固定复用 P0-18 dataset/config、三策略预算、ReAct 上限、交错顺序、采样周期、监听端口和 Smart 禁用状态。 | P0-19 在线 CLI、公平性门禁和可恢复 manifest；公共评测契约。 |
+| 修改 | `evals/p019/contracts.py` | 增加 `online_fast_three_strategy_closed_loop`、在线墙钟/Trace 来源和 `p0-19.online.v1` 报告版本。 | 在线聚合、报告 Schema 和机器消费者；既有离线版本仍兼容。 |
+| 修改 | `evals/p019/dataset.py` | 只允许在线模式精确引用仓库 P0-18 dataset/config，并校验 bounded ReAct 与 Latin-square。 | 在线启动前 fail-closed 公平性门禁。 |
+| 修改 | `evals/p019/replay.py` | 聚合器接收真实在线墙钟、Token、资源和模型 attempts，同时保留离线未观测语义。 | 在线/离线三种执行模式共用的策略汇总。 |
+| 修改 | `evals/p019/reporting.py` | 根据执行模式渲染真实在线身份、墙钟/Token/资源、公平性和 ReAct Trace 说明。 | JSON、Markdown、JSONL 报告消费者。 |
+| 修改 | `evals/p019/run_compare.py` | CLI 增加 `--mode online`、`--resume` 与验证超时，并按模式选择配置。 | PowerShell 入口、手工验收和中断续跑。 |
+| 修改 | `evals/p019/__init__.py` | 导出在线执行器和策略控制契约的稳定入口。 | 测试和后续评测代码；不扩展生产公共接口。 |
+| 修改 | `scripts/run_p019_compare.ps1` | 支持 independent/replay/online、在线默认配置、超时和 `-Resume`；不自动启动 Smart。 | Windows 操作者。 |
+| 修改 | `requirements.in`、`requirements.lock` | 增加直接依赖 `psutil>=7.2,<7.3`，锁定 `7.2.2`。 | 在线进程/监听端口资源采样、环境检查。 |
+| 修改 | `scripts/start_local.ps1` | Fast 父包装器改为 `WindowStyle Hidden`，仍保留 transcript、退出检测和健康等待；Smart 仍不进入路径。 | 本地一键启动与在线测试前置服务。 |
+| 新建 | `tests/unit/test_p019_online.py` | 覆盖同一数据/配置、Latin-square 位置均衡、安全 ReAct retry/stop、资源采样及在线 Token/墙钟聚合。 | P0-19 在线回归门禁。 |
+| 修改 | `tests/unit/test_p020_deployment.py` | 对齐 Fast 包装器隐藏窗口的新启动契约，并继续验证诊断机制存在。 | P0-20 启动器静态回归。 |
+| 修改 | `docs/schemas/P019Report.schema.json`、`docs/schemas/P019StrategyCase.schema.json`、`docs/schemas/P019StrategySummary.schema.json` | 由统一导出脚本同步在线报告版本、执行模式和观测来源；本步无核心代码注释需求。 | P0-19 JSON/JSONL 机器契约与 Schema 回归。 |
+| 修改 | `docs/schemas/DemoWarehouseMap.schema.json`、`docs/schemas/DemoSimulateRequest.schema.json`、`docs/schemas/DemoSimulateResponse.schema.json` | Schema 全量重导出时同步既有运行时 Demo 模型已经更新、但提交产物滞后的中文 description；字段和行为未在本步改变。 | Demo 契约消费者；消除运行时 Schema 漂移。 |
+| 修改 | `docs/P019_STRATEGY_COMPARISON.md` | 记录三策略定义、在线/续跑命令、公平性、180 条实测指标、PEVR 主链边界和限制。 | 用户、后续 Agent、结果复核人员。 |
+| 修改 | `docs/P018_EVAL.md` | 登记同数据集 PEVR 新样本和只涉及复现指纹的配置校正。 | 防止把新三策略结果与历史离线/在线口径混写。 |
+| 修改 | `evals/README.md` | 把 P0-19 入口扩展为真实在线模式，并记录当前报告摘要和恢复方式。 | 评测目录入口。 |
+| 修改 | `docs/LESSONS_LEARNED.md` | 沉淀配置指纹、Trace 保真、有界 ReAct 安全门、资源采样和 Windows 隐藏启动经验。 | 后续在线评测/部署避免重复踩坑。 |
+| 修改 | `docs/HANDOFF_CONTEXT.md` | 更新当前状态、公共契约、实际命令/指标、服务状态、限制和下一步。 | 跨任务唯一交接入口。 |
+| 修改 | `docs/FILE_PURPOSES.md` | 登记本步全部源码、配置、Schema、测试、文档和生成物边界。 | 文件职责唯一入口；本行文档无核心代码注释需求。 |
+| 生成（不入源码） | `tmp/p019_online_strategy_compare/` | 保存 manifest、180 行进度、180 行原始轨迹、最终报告和三策略 P0-18 子报告。 | 本次实测复核与中断恢复；不得登记成公共契约或手工编辑。 |
+
+## 2026-08-28：README 增加三策略实验结果与异常恢复案例
+
+本步只修改 Markdown 文档，没有新增或修改 Python/C++ 核心代码，因此无核心代码注释需求。
+`tmp/p019_online_strategy_compare/` 继续作为不可变运行证据，没有手工修改；`build/`、
+`__pycache__/`、`.pytest_cache/` 等自动生成物也不属于本步源码交付。
+
+| 变更 | 文件 | 作用 | 调用方/下游 |
+|---|---|---|---|
+| 修改 | `README.md` | 新增四列三策略在线结果表、总体成本/收益对比，并用低电量、计划不可行、幂等超时和工位占用四个逐例结果说明 PEVR 的异常恢复优势与预算边界。 | GitHub 项目首页、用户和面试/实验结果阅读者。 |
+| 修改 | `docs/P019_STRATEGY_COMPARISON.md` | 将“异常终态正确”统一为最终 expected/observed 口径 9/10，并解释生成报告中动作级 10/10 字段的差异。 | README 详细链接、实验复核人员和后续评测维护者。 |
+| 修改 | `docs/P018_EVAL.md` | 同步 P0-19 PEVR 子报告的严格终态口径，防止把恢复动作发生率继续称为最终成功率。 | P0-18/P0-19 结果引用者。 |
+| 修改 | `docs/LESSONS_LEARNED.md` | 沉淀“恢复动作达标不等于最终异常终态正确”的指标命名与聚合陷阱。 | 后续报告契约、指标实现和文档维护者。 |
+| 修改 | `docs/HANDOFF_CONTEXT.md` | 更新顶部指标、P0-19 历史条目，并记录本次文档范围、验证命令、未运行项和已知聚合限制。 | 跨任务唯一交接入口。 |
+| 修改 | `docs/FILE_PURPOSES.md` | 登记本次全部文档变更和生成物不修改边界。 | 文件职责唯一入口；本行无核心代码注释需求。 |
+
 
 
 

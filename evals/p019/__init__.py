@@ -9,16 +9,19 @@ from .contracts import (
     StrategyCaseResult,
     StrategySummary,
 )
-from .dataset import DEFAULT_CONFIG_PATH, DEFAULT_SOURCE_REPORT_PATH, load_config
+from .dataset import DEFAULT_CONFIG_PATH, DEFAULT_ONLINE_CONFIG_PATH, DEFAULT_SOURCE_REPORT_PATH, load_config
 from .independent import run_independent_comparison
+from .online import OnlineThreeStrategyComparison, run_online_comparison
 from .replay import compare_source_report, load_source_report, run_comparison
 
 __all__ = [
     "DEFAULT_CONFIG_PATH",
+    "DEFAULT_ONLINE_CONFIG_PATH",
     "DEFAULT_SOURCE_REPORT_PATH",
     "P019ExecutionMode",
     "P019Report",
     "P019Strategy",
+    "OnlineThreeStrategyComparison",
     "ResourceObservation",
     "SmartComparisonStatus",
     "StrategyCaseResult",
@@ -28,4 +31,5 @@ __all__ = [
     "load_source_report",
     "run_comparison",
     "run_independent_comparison",
+    "run_online_comparison",
 ]

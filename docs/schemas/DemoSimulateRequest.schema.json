@@ -1,6 +1,6 @@
 {
   "additionalProperties": false,
-  "description": "POST /demo/simulate 请求体；只允许选择种子数据中已存在的订单 ID。\n\n服务端会校验 order_id 属于 warehouse_v1@seed-v1；未知 ID 返回 404，\n而不是默默跑一份前端编造的订单。",
+  "description": "POST /demo/simulate 请求体；只允许选择种子数据中已存在的订单 ID。\n\n服务端会校验 order_id 属于 warehouse_v1@eval-hard 快照；未知 ID 返回 404，\n而不是默默跑一份前端编造的订单。",
   "properties": {
     "order_id": {
       "default": "ORDER-001",

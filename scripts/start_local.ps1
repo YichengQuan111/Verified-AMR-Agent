@@ -164,13 +164,12 @@ try {
             throw '8080 已被未知或凭据不匹配的进程占用；未覆盖该进程。'
         }
         if (-not $listener) {
-            # 不用 Hidden：隐藏窗口里 Write-Host/Invoke-WebRequest 可能把启动子进程卡死，
-            # 父脚本却还在空等 /health。最小化窗口仍能在任务栏看到 llama-server。
+            # 后台启动器不需要交互窗口；进度输出已禁用，故障统一写固定 transcript。
             $shell = if (Get-Command pwsh.exe -ErrorAction SilentlyContinue) { 'pwsh.exe' } else { 'powershell.exe' }
             $fastProc = Start-Process -FilePath $shell `
                 -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $secureFastScript) `
                 -WorkingDirectory $projectRoot `
-                -WindowStyle Minimized `
+                -WindowStyle Hidden `
                 -PassThru
             Write-Host "[info] Fast 启动器 PID=$($fastProc.Id)"
         }

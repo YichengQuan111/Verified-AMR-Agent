@@ -47,12 +47,18 @@ seed 通道障碍，调用真实 Qwen3.6 Fast。完成率按观察终态记录�
 
 ## P0-19 策略对照实验
 
-P0-19 默认对固定 Workflow、ReAct、PEVR 做 `offline_independent_oracle` 独立执行；
-同源 `offline_trace_replay` 仅可视化。ReAct 不接入生产主链；Token/资源未观测。Smart 延期。
+P0-19 保留 `offline_independent_oracle` 契约回归和只作可视化的 `offline_trace_replay`，并新增
+`online_fast_three_strategy_closed_loop`。在线模式让固定 Workflow、有界 ReAct、生产 PEVR
+分别真实执行与上节 P0-18 在线闭环完全相同的 60 例，共 180 条；三者按 Latin-square 交错，
+使用同一 Fast 制品、P0-18 在线配置、Prompt、ToolSpec、地图、seed 和计分器。ReAct 最多一次
+经确定性安全门允许的模型决定 retry，不保存原始思维链，也不接入生产主链。Smart 继续延期。
 
 ```powershell
-.\scripts\run_p019_compare.ps1
+.\scripts\run_p019_compare.ps1 -Mode online -OutputDir tmp\p019_online_strategy_compare
 ```
 
-完整契约、指标口径、原始结果、汇总表和当前结论见
+中断后对同一目录增加 `-Resume`；manifest 会在跳过已落盘条目前校验数据集、配置和调度摘要。
+2026-08-27 实测报告 `p019-online-45906c9d5366a0e9` 完成 180/180：Fixed、ReAct、PEVR
+全例预期符合分别为 53/60、54/60、59/60，任务完成分别为 37/44、38/44、43/44，七项
+零容忍均为 0。完整契约、Token/墙钟/资源口径、原始结果和限制见
 [docs/P019_STRATEGY_COMPARISON.md](../docs/P019_STRATEGY_COMPARISON.md)。

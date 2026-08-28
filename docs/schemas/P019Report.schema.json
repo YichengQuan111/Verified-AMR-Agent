@@ -185,7 +185,8 @@
           "default": "p018_trace",
           "enum": [
             "p018_trace",
-            "p018_independent_oracle"
+            "p018_independent_oracle",
+            "online_wall_clock"
           ],
           "title": "Source",
           "type": "string"
@@ -218,7 +219,8 @@
       "description": "P0-19 允许的执行模式。\n\n``offline_independent_oracle`` 是发布验收：三种策略各自执行同一 60 例。\n``offline_trace_replay`` 仅保留为可视化/步数投影，不能再当作策略质量对照。",
       "enum": [
         "offline_independent_oracle",
-        "offline_trace_replay"
+        "offline_trace_replay",
+        "online_fast_three_strategy_closed_loop"
       ],
       "title": "P019ExecutionMode",
       "type": "string"
@@ -801,6 +803,7 @@
           "default": "not_observed",
           "enum": [
             "p018_trace",
+            "online_trace",
             "not_observed"
           ],
           "title": "Source",
@@ -887,7 +890,8 @@
       "default": "p0-19.v1",
       "enum": [
         "p0-19.v1",
-        "p0-19.v2"
+        "p0-19.v2",
+        "p0-19.online.v1"
       ],
       "title": "Report Version",
       "type": "string"

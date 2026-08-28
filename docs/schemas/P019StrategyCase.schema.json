@@ -151,6 +151,7 @@
           "default": "not_observed",
           "enum": [
             "p018_trace",
+            "online_trace",
             "not_observed"
           ],
           "title": "Source",

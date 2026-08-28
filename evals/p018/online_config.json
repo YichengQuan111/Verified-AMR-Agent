@@ -22,10 +22,10 @@
     "reasoning_enabled": false,
     "reasoning_budget_tokens": 0,
     "artifact_ref": "config/fast_model_manifest.json",
-    "artifact_manifest_sha256": "C447D48593517118C749C22CE13F0D7BA4BF55E89A0363B21C780817079FD138",
+    "artifact_manifest_sha256": "488B5420B1F0B4DEB76E60014E99C3A86820A0559B06EFEA9842237AED0686B4",
     "model_sha256": "B228C988C624DFFE0B57235A395FA79562D4362FED545820F9B7D78908F337E6",
     "runtime_binary_sha256": "76B0A5F72243CCB99079CA71EBD0332F123C52668D815C9D6716A89D46415668",
-    "launch_script_sha256": "74339219191A7EE7B237295BD683AF101DD207763BC16AA089917A3B0734D54C",
+    "launch_script_sha256": "8EC0360C30EA5CC9E17F4C7012EFDEF33C65DEB42D1F1F26DE168966F1693805",
     "online_service_required": true,
     "smart_profile_record": {
       "alias": "qwen3.8-smart",

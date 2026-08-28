@@ -1,9 +1,8 @@
-"""P0-19 策略对照实验的严格 JSON 契约。
+"""P0-19 三策略离线与在线对照的严格 JSON 契约。
 
-P0-19 只对同一份 P0-18 逐例 Trace 做策略控制流投影，不把投影伪装成新的在线
-模型运行。契约因此同时保存源 case、源 Trace、策略投影、可观测性标记和 Smart
-延期状态。后续若新增在线执行模式，必须新增独立 ``execution_mode``，不能覆盖
-当前 replay 结果或把缺失的 Token/资源样本填成猜测值。
+离线独立执行、同源 Trace Replay 与真实 Fast 在线闭环使用互不混淆的
+``execution_mode``。在线结果仍内嵌每个策略自己的 P0-18 case/Trace，并把墙钟、
+Token 与资源采样来源显式标记；缺失值不能伪装成 0。
 """
 
 from __future__ import annotations
@@ -35,6 +34,7 @@ class P019ExecutionMode(str, Enum):
 
     INDEPENDENT_ORACLE = "offline_independent_oracle"
     TRACE_REPLAY = "offline_trace_replay"
+    ONLINE_FAST = "online_fast_three_strategy_closed_loop"
 
 
 class P019Strategy(str, Enum):
@@ -88,7 +88,7 @@ class LatencySummary(P019Contract):
     p50_case_ms: float = Field(ge=0)
     p95_case_ms: float = Field(ge=0)
     max_case_ms: float = Field(ge=0)
-    source: Literal["p018_trace", "p018_independent_oracle"] = "p018_trace"
+    source: Literal["p018_trace", "p018_independent_oracle", "online_wall_clock"] = "p018_trace"
     wall_clock: bool = False
     note: str = Field(min_length=1, max_length=1000)
 
@@ -101,7 +101,7 @@ class TokenSummary(P019Contract):
     input_tokens: int = Field(ge=0)
     output_tokens: int = Field(ge=0)
     total_tokens: int = Field(ge=0)
-    source: Literal["p018_trace", "not_observed"] = "not_observed"
+    source: Literal["p018_trace", "online_trace", "not_observed"] = "not_observed"
     note: str = Field(min_length=1, max_length=1000)
 
 
@@ -266,7 +266,7 @@ class P019Report(P019Contract):
     """P0-19 完整报告，包含原始 180 条策略轨迹和汇总结论。"""
 
     report_id: str = Field(min_length=1, max_length=128)
-    report_version: Literal["p0-19.v1", "p0-19.v2"] = "p0-19.v1"
+    report_version: Literal["p0-19.v1", "p0-19.v2", "p0-19.online.v1"] = "p0-19.v1"
     execution_mode: P019ExecutionMode = P019ExecutionMode.INDEPENDENT_ORACLE
     status: Literal["passed", "failed"]
     generated_at: str = Field(min_length=1)

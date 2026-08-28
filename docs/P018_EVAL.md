@@ -273,3 +273,22 @@ zero tolerance 结果均保持既有口径：所有通过率为 1.0，七项零�
 & 'E:\Anaconda\envs\torch128\python.exe' -m pytest `
   tests\unit\test_p018_online.py tests\unit\test_p018_eval.py -q -p no:cacheprovider
 ```
+
+### 2026-08-27：同数据集的 P0-19 三策略在线复测
+
+P0-19 在线模式严格复用本页的 `evals/p018/dataset.json` 和
+`evals/p018/online_config.json`，让 Fixed、ReAct、PEVR 各跑 60 例。其 PEVR 子报告是一次新的
+完整在线样本：全例符合 59/60、任务完成 43/44、按最终结果重算的异常终态正确 9/10、正常订单 20/20、
+充电 5/5 `charged`、七项零容忍 0，与上面的当前 P0-18 引用一致；模型调用为 132，因模型输出
+与结构化修复存在跨次波动，不能要求与 2026-08-23 的 133 次相同。
+
+该子报告自动聚合的 `recovery_terminal_correct_count=10` 使用“是否发生预期恢复动作”的旧口径：
+`p018-exception-004` 虽已 retry/replan 并生成 v2，最终仍因工具步预算耗尽而 `failed`。因此该字段
+不能作为最终终态正确率；逐例终态的严格结果为 9/10，原始产物不手工修改。
+
+本次只把在线配置里已经过期的 Fast reproducibility 指纹校正为当前受控制品事实，未改变地图、
+模型参数、Prompt、工具、预算或计分逻辑：manifest SHA-256 为
+`488B5420B1F0B4DEB76E60014E99C3A86820A0559B06EFEA9842237AED0686B4`，launcher SHA-256 为
+`8EC0360C30EA5CC9E17F4C7012EFDEF33C65DEB42D1F1F26DE168966F1693805`，配置文件 SHA-256 为
+`FC6945218FA22AC64D6EEF5FF57414FE987269680C051A0BA98717D5B5FFC5EF`。三策略报告与详细口径见
+`docs/P019_STRATEGY_COMPARISON.md`。

@@ -554,12 +554,12 @@
 - 解决：manifest `verify_sha256=false`；启动只检查存在和大小。需要发布级哈希时把该字段改回 true 再跑 `verify_fast_artifact.py`。
 - 避免：不要把报告里的 model_sha256 在关闭校验后写成“本次启动已重算”。
 
-## 2026-08-21 · Hidden 启动器空等 /health 不等于模型在加载
+## 2026-08-21 · Hidden 启动器必须先具备可观察的失败通道（2026-08-28 更新）
 
 - 现象：终端只打印“等待 /health”就回到提示符；任务管理器没有 llama-server。
-- 原因：父脚本 `Start-Process -WindowStyle Hidden` 后，子进程卡住或立刻失败都看不见；Ctrl+C 只停父进程，隐藏子进程可能还在。`Start-Process -ArgumentList` 给 `--model` 再套一层引号也会让 llama-server 起不来。
-- 解决：最小化窗口、写 `tmp/fast_secure.transcript.log`，子进程一退出就把日志尾抛给父脚本。
-- 避免：不要在没看到 `llama-server.exe` 之前把空等当成“正在加载”。
+- 原因：问题不在 Hidden 本身，而在隐藏前没有禁用 PowerShell 进度输出、没有 transcript/标准流重定向、父进程不检查 launcher 退出，以及 `Start-Process -ArgumentList` 给 `--model` 再套一层引号导致 llama-server 起不来。
+- 最终解决：`start_local.ps1` 的父包装器可以用 `WindowStyle Hidden`，但父子脚本都设置 `ProgressPreference=SilentlyContinue`；安全启动器写 `tmp/fast_secure.transcript.log`，llama-server 的 stdout/stderr 写独立日志，父包装器发现 launcher 退出立即抛日志尾。模型路径保持单独 argv。2026-08-28 已实际验证隐藏父包装器能成功启动 8080/18080；内层 llama-server 仍不叠加 `WindowStyle Hidden`。
+- 后续避免：Hidden 只能是 UI 选择，不能删除诊断通道。没有 PID/退出码/transcript/标准流/健康超时中的任一项时，不要把空等当成“正在加载”，也不要留下无法精确停止的隐藏子进程。
 
 ## 2026-08-21 · Planner 的 release_time 预定位会提前踩到 pickup 格，与 Validator 首次到达语义冲突
 
@@ -793,5 +793,62 @@
 - 原因：approve 已把行写成 approved。resume 若没把 grant 放进 `PEVRRequest`，execute 仍看到 checkpoint 里的 interrupt，再次 `raise PEVRInterrupt`（exit 3），产物还是 waiting。页面以为还要审。拒绝打到已批准行，store 只允许 pending。
 - 最终解决：已批准时从 store `get_grant` 恢复并继续 dispatch。status 在 CLI 非 0/3 退出时即使有旧 waiting JSON 也报 failed。拒绝已批准返回「审批已批准，不能再拒绝」。页面记住刚批准的 `approval_id`，同一张卡禁用按钮。
 - 后续避免：不要把「产物 JSON 仍是 waiting」当成唯一真相；要看进程退出码和数据库审批状态。HITL 是一次性决定，approved 后只能 resume，不能再 reject。
+
+## 2026-08-28 · 在线配置中的制品指纹必须在启动前对照实物
+
+- 现象：P0-18 在线配置仍写旧 manifest/launcher SHA-256，而当前受控 manifest、模型、运行时和启动脚本已经是另一组固定制品；若 P0-19 只比较配置文字，三策略会在错误身份上“公平”。
+- 原因：配置记录和文件实物的生命周期不同。此前更新安全启动器后没有同步评测配置，模型 alias 相同掩盖了制品漂移。
+- 最终解决：在线三策略启动前分别检查 alias、量化、ctx、temperature、manifest/model/runtime/launcher 哈希；任一不一致 fail closed。本步只校正 P0-18 配置中两个过期哈希，未改运行行为。
+- 后续避免：报告必须同时保存配置 SHA、manifest SHA、模型 SHA 和启动器 SHA。不能把“配置里写了某哈希”表述为“本次重新计算并通过”，除非启动预检确实对照了文件。
+
+## 2026-08-28 · 在线策略对照不能裁掉源 Trace 的 Token、时间和失败尾部
+
+- 现象：旧 P0-18 在线适配把 P0-17 Trace 投影成少数字段，模型 attempts、Token、时间戳、Prompt/模型版本、metadata 和失败终态丢失；P0-19 因而无法真实比较调用量与墙钟。
+- 原因：为了缩小报告而重造 Trace，破坏了已有可观测性公共契约；失败时只看异常对象又会漏掉 Checkpoint 中已经完成的节点和最后错误事件。
+- 最终解决：在线 Harness 保留完整 P0-17 `TraceEvent`，失败也回读 Checkpoint 并追加终态；模型调用数从实际 model event/attempts 统计，ReAct 控制器单独计量。策略只改控制动作，不改历史证据。
+- 后续避免：评测层可以新增 derived metric，不能用有损投影替代 source trace。报告变大应通过 JSONL/压缩解决，不要删除复现与计费字段。
+
+## 2026-08-28 · 有界 ReAct 的安全门必须在模型决定之前
+
+- 现象：如果先问模型“要不要 retry”，再检查副作用和幂等性，模型即使输出结构化 `retry` 也可能诱导重复发车；保存自由文本推理还会把不可信上下文和敏感证据带进报告。
+- 原因：LLM 不能成为副作用安全性的最高裁判，Schema 只约束格式，不保证决定安全；完整思维链也不是审计所必需。
+- 最终解决：只在 `retryable && idempotent && (!has_side_effects || side_effect_not_found)` 时调用恢复控制器；最多一次 retry、零 replan。Trace 仅保存 action、reason code、简短 observation summary 和确定性安全事实，明确 `raw_chain_of_thought_stored=false`。
+- 后续避免：任何开放 ReAct 扩展都必须先定义确定性动作白名单、预算、幂等/副作用证明和停止出口。不要把“模型认为安全”当成安全证据。
+
+## 2026-08-28 · 高频 `nvidia-smi` 会把资源评测变成自己的噪声源
+
+- 现象：若 CPU/RSS/GPU 都按 0.5 秒调用外部命令采样，短 sidecar case 的大部分开销来自启动 `nvidia-smi`，而 Windows/WDDM 也不保证能按 PID稳定返回显存。
+- 原因：CPU/RSS 可从 `psutil` 低成本读取，GPU 查询却要新建进程；三类指标不能机械使用同一周期。
+- 最终解决：CPU/RSS 每 0.5 秒采样评测进程、子进程和 8080/18080 监听进程；GPU 查询降到约 5 秒，并把缺失样本保留为不可观测/近似说明。汇总只报告进程级峰值，不解释为单节点因果成本。
+- 后续避免：资源报告必须同时给采样对象、周期、样本数和缺失原因。GPU 0 或空值不能直接推导为“模型没占显存”。
+
+## 2026-08-28 · 长在线矩阵续跑必须绑定不可变 manifest
+
+- 现象：三策略 60 例是 180 次在线调用，运行跨小时；中断后按行号手工“从第 100 条开始”容易重复副作用、漏 case，或在配置已变时拼接两次实验。
+- 原因：行号只是当前调度视图，不是稳定身份；真正唯一键是 `strategy + case_id`，还必须绑定数据集、配置和调度摘要。
+- 最终解决：先写运行 manifest，再逐例原子追加 JSONL；`--resume` 校验 dataset/config/schedule digest 后只跳过完整的唯一键。本轮第 100 条已落盘，后台继续完成到 180/180，没有重跑第 100 条。
+- 后续避免：不要用 `Select-Object -Skip 99` 之类手工切数据集。恢复后仍要核对 180 行、180 个唯一键和三策略各 60 个完整 case ID 集。
+
+## 2026-08-28 · 全量 Schema 重导出会暴露既有 description 漂移
+
+- 现象：为 P0-19 重导 Schema 时，三个 Demo Schema 的中文 description 也发生变化，虽然本步没有修改 Demo 字段或行为。
+- 原因：运行时 Demo Pydantic docstring 已在此前更新，checked-in Schema 没有同步；统一导出会把所有当前模型重新物化。
+- 最终解决：逐项审查 diff，确认只校正 description 后保留这三份机械更新，并在文件职责/交接中明确“既有漂移修复、无契约字段变化”。
+- 后续避免：Schema 导出后不能只看目标文件；必须审查全量 diff，并区分本步接口变化与暴露出的历史生成物漂移。
+
+## 2026-08-28 · 恢复动作达标不等于最终异常终态正确
+
+- 现象：P0-19 的 PEVR 自动汇总显示 `recovery_terminal_correct_count=10/10`，但 10 个异常例中
+  `p018-exception-004` 的期望终态是 `completed`，实际终态是 `failed/recovery_fallback`；若直接
+  把字段名抄到 README，就会与全例符合 59/60、唯一失败例的逐例事实矛盾。
+- 原因：评测侧 `_exception_recovery_ok` 对需要 replan 的异常主要检查 `replan_count>=1` 和
+  `plan_version>=2`，衡量的是“预期恢复动作/新版本是否发生”，没有再次要求最终
+  `expected_outcome == observed_outcome`。字段名称把动作级指标误写成了终态级指标。
+- 最终解决：README、P0-19/P0-18 说明和交接文档统一按逐例最终 expected/observed 结果重算，
+  Fixed/ReAct/PEVR 为 3/10、4/10、9/10；原始 JSON/JSONL 保持为不可变实验产物，并明确其中
+  10/10 字段的旧口径。本步只做文档校正，没有静默修改评测代码或报告 digest。
+- 后续避免：报告同时保留“恢复动作达标”和“最终终态正确”时，必须使用不同字段名和测试；面向
+  用户的成功率一律从最终终态重算。若后续修复聚合器，应版本化报告契约、增加
+  `exception-004` 反例，并重新生成新报告，不能手改历史 artifact。
 
 

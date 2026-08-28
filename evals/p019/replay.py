@@ -154,22 +154,31 @@ def _percentile(values: Sequence[float], percentile: float) -> float:
     return round(float(statistics.quantiles(list(values), n=100, method="inclusive")[int(percentile) - 1]), 6)
 
 
-def _trace_tokens(events: Sequence[Mapping[str, Any]]) -> TokenSummary:
-    """从真实 model Trace 汇总 Token；当前 P0-18 没有该类事件。"""
+def _trace_tokens(
+    events: Sequence[Mapping[str, Any]],
+    *,
+    source: str = "p018_trace",
+) -> TokenSummary:
+    """从真实 model Trace 汇总 Token，并把 Schema 修复尝试计入调用数。"""
 
     model_events = [event for event in events if event.get("event_type") == "model"]
     input_tokens = sum(int(event.get("input_tokens") or 0) for event in model_events)
     output_tokens = sum(int(event.get("output_tokens") or 0) for event in model_events)
     total_tokens = sum(int(event.get("total_tokens") or 0) for event in model_events)
     observed = bool(model_events)
+    model_call_count = 0
+    for event in model_events:
+        metadata = event.get("metadata")
+        attempts = metadata.get("attempts") if isinstance(metadata, Mapping) else None
+        model_call_count += int(attempts) if isinstance(attempts, int) and attempts > 0 else 1
     return TokenSummary(
         observed=observed,
-        model_call_count=len(model_events),
+        model_call_count=model_call_count,
         input_tokens=input_tokens,
         output_tokens=output_tokens,
         total_tokens=total_tokens,
-        source="p018_trace" if observed else "not_observed",
-        note="P0-18 model Trace 已提供 usage。" if observed else TOKEN_NOTE,
+        source=source if observed else "not_observed",  # type: ignore[arg-type]
+        note="在线/源 model Trace 已提供 usage。" if observed else TOKEN_NOTE,
     )
 
 
@@ -336,6 +345,7 @@ def _aggregate(
     results: Sequence[StrategyCaseResult],
     *,
     latency_source: str = "p018_trace",
+    wall_clock: bool = False,
 ) -> StrategySummary:
     """完全从逐例策略结果重算汇总表，不接受外部预填数字。"""
 
@@ -352,14 +362,18 @@ def _aggregate(
     steps = [float(item.step_count) for item in results]
     tokens = [item.token_usage for item in results]
     token_observed = any(item.observed for item in tokens)
+    observed_token_source = next(
+        (item.source for item in tokens if item.observed),
+        "not_observed",
+    )
     token_usage = TokenSummary(
         observed=token_observed,
         model_call_count=sum(item.model_call_count for item in tokens),
         input_tokens=sum(item.input_tokens for item in tokens),
         output_tokens=sum(item.output_tokens for item in tokens),
         total_tokens=sum(item.total_tokens for item in tokens),
-        source="p018_trace" if token_observed else "not_observed",
-        note="P0-18 model Trace 已提供 usage。" if token_observed else TOKEN_NOTE,
+        source=observed_token_source,
+        note="在线/源 model Trace 已提供 usage。" if token_observed else TOKEN_NOTE,
     )
     resources = [item.resource for item in results if item.resource.observed]
     if resources:
@@ -369,8 +383,8 @@ def _aggregate(
             cpu_time_ms=sum(item.cpu_time_ms or 0 for item in resources),
             peak_rss_mb=max((item.peak_rss_mb or 0 for item in resources), default=None),
             peak_gpu_memory_mb=max((item.peak_gpu_memory_mb or 0 for item in resources), default=None),
-            source="p018_trace",
-            reason="资源样本由源 Trace metadata 显式提供。",
+            source=resources[0].source,
+            reason="资源样本由逐例显式采样结果汇总。",
         )
     else:
         resource = ResourceObservation(observed=False, sample_count=0, source="not_observed", reason=RESOURCE_NOTE)
@@ -412,8 +426,16 @@ def _aggregate(
             p95_case_ms=_percentile(latencies, 95),
             max_case_ms=round(max(latencies, default=0.0), 6),
             source=latency_source,  # type: ignore[arg-type]
-            wall_clock=False,
-            note=TRACE_DURATION_NOTE if latency_source == "p018_trace" else "延迟来自各策略独立离线 Trace，不是在线服务墙钟测量。",
+            wall_clock=wall_clock,
+            note=(
+                "逐例延迟来自真实在线执行墙钟，包含模型、工具、HITL 与评测控制器。"
+                if wall_clock
+                else (
+                    TRACE_DURATION_NOTE
+                    if latency_source == "p018_trace"
+                    else "延迟来自各策略独立离线 Trace，不是在线服务墙钟测量。"
+                )
+            ),
         ),
         resource=resource,
         zero_tolerance=ZeroToleranceMetrics(**zero),

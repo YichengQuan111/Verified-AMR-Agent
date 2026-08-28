@@ -14,6 +14,7 @@ from typing import Any
 
 from .contracts import P019Report, P019Strategy, StrategySummary
 from .independent import run_independent_comparison
+from .online import run_online_comparison
 from .replay import run_comparison
 
 
@@ -66,12 +67,30 @@ def report_to_markdown(report: P019Report) -> str:
     """生成包含公平性、三策略汇总、原始证据和 Smart 状态的 Markdown。"""
 
     summaries = {item.strategy: item for item in report.strategies}
+    online_mode = report.execution_mode.value == "online_fast_three_strategy_closed_loop"
+    if online_mode:
+        model_note = "本次真实在线调用，同一 Fast 制品身份经三套 Harness 分别预检"
+        evidence_note = "三策略各自的真实在线 Trace 与实际控制事件"
+        # 在线模式没有单一源报告文件，path 指向固定数据集；必须配对 dataset_sha256，
+        # 不能把三份策略报告的组合身份误标成数据集文件哈希。
+        source_label = "P0-18 固定数据集"
+        source_sha256 = report.source_report.get("dataset_sha256")
+    elif report.execution_mode.value == "offline_independent_oracle":
+        model_note = "独立离线对照"
+        evidence_note = "三策略各自的离线 Trace"
+        source_label = "P0-18 源报告"
+        source_sha256 = report.source_report.get("sha256")
+    else:
+        model_note = "本次 replay 不新增在线模型调用"
+        evidence_note = "同源 Trace 与派生控制投影"
+        source_label = "P0-18 源报告"
+        source_sha256 = report.source_report.get("sha256")
     lines = [
         "# P0-19：策略对照实验报告",
         "",
         f"- 报告：`{report.report_id}`；状态：**{report.status}**；版本：`{report.report_version}`",
         f"- 执行模式：`{report.execution_mode.value}`；身份：`{_md(report.source_report.get('report_id'))}` / `{_md(report.source_report.get('report_digest'))}`",
-        f"- 模型：`qwen3.6-fast`（继承 P0-18 Fast 配置与身份指纹；{'独立离线对照' if report.execution_mode.value == 'offline_independent_oracle' else '本次 replay 不新增在线模型调用'}）",
+        f"- 模型：`qwen3.6-fast`（{model_note}）",
         "",
         "## 公平性门禁",
         "",
@@ -87,7 +106,7 @@ def report_to_markdown(report: P019Report) -> str:
         "",
         "## 汇总表",
         "",
-        "任务完成率按 44 个正向 case 计算；全例预期符合率包含 16 个正确 denied/blocked 负向 case。计划合法率只在出现 plan/validate 证据的 33 例上计算；异常恢复率覆盖全部 10 个异常 case，成功重规划率只表示实际完成的恢复路径。",
+        "任务完成率按固定数据集的正向 case 计算；全例预期符合率也包含正确 denied/blocked 的负向 case。计划合法率只统计实际出现 plan/validate 证据的 case；异常恢复率覆盖固定异常集，成功恢复率只表示最终完成的异常路径。",
         "",
         "| 策略 | 全例预期符合率 | 任务完成率 | 计划合法率 | 异常终止正确率 | 成功重规划率 | 工具错误/意外 | 步数均值/P95 | Token | Trace 延迟 P95 | 资源 |",
         "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |",
@@ -131,10 +150,14 @@ def report_to_markdown(report: P019Report) -> str:
             "",
             "## 原始结果与复核",
             "",
-            f"- 完整 JSON（含 180 条策略-case、源 case、源 Trace、策略投影）：`p019_strategy_comparison.json`。",
+            f"- 完整 JSON（含 180 条策略-case、源 case、源 Trace、{evidence_note}）：`p019_strategy_comparison.json`。",
             f"- JSONL 原始轨迹（每行一个策略-case）：`p019_raw_trajectories.jsonl`。",
-            f"- P0-18 源报告：`{_md(report.source_report.get('path'))}`，SHA-256=`{_md(report.source_report.get('sha256'))}`。",
-            "- ReAct 每个源事件都展开为可审计的 think/act/observe 投影；投影不重新调用工具、不改变结果，新增步数是控制流开销而非在线耗时。",
+            f"- {source_label}：`{_md(report.source_report.get('path'))}`，SHA-256=`{_md(source_sha256)}`。",
+            (
+                "- 在线 ReAct 只保存结构化 retry/stop 决定与确定性安全门禁，不保存原始思维链；Fixed/PEVR 也保存各自实际控制事实。"
+                if report.execution_mode.value == "online_fast_three_strategy_closed_loop"
+                else "- Replay 模式的 ReAct think/act/observe 仅是可视化投影，不代表新的在线调用。"
+            ),
             "",
             "## 结论",
             "",
@@ -167,15 +190,26 @@ def run_and_write(
     config: str | Path,
     output_dir: str | Path,
     mode: str = "independent",
+    resume: bool = False,
+    verification_timeout_seconds: float = 120.0,
 ) -> tuple[P019Report, tuple[Path, Path, Path]]:
-    """CLI/测试共用的执行与落盘入口。默认独立对照，replay 必须显式指定。"""
+    """CLI/测试共用入口；在线模式额外支持逐 case 安全恢复。"""
 
     if mode == "replay":
         if source_report is None:
             raise ValueError("Trace Replay 模式必须提供 source_report")
         report = run_comparison(source_report_path=source_report, config_path=config)
-    else:
+    elif mode == "online":
+        report = run_online_comparison(
+            config_path=config,
+            output_dir=output_dir,
+            verification_timeout_seconds=verification_timeout_seconds,
+            resume=resume,
+        )
+    elif mode == "independent":
         report = run_independent_comparison(config_path=config)
+    else:
+        raise ValueError(f"未知 P0-19 mode: {mode}")
     return report, write_report(report, output_dir=output_dir)
 
 
