@@ -82,7 +82,7 @@ top.vector_score >= 0.499
 阈值来自真实评测，不是模型名推断值。移除非证据 section 后，初始问题集的可答最低 hybrid 为 0.821220，不可答最高为 0.797038，中点约 0.809。加入更短的语义改写“AMR 当前电量 25% 属于哪个区间？”后，hybrid 单阈值不再可分；在 hybrid 未达标子集中，该可答问题 top vector 为 0.597388，3 个不可答问题为 0.320516～0.400358，中点为 0.498873，因此 vector 补充门禁取 0.499。
 
 阈值只允许从 `evals/rag/cases.json` 的 calibration 子集建议；对外发布的 Recall/MRR/
-citation/answerability/ACL 只在 test+attack holdout 上计算。CLI 在这些指标失败或
+Precision/nDCG/citation/answerability/ACL 只在 test+attack holdout 上计算。CLI 在默认发布指标失败或
 `citation_total=0` 时必须非零退出。2026-08-20 的 20 例同集数字（MRR=0.970588 等）
 仅作为历史基线，不能再当作发布 holdout 指标。
 
@@ -123,26 +123,41 @@ $env:TRANSFORMERS_OFFLINE = '1'
   --output .\tmp\p007_rag_eval.json
 ```
 
-需要从源文档开始复现时增加 `--rebuild-index`。评测报告包含每例候选、原始/融合分数、answerable/unanswerable 分布、建议阈值、Recall@K、MRR、section recall、Citation Correctness、answerability accuracy 和 ACL leak 明细。
+需要从源文档开始复现时增加 `--rebuild-index`。评测报告包含每例候选、原始/融合分数、answerable/unanswerable 分布、建议阈值、Recall@K、MRR、section recall、Precision@K、nDCG@K、Citation Correctness、answerability accuracy 和 ACL leak 明细。
+
+Precision@K 与 nDCG@K 默认作为诊断指标输出。由于它们是在本次需求前没有预先冻结门槛的新增指标，
+不能读取 holdout 分数后再反向设置默认阈值；如需将其纳入某次独立验收，可显式传入
+`--min-precision-at-k` 与 `--min-ndcg-at-k`，门禁不达标时同样以退出码 2 失败。
 
 ## 6. 指标定义与当前实测
 
 - Recall@K：每个可答 case 的期望文档在 Top-K 中的召回比例，再对 case 求平均。
 - MRR：每个可答 case 第一个期望文档的 reciprocal rank，再求平均。
 - Section Recall@K：期望 `(doc_id, section)` 在 Top-K 中的召回比例。
+- Precision@K：以唯一 `(doc_id, section)` 为相关单元，相关章节第一次命中记 1，重复 chunk 记 0；
+  每例除以其冻结的 K，再对可答 case 宏平均。候选不足 K 时尾部按 0 处理。
+- nDCG@K：沿用同一章节级二元增益，按 `1/log2(rank+1)` 折损后除以理想 DCG；不可答 case 因没有
+  相关性 oracle，不参与 Precision 或 nDCG。
 - Citation Correctness：公开响应中的 citation 是否逐字段回指当前源 chunk 的 doc/version/section/checksum/text。
 - ACL leak count：阈值前全部候选中，角色不匹配或命中 case 禁止文档的次数。
 
-2026-08-20 当前真实 Qwen3-Embedding + Qdrant 结果：
+2026-08-28 使用真实 Qwen3-Embedding-0.6B + Qdrant/BM25 执行
+`python -m evals.rag.run_eval --output tmp\p020_release_rag_eval_rank_metrics.json`。固定 20 例中
+8 例只用于校准，以下发布结果只统计 8 test + 4 attack holdout，其中 11 例可回答、1 例应拒答：
 
 | 指标 | 结果 |
 |---|---:|
-| cases | 20 |
+| published cases | 12 |
 | Recall@K | 1.000000 |
-| MRR | 0.970588 |
+| MRR | 1.000000 |
 | Section Recall@K | 1.000000 |
-| Citation Correctness | 1.000000（88/88） |
+| Precision@K | 0.236364 |
+| nDCG@K | 1.000000 |
+| Citation Correctness | 1.000000（58/58） |
 | Answerability Accuracy | 1.000000 |
 | ACL leak count | 0 |
 
-评测集当前为 17 个可答问题和 3 个不可答问题，覆盖明确事实、语义改写、精确数值/关键词、跨文档、ACL 与无答案拒答。该规模是 P0 验收基线，不代表开放域统计结论。
+Precision@K 的宏平均由 8 个 `1/5` 和 3 个 `2/6` 组成。oracle 只标注回答所必需的章节，未标注候选
+统一按非相关处理，因此它衡量的是必需证据密度，不是对其余候选语义价值的完整人工判定。nDCG@K=1
+表示这些已标注章节均排在理想位置。该规模是当前冻结语料的 P0 holdout 基线，不代表开放域统计结论；
+2026-08-20 的 17 可答 + 3 不可答同集结果继续只作为历史记录。

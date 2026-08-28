@@ -1,14 +1,15 @@
 """运行 20 例 P0-07 RAG 评测并计算排序、引用、ACL 与拒答指标。
 
-阈值只允许从 calibration 子集建议；对外发布的 Recall/MRR/citation/answerability/ACL
-只在未参与调参的 test+attack 上计算。CLI 在任一发布指标失败或 citation_total=0 时
-必须非零退出，不能只按 ACL 假绿。
+阈值只允许从 calibration 子集建议；对外发布的 Recall/MRR/Precision/nDCG/
+citation/answerability/ACL 只在未参与调参的 test+attack 上计算。CLI 在任一启用的
+发布门禁失败或 citation_total=0 时必须非零退出，不能只按 ACL 假绿。
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import math
 import statistics
 import sys
 from pathlib import Path
@@ -174,12 +175,55 @@ def _score_distribution(values: list[float]) -> dict[str, Any]:
     }
 
 
+def calculate_section_rank_metrics(
+    retrieved_sections: list[tuple[str, str]],
+    expected_sections: set[tuple[str, str]],
+    *,
+    k: int,
+) -> tuple[float, float]:
+    """按冻结的文档+章节 oracle 计算 Precision@K 与二元 nDCG@K。
+
+    当前数据集没有逐 chunk 人工相关性等级，因此检索结果以唯一 ``(doc_id, section)``
+    为相关单元：相关章节第一次出现记 1，后续重复 chunk 记 0，避免切块重复抬高指标。
+    Precision 始终除以用例冻结的 K；候选不足 K 等价于尾部补 0。nDCG 使用二元增益，
+    理想排序最多放置 ``min(相关章节数, K)`` 个相关项。不可答 case 没有相关性 oracle，
+    调用方必须将其排除，而不能把拒答误算成 Precision=1。
+    """
+
+    if k < 1:
+        raise ValueError("Precision@K / nDCG@K 的 K 必须大于 0")
+    if not expected_sections:
+        raise ValueError("排序指标必须提供至少一个期望文档+章节")
+
+    seen_relevant: set[tuple[str, str]] = set()
+    gains: list[float] = []
+    for identity in retrieved_sections[:k]:
+        first_relevant_hit = (
+            identity in expected_sections and identity not in seen_relevant
+        )
+        gains.append(1.0 if first_relevant_hit else 0.0)
+        if first_relevant_hit:
+            seen_relevant.add(identity)
+
+    precision_at_k = sum(gains) / k
+    dcg = sum(
+        gain / math.log2(rank + 1)
+        for rank, gain in enumerate(gains, start=1)
+    )
+    ideal_relevant_count = min(len(expected_sections), k)
+    ideal_dcg = sum(
+        1.0 / math.log2(rank + 1)
+        for rank in range(1, ideal_relevant_count + 1)
+    )
+    return precision_at_k, dcg / ideal_dcg
+
+
 def evaluate_metric_gates(
     report: dict[str, Any],
     *,
     gates: dict[str, float] | None = None,
 ) -> list[str]:
-    """发布门禁：ACL、citation 分母和 Recall/MRR/引用/拒答都必须达标。"""
+    """发布门禁：ACL、citation 分母和调用方启用的指标都必须达标。"""
 
     metrics = report.get("metrics")
     if not isinstance(metrics, dict):
@@ -212,6 +256,8 @@ def run_evaluation(
     recall_values: list[float] = []
     reciprocal_ranks: list[float] = []
     section_recall_values: list[float] = []
+    precision_at_k_values: list[float] = []
+    ndcg_at_k_values: list[float] = []
     answerable_scores: list[float] = []
     unanswerable_scores: list[float] = []
     answerable_vector_scores: list[float] = []
@@ -265,6 +311,14 @@ def run_evaluation(
         }
         retrieved_docs = [item.doc_id for item in candidates]
         retrieved_sections = [(item.doc_id, item.section) for item in candidates]
+        case_precision_at_k: float | None = None
+        case_ndcg_at_k: float | None = None
+        if case.answerable:
+            case_precision_at_k, case_ndcg_at_k = calculate_section_rank_metrics(
+                retrieved_sections,
+                expected_sections,
+                k=case.top_k,
+            )
         if publish and case.answerable:
             recall_values.append(
                 len(expected_docs & set(retrieved_docs)) / len(expected_docs)
@@ -282,6 +336,8 @@ def run_evaluation(
                 len(expected_sections & set(retrieved_sections))
                 / len(expected_sections)
             )
+            precision_at_k_values.append(case_precision_at_k)
+            ndcg_at_k_values.append(case_ndcg_at_k)
 
         if publish:
             for result in response.results:
@@ -330,9 +386,18 @@ def run_evaluation(
                 "used_for_threshold_calibration": calibrate,
                 "role_scope": case.role_scope.value,
                 "expected_answerable": case.answerable,
+                "top_k": case.top_k,
                 "status": response.status.value,
                 "top_score": round(top_score, 6),
                 "top_vector_score": round(top_vector_score, 6),
+                "precision_at_k": (
+                    None
+                    if case_precision_at_k is None
+                    else round(case_precision_at_k, 6)
+                ),
+                "ndcg_at_k": (
+                    None if case_ndcg_at_k is None else round(case_ndcg_at_k, 6)
+                ),
                 "retrieved": [
                     {
                         "rank": rank,
@@ -375,6 +440,14 @@ def run_evaluation(
             "section_recall_at_k": (
                 statistics.fmean(section_recall_values) if section_recall_values else 0.0
             ),
+            "precision_at_k": (
+                statistics.fmean(precision_at_k_values)
+                if precision_at_k_values
+                else 0.0
+            ),
+            "ndcg_at_k": (
+                statistics.fmean(ndcg_at_k_values) if ndcg_at_k_values else 0.0
+            ),
             "citation_correctness": (
                 citation_correct / citation_total if citation_total else 0.0
             ),
@@ -384,6 +457,13 @@ def run_evaluation(
             "answerability_accuracy": (
                 answerability_correct / published_count if published_count else 0.0
             ),
+        },
+        "ranking_metric_contract": {
+            "relevance_unit": "unique_doc_id_section",
+            "gain": "binary",
+            "duplicate_relevant_section": "first_hit_only",
+            "precision_denominator": "case_top_k",
+            "unanswerable_cases": "excluded",
         },
         "threshold": {
             "source": "calibration_only",
@@ -425,6 +505,18 @@ def main() -> int:
     parser.add_argument("--min-mrr", type=float, default=DEFAULT_METRIC_GATES["mrr"])
     parser.add_argument("--min-citation", type=float, default=DEFAULT_METRIC_GATES["citation_correctness"])
     parser.add_argument("--min-answerability", type=float, default=DEFAULT_METRIC_GATES["answerability_accuracy"])
+    parser.add_argument(
+        "--min-precision-at-k",
+        type=float,
+        default=None,
+        help="可选 Precision@K 门禁；默认不从本次 holdout 反向设阈值",
+    )
+    parser.add_argument(
+        "--min-ndcg-at-k",
+        type=float,
+        default=None,
+        help="可选 nDCG@K 门禁；默认不从本次 holdout 反向设阈值",
+    )
     parser.add_argument("--output", type=Path, default=None)
     args = parser.parse_args()
 
@@ -499,6 +591,10 @@ def main() -> int:
             "citation_correctness": args.min_citation,
             "answerability_accuracy": args.min_answerability,
         }
+        if args.min_precision_at_k is not None:
+            gates["precision_at_k"] = args.min_precision_at_k
+        if args.min_ndcg_at_k is not None:
+            gates["ndcg_at_k"] = args.min_ndcg_at_k
         gate_failures = evaluate_metric_gates(report, gates=gates)
         report["metric_gates"] = {
             "passed": not gate_failures,

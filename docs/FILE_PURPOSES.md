@@ -217,7 +217,7 @@ P0-01/P0-03 涉及的全部文件、用途、学习顺序、修改前后差异�
 | 修改 | `evals/README.md` | 说明 P0-07 固定数据、执行命令和指标文档入口。 | 操作者能从评测根目录发现可重复命令。 |
 | 新建 | `evals/rag/__init__.py` | 标记 P0-07 RAG 评测包。 | 支持 `python -m evals.rag.run_eval`。 |
 | 新建 | `evals/rag/cases.json` | 固定 20 例事实、改写、数值、关键词、跨文档、ACL 和拒答数据，含角色/金标准/禁止文档。 | 语料、模型、融合或阈值变化必须用同一集合观察分布与回归。 |
-| 新建 | `evals/rag/run_eval.py` | 执行真实查询并计算 Recall@K、MRR、section recall、Citation Correctness、answerability、ACL leak 和阈值分布。 | P0-17 可复用报告字段；ACL leak 非 0 时命令返回非零。 |
+| 新建 | `evals/rag/run_eval.py` | 执行真实查询并计算 Recall@K、MRR、section recall、章节级 Precision@K/nDCG@K、Citation Correctness、answerability、ACL leak 和阈值分布；报告自述排序 oracle，新增两项可选 CLI 门禁。 | P0-17/README 可复用报告字段；默认发布门禁或显式排序门禁失败时命令返回非零。 |
 
 ### 测试、Schema 与文档
 
@@ -1210,6 +1210,36 @@ Fast 运行。新增/修改的核心 Python 已补中文模块说明、docstring
 | 修改 | `docs/LESSONS_LEARNED.md` | 沉淀“恢复动作达标不等于最终异常终态正确”的指标命名与聚合陷阱。 | 后续报告契约、指标实现和文档维护者。 |
 | 修改 | `docs/HANDOFF_CONTEXT.md` | 更新顶部指标、P0-19 历史条目，并记录本次文档范围、验证命令、未运行项和已知聚合限制。 | 跨任务唯一交接入口。 |
 | 修改 | `docs/FILE_PURPOSES.md` | 登记本次全部文档变更和生成物不修改边界。 | 文件职责唯一入口；本行无核心代码注释需求。 |
+
+## 2026-08-28：README 增加 RAG 检索评测章节
+
+本步只修改 Markdown 文档，没有新增或修改 Python/C++ 核心代码，因此无核心代码注释需求。
+`tmp/p020_release_rag_eval.json` 仅作为既有发布证据读取，没有手工修改；`build/`、
+`__pycache__/`、`.pytest_cache/` 等自动生成物不属于本步源码交付。
+
+| 变更 | 文件 | 作用 | 调用方/下游 |
+|---|---|---|---|
+| 修改 | `README.md` | 新增 RAG 检索评测章节，区分 8 例校准集与 12 例 holdout，展示 Recall@K、MRR、章节召回、引用正确率、可答性和 ACL 泄漏实测结果，并明确未测的生成质量指标。 | GitHub 项目首页、RAG 评测使用者和实验结果复核人员。 |
+| 修改 | `docs/HANDOFF_CONTEXT.md` | 记录 RAG 章节的数据划分、指标来源、实际文档验证和未运行项，并更新当前下一步。 | 跨任务唯一交接入口；后续维护者据此避免混用校准集与发布集。 |
+| 修改 | `docs/FILE_PURPOSES.md` | 登记本次文档职责与既有 RAG 报告只读边界。 | 文件职责唯一入口；本行无核心代码注释需求。 |
+
+## 2026-08-28：RAG 实测 Precision@K 与 nDCG@K
+
+本步修改 RAG 评测核心代码，并已同步增加中文模块说明、指标函数 docstring 和边界注释；没有修改
+生产检索器、知识语料、阈值、数据库或 Pydantic Schema。`tmp/p020_release_rag_eval_rank_metrics.json`
+是本次真实 Embedding/Qdrant 运行生成物，只作为复核证据，不登记为源码或公共 Schema；`build/`、
+`__pycache__/`、`.pytest_cache/` 等仍是自动生成物。
+
+| 变更 | 文件 | 作用 | 调用方/下游 |
+|---|---|---|---|
+| 修改 | `evals/rag/run_eval.py` | 按唯一文档+章节二元 oracle 计算 Precision@K 与 nDCG@K，重复相关章节只计首次命中、Precision 固定除以用例 K、不可答例排除；在汇总和逐例 JSON 中输出指标/口径，并提供可选 CLI 门禁。 | `python -m evals.rag.run_eval`、RAG 发布报告和后续机器消费者；属于加法式 JSON 报告契约变化。 |
+| 修改 | `tests/unit/test_rag_eval_gates.py` | 覆盖固定 K、候选不足、重复 chunk 去重、二元 DCG、缺少 oracle 拒绝和显式新门禁失败路径。 | RAG 指标公式与 CLI 门禁回归。 |
+| 修改 | `README.md`、`docs/RAG.md` | 加入真实 holdout Precision@K/nDCG@K、公式口径、稀疏标注限制、可选门禁和未测生成指标边界。 | GitHub 首页、RAG 使用者、实验复核人员。 |
+| 修改 | `docs/TEST_REPORT.md`、`docs/RESUME_FACTS.md` | 将两项新实测值写入测试报告和可对外表述事实，并保留不可答例排除限定。 | 发布验收和简历/项目介绍引用者。 |
+| 修改 | `docs/PROJECT_OVERVIEW.md`、`docs/PROJECT_SETUP.md`、`evals/README.md` | 更新目录职责、RAG 能力、CLI 参数和当前 holdout 结果，替换已经过时的同集历史指标。 | 新开发者、操作者和评测入口使用者。 |
+| 修改 | `docs/LESSONS_LEARNED.md` | 沉淀稀疏必需证据标注导致低 Precision 但高 Recall/nDCG 的解释与防虚高规则。 | 后续扩展 MAP、分级 nDCG 或相关性标注时复用。 |
+| 修改 | `docs/HANDOFF_CONTEXT.md` | 记录加法式 JSON 字段、真实运行命令/报告 SHA、测试结果、服务状态和后续标注边界。 | 跨任务唯一交接入口。 |
+| 修改 | `docs/FILE_PURPOSES.md` | 更新既有评测器职责并登记本步全部源码、测试、文档和生成物边界。 | 文件职责唯一入口；本行文档无核心代码注释需求。 |
 
 
 

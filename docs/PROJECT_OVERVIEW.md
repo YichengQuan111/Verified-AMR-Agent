@@ -133,7 +133,7 @@ BEGIN → INSERT runs → flush → INSERT events → flush → COMMIT
 | `services/amr_simulator/` | P0-11 Python 固定 tick 仿真、P0-10 Validator 适配、状态/订单/工位/充电快照、Observation/事件日志和 Eval 专用故障注入。 |
 | `docs/P012_TOOLS.md` | 九工具清单、Schema、角色/超时/副作用/幂等、固定 C++ 边界和错误/重复调用语义。 |
 | `docs/P017_TRACE_VERIFICATION.md` | Trace 字段、受控验证白名单、日志解析、证据定位和 JSON/Markdown 报告契约。 |
-| `evals/rag/` | 20 例固定 RAG 数据与 Recall/MRR/Citation/ACL 执行器。 |
+| `evals/rag/` | 20 例固定 RAG 数据与 Recall/MRR/Precision/nDCG/Citation/ACL 执行器。 |
 | `evals/p018/` | P0-18 固定 60 例数据、严格契约、离线确定性 Harness、复现指纹、JSON/Markdown 报告和 CLI。 |
 | `evals/p019/` | P0-19 固定策略配置、P0-18 源报告 digest 门禁、三策略 Trace Replay、Token/延迟/资源可观测性标记、原始 JSONL 和汇总报告 CLI。 |
 | `docs/P019_STRATEGY_COMPARISON.md` | P0-19 公平性口径、指标定义、实测汇总、限制、Smart 延期和复核入口。 |
@@ -248,7 +248,7 @@ P0-07 已实现以下闭环：
 - 对两路分数归一化融合，返回带引用的 Top-K。
 - 证据不足时确定性拒答；P0 不实现 Reranker。
 - 交付索引器、查询 CLI、混合检索器、ACL 过滤器和 20 个 RAG 评测样例。
-- 能计算 Recall@K、MRR、引用正确率；跨角色泄漏必须为 0。
+- 能计算 Recall@K、MRR、Section Recall@K、Precision@K、nDCG@K、引用正确率；跨角色泄漏必须为 0。
 
 索引器复用 P0-06 `documents` 表和 `DocumentService`，没有新增数据库 revision。检索结果可转换为 P0-05 `ContextEvidence(source_type="rag")`。详细设计、阈值校准、运行命令和当前 20 例结果见 [docs/RAG.md](docs/RAG.md)。
 
@@ -258,7 +258,7 @@ P0-07 已实现以下闭环：
   --output .\tmp\p007_rag_eval.json
 ```
 
-当前 20 例实测：Recall@K `1.0`、MRR `0.970588`、Citation Correctness `1.0`、Answerability Accuracy `1.0`、ACL leak `0`。P0-08 直接复用 P0-04 的 `TransportOrder`、AMR 状态和嵌套坐标，没有修改本次 RAG 公共契约。
+当前发布口径为固定 20 例中的 12 例 holdout（另 8 例只校准阈值）：Recall@K `1.0`、MRR `1.0`、Precision@K `0.236364`、nDCG@K `1.0`、Citation Correctness `1.0`、Answerability Accuracy `1.0`、ACL leak `0`。Precision/nDCG 使用唯一文档+章节二元 oracle；详细限制见 `docs/RAG.md`。
 
 ## 9. P0-08 C++ Hungarian 任务分配
 

@@ -13,7 +13,7 @@
 | `services/application` | P0-06 运行、计划、审批和文档事务 Service |
 | `services/persistence` | P0-06 SQLAlchemy ORM、会话工厂与无事务 Repository |
 | `services/retrieval` | P0-07 Loader、section chunk、Embedding、Qdrant/BM25、ACL、融合、引用与拒答 |
-| `evals/rag` | P0-07 固定 20 例数据及 Recall/MRR/Citation/ACL 执行器 |
+| `evals/rag` | P0-07 固定 20 例数据及 Recall/MRR/Precision/nDCG/Citation/ACL 执行器 |
 | `services/planner_cpp` | P0-08 `task_allocator`、P0-09 `route_planner` 与 P0-10 `fleet_plan_validator` C++17 库、独立 baseline、JSON CLI 和 CTest |
 | `services/amr_simulator` | P0-11 Python 固定 tick 离散事件仿真、P0-10 Validator 适配、结构化 Observation/事件日志和 Eval 故障注入 |
 | `services/validation` | 后续受控测试和证据报告 |

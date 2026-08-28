@@ -2,7 +2,8 @@
 
 最后更新：2026-08-28
 当前实现里程碑记录：P0-00～P0-20 代码已落地。P0-19 已新增 Fixed Workflow、有界 ReAct、生产 PEVR 的**真实 Fast 三策略完整闭环**：三者分别执行与 P0-18 在线闭环完全相同的固定 60 例，共 180 条；报告 `p019-online-45906c9d5366a0e9` 状态 `passed`，全例符合分别为 53/60、54/60、59/60，任务完成为 37/44、38/44、43/44，按最终 expected/observed 终态计算的异常正确数为 3/10、4/10、9/10，七项零容忍均为 0。现有生成报告的 PEVR `recovery_terminal_correct_count=10/10` 是恢复动作口径，不是最终终态口径；`p018-exception-004` 最终仍为 failed。PEVR 仍是唯一生产主链，图、恢复器、默认预算、Prompt、工具和 Validator 未改；Fixed/ReAct 仅在评测 Harness。2026-08-21 原审计文档仍是 **FAIL** 快照，H06 正式演示视频和真实 dispatch 窗口 OS 强杀仍未补，因此发布 Verdict 仍不能写成 PASS。Smart 继续硬禁用。
-当前下一步：三策略 Todo 已完成，不需要为本次结果改 PEVR 主链。若要提高统计可信度，应在同一 manifest 规则下做多 seed/多轮重复并计算置信区间；Smart 对照必须等待用户明确启用。生产 `warehouse_v1.json` 未改。当前 Compose API/PostgreSQL/Qdrant healthy；Fast 8080/18080 已退出，Smart 未启动。不要把 Docker `:8000` 当作宿主调试端口。
+RAG 评测器现已在真实 12 例 holdout 上补充章节级 Precision@K=`0.236364`、nDCG@K=`1.0`；Recall@K/MRR/Section Recall/Citation/Answerability 仍为 1，ACL leak=0。新字段不修改生产检索、语料或阈值。
+当前下一步：三策略对照和 RAG 排序指标均已收口。若要扩展 MAP、分级 nDCG 或更完整的 Precision，应先冻结完整/分级相关性标注再建立新 holdout，不能按当前分数补标签或设置默认门槛；Smart 对照必须等待用户明确启用。生产 `warehouse_v1.json` 未改。2026-08-28 本步结束实测 Compose API/PostgreSQL/Qdrant healthy，Fast 8080/18080 无监听，Smart 未启动。不要把 Docker `:8000` 当作宿主调试端口。
 
 ## 1. 文档用途与维护要求
 
@@ -2239,4 +2240,74 @@ DAG 使用 `agent.planning.dag.topological_sort()` 中的 Kahn 算法：计算�
   但不能据此推断未来仍在线。Fast/Smart 均未因本次文档修改启动。
 - 下一步直接需要的信息：README 和正式说明统一引用最终终态 9/10；历史生成报告的 10/10 只能
   附带“恢复动作口径”说明。生产 PEVR 主链无须因本次文档校正改动。
+
+### 2026-08-28 · README 增加 RAG 检索评测章节
+
+- 完成：在 `README.md` 的三策略对照之后新增独立 RAG 评测章节，展示 Recall@K、MRR、
+  Section Recall@K、Citation Correctness、Answerability Accuracy 和 ACL 泄漏数，并解释每项指标
+  衡量的对象、Top-K 取值和当前发布门禁。
+- 数据口径：继续引用既有 `tmp/p020_release_rag_eval.json`，没有重新生成或手改报告。固定 20 例中
+  8 例只用于阈值校准，发布成绩只统计 12 例 holdout；holdout 含 11 个可回答问题和 1 个应拒答问题。
+  当前发布结果为 Recall@K=1、MRR=1、Section Recall@K=1、Citation Correctness=1（58/58）、
+  Answerability Accuracy=1（12/12）、ACL leak=0。
+- 当时的关键决策（已由下一条增量实现替代）：校准集不得重复计入发布成绩；检索/引用/拒答/ACL
+  指标也不得被描述成 LLM 生成答案的完整质量评测。该文档步骤发生时 Precision@K、nDCG@K、
+  MAP、Faithfulness 和 Answer Relevance 尚未由评测器输出。
+- 公共接口变化：无 HTTP、Pydantic Schema、数据库字段、JSON 契约、CLI、Prompt、知识库内容、
+  检索阈值或生产 RAG/PEVR 逻辑变化；本步为纯 Markdown 文档修改，无核心代码注释需求。
+- 实际验证：PowerShell 读取 `tmp/p020_release_rag_eval.json`，断言 20 例总数、8/12 校准与发布划分、
+  11 个可回答 holdout、全部六项指标、README 表格片段和 `docs/RAG.md` 链接，输出
+  `PASS: README RAG 章节与 20 例划分、12 例 holdout 及发布指标一致`。
+- 实际验证：`git diff --check` 退出码 0；仅输出既有 LF→CRLF 转换提醒，无空白错误。
+- 未运行：未执行 pytest、CTest、真实 RAG CLI 或 `scripts/run_smoke.ps1`，因为本步只引用既有发布
+  报告并修改说明文档，不修改评测器、运行时代码、配置、Schema 或数据集；不得把历史 RAG 结果
+  冒充为本步重跑。
+- 外部服务：本步没有启动、停止或重新检查 API、PostgreSQL、Qdrant、Fast/Smart 模型服务；
+  README 中的指标来自既有发布证据，不代表服务当前在线。
+- 经验沉淀：校准/holdout 隔离问题已经记录在既有 RAG 审计与经验文档中，本步没有出现新的
+  非显然工程问题，因此不重复修改 `docs/LESSONS_LEARNED.md`。
+- 当时的下一步（Precision/nDCG 已由下条完成）：新增排序指标必须先冻结相关性口径，再修改评测器
+  与门禁并执行新的真实 RAG 评测；MAP 或生成质量指标仍不能从当前指标反推。
+
+### 2026-08-28 · RAG 实测 Precision@K 与 nDCG@K
+
+- 完成：`evals/rag/run_eval.py` 新增章节级 `calculate_section_rank_metrics()`；对每个可答 case
+  使用唯一 `(doc_id, section)` 二元 oracle，相关章节第一次命中记 1、重复 chunk 记 0，
+  Precision 固定除以用例 `top_k`，nDCG 按 `1/log2(rank+1)` 折损并用唯一相关章节构造 IDCG。
+  不可答 case 没有相关性 oracle，逐例字段为 null 且不进入两项宏平均。
+- 加法式报告契约：`metrics` 新增 `precision_at_k`、`ndcg_at_k`；逐例新增 `top_k`、
+  `precision_at_k`、`ndcg_at_k`；顶层新增 `ranking_metric_contract`，保存相关单元、二元增益、
+  重复命中、Precision 分母和不可答排除口径。CLI 新增可选 `--min-precision-at-k`、
+  `--min-ndcg-at-k`；没有新增 Pydantic Schema、数据库字段或 Alembic revision。
+- 关键决策：两项指标始终输出，但不根据已经观察到的 holdout 分数反向加入默认发布门禁；只有操作者
+  为独立验收预先显式给出新门槛时才参与 `evaluate_metric_gates()`。生产 HybridRetriever、Embedding、
+  Qdrant/BM25、ACL、拒答阈值、20 例数据与 8/12 split 均未修改。
+- 真实运行：在既有 healthy Qdrant/PostgreSQL 上设置 `HF_HUB_OFFLINE=1`、
+  `TRANSFORMERS_OFFLINE=1`，执行
+  `E:\Anaconda\envs\torch128\python.exe -m evals.rag.run_eval --output tmp\p020_release_rag_eval_rank_metrics.json`，
+  退出码 0；真实加载 `E:\Llama.cpp\Embedding`，dimension=1024，读取正式 Qdrant collection
+  `amr_warehouse_knowledge` 的 70 points，未重建索引（`index_report=null`）。
+- 真实 holdout：20 例总包中的 8 calibration 不参与发布，12 holdout 含 11 可答 + 1 应拒答。
+  Recall@K=1、MRR=1、Section Recall@K=1、Precision@K=`0.23636363636363636`、nDCG@K=1、
+  Citation Correctness=1（58/58）、Answerability Accuracy=1、ACL leak=0，默认 metric gates
+  passed。11 个可答例中 Precision 分布为 8 个 `0.2`、3 个 `0.333333`；nDCG 11 个全为 1。
+  报告 SHA-256=`2B89EFE02CC616413BEE40FF00ACDCD3A69DC100D96A9FD4A1B778B2A43153A4`。
+- 实际测试：修改后 RAG 单元回归 `13 passed, 1 warning`；加入真实 PostgreSQL/Qdrant 集成后
+  `15 passed, 2 warnings`。新增反例覆盖固定 K、候选不足、重复 chunk、缺 oracle 和显式新门禁失败。
+- 实际测试：`E:\PowerShell7\7\pwsh.exe -NoProfile -File .\scripts\run_smoke.ps1` 退出码 0；
+  环境/依赖、Alembic 8 张核心表、Qdrant 门禁通过，Python **356 passed、2 warnings**，
+  C++ CTest **39/39 passed**。`python -m compileall -q evals\rag tests\unit\test_rag_eval_gates.py`
+  退出码 0。两条 warning 为既有 jieba `pkg_resources` 弃用和本地 HTTP+API key 提示。
+- 实际文档复核：PowerShell 同时读取真实 JSON、README 与 `docs/RAG.md`，断言两项数值、CLI 参数
+  和章节级 oracle 说明一致，输出 `PASS: README、RAG 专题与真实报告的新指标一致`；
+  `git diff --check` 退出码 0，仅有工作区 LF→CRLF 转换提醒，无空白错误。
+- 文档：README、RAG 专题、测试/简历事实、项目概览/目录入口均已加入新指标和稀疏 oracle 限制；
+  `docs/LESSONS_LEARNED.md` 记录“低 Precision 不等于未标注候选都无用”和重复 chunk 防虚高规则。
+- 环境终态：Compose `amr-api`、`amr-postgres`、`amr-qdrant` 实测 healthy，监听仅在 loopback
+  8000/5432/6333/6334；本步不需要也没有启动文本 Fast/Smart，8080/18080 无监听。Embedding
+  只在评测进程内加载，进程已退出。
+- 已知限制/下一步：当前 oracle 是“回答所必需章节”的稀疏二元标注，Precision@K 不能解释为
+  Top-K 全候选的完整语义准确率；nDCG@K=1 也只说明已标注章节排序理想。若要 MAP、分级 nDCG、
+  更强 Precision 或生成 Faithfulness，先独立补齐标签/答案判分契约并版本化，再运行新评测；
+  `tmp/p020_release_rag_eval_rank_metrics.json` 是生成证据，不得手工改写或登记为源码。
 

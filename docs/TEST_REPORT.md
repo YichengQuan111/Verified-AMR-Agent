@@ -34,7 +34,7 @@
 
 - P0-18：独立 `evaluate_oracle()`，未知键 fail closed。本步 `.\scripts\run_p018_eval.ps1 -OutputDir .\tmp\p020_release_p018` 为 60/60、`report_id=p018-85eaad378d39c29d`。
 - P0-19：`offline_independent_oracle`。本步 Workflow 52/60、ReAct 53/60、PEVR 60/60，`report_id=p019-cf6986ed9cc65f8e`。
-- 真实 RAG holdout：Recall@K=1、MRR=1、citation=1、answerability=1、ACL=0；坏阈值退出码 2。
+- 真实 RAG holdout：Recall@K=1、MRR=1、Precision@K=0.236364、nDCG@K=1、citation=1、answerability=1、ACL=0；坏阈值退出码 2。Precision/nDCG 使用唯一文档+章节二元 oracle，不可答例不参与排序指标。
 - 演示视频：仓库内可播放媒体文件仍为 0。
 
 ## 4. 代码/契约回归

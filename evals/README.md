@@ -9,7 +9,7 @@ P0-07 的固定 20 例仓储 RAG 数据位于 `rag/cases.json`，执行入口为
   --output .\tmp\p007_rag_eval.json
 ```
 
-需要同时从 6 份 frozen Markdown 重建 PostgreSQL/Qdrant 索引时增加 `--rebuild-index`。指标定义、ACL/拒答边界和当前实测见 `docs/RAG.md`。
+需要同时从 6 份 frozen Markdown 重建 PostgreSQL/Qdrant 索引时增加 `--rebuild-index`。报告固定输出 Recall@K、MRR、Section Recall@K、Precision@K、nDCG@K、Citation、answerability 与 ACL；新增的 Precision/nDCG 可用 `--min-precision-at-k`、`--min-ndcg-at-k` 显式设门禁。指标定义、ACL/拒答边界和当前实测见 `docs/RAG.md`。
 
 ## P0-18 统一 60 例评测
 
