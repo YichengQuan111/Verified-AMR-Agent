@@ -1,0 +1,75 @@
+{
+  "$defs": {
+    "JsonValue": {},
+    "ReActActionType": {
+      "description": "模型每轮只能选择一个受控动作。",
+      "enum": [
+        "tool",
+        "finish",
+        "stop"
+      ],
+      "title": "ReActActionType",
+      "type": "string"
+    },
+    "ToolName": {
+      "description": "P0-12 计划实现的九个工具名称；P0-04 仅定义白名单。",
+      "enum": [
+        "retrieve_knowledge",
+        "get_fleet_state",
+        "allocate_tasks",
+        "plan_multi_amr_routes",
+        "validate_fleet_plan",
+        "dispatch_simulation",
+        "query_execution_state",
+        "run_verification_suite",
+        "request_approval"
+      ],
+      "title": "ToolName",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "模型单轮结构化决定；不保存原始思维链。",
+  "properties": {
+    "action_type": {
+      "$ref": "#/$defs/ReActActionType"
+    },
+    "tool_name": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ToolName"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "arguments": {
+      "additionalProperties": {
+        "$ref": "#/$defs/JsonValue"
+      },
+      "title": "Arguments",
+      "type": "object"
+    },
+    "decision_summary": {
+      "maxLength": 300,
+      "minLength": 1,
+      "title": "Decision Summary",
+      "type": "string"
+    },
+    "reason_code": {
+      "maxLength": 64,
+      "minLength": 1,
+      "title": "Reason Code",
+      "type": "string"
+    }
+  },
+  "required": [
+    "action_type",
+    "decision_summary",
+    "reason_code"
+  ],
+  "title": "ReActDecision",
+  "type": "object"
+}

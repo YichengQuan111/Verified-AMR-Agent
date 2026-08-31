@@ -1,9 +1,10 @@
 """P0-19 三策略真实 Fast 在线闭环执行器。
 
-本模块精确复用 P0-18 的 60 例数据、在线配置、加难地图、Prompt、ToolSpec、
-JWT/HITL 与计分口径。三种策略按 Latin-square 顺序逐 case 交错执行，减少模型热态
-和运行顺序对单一策略的系统性偏置。Fixed / ReAct 只通过 P0-18 在线 Harness 的
-评测参数切换故障控制；生产 ``PEVRGraphRunner`` 源码和原生恢复预算不被修改。
+三种策略共享 Guard → Understand → 初次 Retrieve 的策略无关前置，再分别进入：
+固定 Workflow 图、独立 ReAct 循环、生产 PEVR 图。Fixed / PEVR 仍走 P0-18
+``OnlineFastHarness``；ReAct 必须走 ``ReActOnlineHarness``，禁止实例化
+``PEVRGraphRunner``。数据集、Fast 制品、工具、安全门禁和预算包络保持相同；
+控制 Prompt 按策略不同，因此不再宣称 ``same_prompts=true``。
 """
 
 from __future__ import annotations
@@ -39,6 +40,9 @@ from .contracts import (
     StrategySummary,
 )
 from .dataset import DEFAULT_ONLINE_CONFIG_PATH, load_config, rooted_path
+from agent.context.prompt_registry import P005_PROMPT_VERSION
+from .react_contracts import REACT_PROMPT_ID, REACT_PROMPT_VERSION, REACT_RUNNER_VERSION
+from .react_eval import ReActOnlineHarness
 from .replay import (
     _aggregate,
     _plan_metrics,
@@ -54,11 +58,6 @@ STRATEGY_ORDER = (
     P019Strategy.REACT,
     P019Strategy.PEVR,
 )
-CONTROL_STRATEGIES = {
-    P019Strategy.FIXED_WORKFLOW: OnlineControlStrategy.FIXED_WORKFLOW,
-    P019Strategy.REACT: OnlineControlStrategy.REACT,
-    P019Strategy.PEVR: OnlineControlStrategy.PEVR,
-}
 
 
 class OnlineComparisonError(RuntimeError):
@@ -259,20 +258,22 @@ def _actual_control_events(strategy: P019Strategy, case: EvalReportCase) -> list
         controller = [
             dict(event)
             for event in case.trace_events
-            if event.get("node") in {"react_controller", "react_safety_gate"}
+            if event.get("node") in {"react_decide", "react_act", "react_observe", "react_guard", "react_terminal"}
         ]
         if controller:
             return [
                 {
-                    "kind": "actual_react_decision",
+                    "kind": "actual_react_loop",
                     "sequence": event.get("sequence"),
+                    "node": event.get("node"),
+                    "event_type": event.get("event_type"),
                     "status": event.get("status"),
                     "metadata": event.get("metadata") or {},
                     "error": event.get("error"),
                 }
                 for event in controller
             ]
-        return [{"kind": "react_no_failure_boundary", "status": "not_applicable"}]
+        return [{"kind": "react_loop_missing", "status": "not_applicable"}]
     if strategy is P019Strategy.FIXED_WORKFLOW:
         return [
             {
@@ -359,15 +360,29 @@ class OnlineThreeStrategyComparison:
         if len(self.dataset.cases) != 60:
             raise OnlineComparisonError("在线三策略必须精确覆盖 P0-18 的 60 例")
         self.harnesses = {
-            strategy: OnlineFastHarness(
+            P019Strategy.FIXED_WORKFLOW: OnlineFastHarness(
                 dataset=self.dataset,
                 config=self.p018_config,
                 dataset_path=self.p018_dataset_path,
                 config_path=self.p018_config_path,
                 verification_timeout_seconds=verification_timeout_seconds,
-                control_strategy=CONTROL_STRATEGIES[strategy],
-            )
-            for strategy in STRATEGY_ORDER
+                control_strategy=OnlineControlStrategy.FIXED_WORKFLOW,
+            ),
+            P019Strategy.REACT: ReActOnlineHarness(
+                dataset=self.dataset,
+                config=self.p018_config,
+                dataset_path=self.p018_dataset_path,
+                config_path=self.p018_config_path,
+                verification_timeout_seconds=verification_timeout_seconds,
+            ),
+            P019Strategy.PEVR: OnlineFastHarness(
+                dataset=self.dataset,
+                config=self.p018_config,
+                dataset_path=self.p018_dataset_path,
+                config_path=self.p018_config_path,
+                verification_timeout_seconds=verification_timeout_seconds,
+                control_strategy=OnlineControlStrategy.PEVR,
+            ),
         }
         sampling = self.config.get("resource_sampling")
         if not isinstance(sampling, Mapping):
@@ -385,11 +400,16 @@ class OnlineThreeStrategyComparison:
         patterns = self.config.get("schedule", {}).get("patterns")  # type: ignore[union-attr]
         return {
             "execution_mode": P019ExecutionMode.ONLINE_FAST.value,
+            "config_version": str(self.config.get("version")),
             "dataset_sha256": sha256_file(self.p018_dataset_path),
             "p018_config_sha256": sha256_file(self.p018_config_path),
             "p019_config_sha256": sha256_file(self.config_path),
             "case_id_digest": canonical_digest([case.case_id for case in self.dataset.cases]),
             "schedule_digest": canonical_digest(patterns),
+            "react_prompt_id": REACT_PROMPT_ID,
+            "react_prompt_version": REACT_PROMPT_VERSION,
+            "react_runner_version": REACT_RUNNER_VERSION,
+            "react_uses_pevr_runner": False,
         }
 
     def _load_progress(self) -> dict[tuple[P019Strategy, str], EvalReportCase]:
@@ -594,10 +614,6 @@ class OnlineThreeStrategyComparison:
             strategy: [case.case_id for case in report.cases]
             for strategy, report in reports.items()
         }
-        prompt_sets = {
-            canonical_digest(report.reproducibility.get("prompt_versions", {}))
-            for report in reports.values()
-        }
         tool_sets = {
             canonical_digest(report.reproducibility.get("tool_spec_versions", {}))
             for report in reports.values()
@@ -622,6 +638,14 @@ class OnlineThreeStrategyComparison:
         combined_identity = canonical_digest(
             {strategy.value: reports[strategy].report_digest for strategy in STRATEGY_ORDER}
         )
+        react_prompts = dict(reports[P019Strategy.REACT].reproducibility.get("prompt_versions") or {})
+        merged_prompts = {
+            **{
+                str(key): str(value)
+                for key, value in dict(pevr_report.reproducibility.get("prompt_versions", {})).items()
+            },
+            **{str(key): str(value) for key, value in react_prompts.items()},
+        }
         fairness = FairnessEvidence(
             dataset_id=pevr_report.dataset_id,
             dataset_version=pevr_report.dataset_version,
@@ -629,10 +653,7 @@ class OnlineThreeStrategyComparison:
             case_id_digest=canonical_digest(sorted(case_ids)),
             model_profile="fast",
             model_alias="qwen3.6-fast",
-            prompt_versions={
-                str(key): str(value)
-                for key, value in dict(pevr_report.reproducibility.get("prompt_versions", {})).items()
-            },
+            prompt_versions=merged_prompts,
             tool_spec_versions={
                 str(key): str(value)
                 for key, value in dict(pevr_report.reproducibility.get("tool_spec_versions", {})).items()
@@ -642,13 +663,23 @@ class OnlineThreeStrategyComparison:
             p018_source_report_sha256=combined_identity,
             same_dataset=all(ids == case_ids for ids in report_case_ids.values()),
             same_tools=len(tool_sets) == 1,
-            same_prompts=len(prompt_sets) == 1,
+            same_prompts=False,
             same_config=all(
                 report.reproducibility.get("input_files", {}).get("config", {}).get("sha256")
                 == sha256_file(self.p018_config_path)
                 for report in reports.values()
             ),
             same_model=len(model_identities) == 1,
+            same_shared_context_contract=True,
+            same_initial_retrieval=True,
+            same_safety_gates=True,
+            same_budget_envelope=True,
+            strategy_prompt_versions={
+                "fixed_workflow": f"amr.p005.*@{P005_PROMPT_VERSION}",
+                "react": f"{REACT_PROMPT_ID}@{REACT_PROMPT_VERSION}",
+                "pevr": f"amr.p005.*@{P005_PROMPT_VERSION}",
+            },
+            react_uses_pevr_runner=False,
             react_production_path_touched=False,
         )
         raw_results: list[StrategyCaseResult] = []
@@ -669,18 +700,20 @@ class OnlineThreeStrategyComparison:
         react = summary_map[P019Strategy.REACT]
         pevr = summary_map[P019Strategy.PEVR]
         conclusions = [
-            "三策略各自真实执行同一 P0-18 固定 60 例，共 180 条结果；Fast 制品、共享 Prompt、ToolSpec、地图、seed、JWT/HITL 与计分配置通过公平性门禁。",
+            "三策略各自真实执行同一 P0-18 固定 60 例，共 180 条独立身份；Fast 制品、共享前置、初次 Retrieve、ToolSpec、安全门禁与预算包络通过公平性门禁。ReAct 控制 Prompt 与 PEVR 不同，same_prompts=false。",
             f"全例预期符合率：Workflow {workflow.evaluation_pass_count}/60，ReAct {react.evaluation_pass_count}/60，PEVR {pevr.evaluation_pass_count}/60；任务完成率分别为 {workflow.task_completion_count}/{workflow.positive_case_count}、{react.task_completion_count}/{react.positive_case_count}、{pevr.task_completion_count}/{pevr.positive_case_count}。",
-            f"异常终态/恢复正确率：Workflow {workflow.recovery_terminal_correct_count}/{workflow.recovery_case_count}，ReAct {react.recovery_terminal_correct_count}/{react.recovery_case_count}，PEVR {pevr.recovery_terminal_correct_count}/{pevr.recovery_case_count}。",
+            f"异常终态正确率按 expected==observed：Workflow {workflow.recovery_terminal_correct_count}/{workflow.recovery_case_count}，ReAct {react.recovery_terminal_correct_count}/{react.recovery_case_count}，PEVR {pevr.recovery_terminal_correct_count}/{pevr.recovery_case_count}；成功恢复（发生恢复动作且最终完成）为 {workflow.successful_recovery_count}/{workflow.successful_recovery_case_count}、{react.successful_recovery_count}/{react.successful_recovery_case_count}、{pevr.successful_recovery_count}/{pevr.successful_recovery_case_count}。",
             f"墙钟 P95：Workflow {workflow.latency.p95_case_ms:.1f} ms，ReAct {react.latency.p95_case_ms:.1f} ms，PEVR {pevr.latency.p95_case_ms:.1f} ms；Token 总量分别为 {workflow.token_usage.total_tokens}、{react.token_usage.total_tokens}、{pevr.token_usage.total_tokens}。",
-            "PEVR 仍是唯一生产主链；Fixed 与有界 ReAct 只存在于评测 Harness，未修改 PEVR 图、恢复器、Prompt、工具或 Validator。",
+            "PEVR 仍是唯一生产主链；Fixed 走固定图，独立 ReAct 只存在于评测层且 react_uses_pevr_runner=false。",
         ]
         limitations = [
             "这是一次本机单模型单 GPU 在线运行，没有重复试验或置信区间；temperature=0.1 仍可能产生跨次波动。",
-            "沿用 P0-18 完整测试集的原分流：正常/充电/可恢复异常/审批走共享八阶段图；RAG、权限、安全、验证类继续走同一 live sidecar，因此不是所有 60 例都经过 dispatch。",
-            "ReAct 是故障边界上最多一次安全重试的有界评测策略，不代表开放式、任意工具调用的通用 ReAct Agent。",
+            "沿用 P0-18 分流：正常/充电/可恢复异常/审批走各策略主路径；RAG、权限、安全、验证类继续走同一 live sidecar，因此不是全部 60 例都进入 ReAct 循环或 PEVR 图。",
+            "本轮 ReAct 在共享初次 Retrieve 后禁止再检索，以隔离控制策略差异；自主重复检索是另一实验，不能混入本轮数据。",
+            "独立 ReAct 仍只能使用白名单工具，finish 只是请求完成，终态由确定性检查确认。",
             "资源采样是进程级近似，包含评测进程、子进程和 8080/18080 服务；GPU/OS 调度噪声不能解释为节点级因果成本。",
             "三策略按 Latin-square 交错顺序顺序执行，不并发；这样保护单槽 Fast 的可比性，但总墙钟不代表三路并行吞吐。",
+            "p0-19.online.v1 把异常后一次 retry/stop 误称为 ReAct，其指标已作废，不能 --resume 进本报告。",
         ]
         source_summary = {
             "mode": P019ExecutionMode.ONLINE_FAST.value,
@@ -718,7 +751,7 @@ class OnlineThreeStrategyComparison:
         )
         return P019Report(
             report_id=f"p019-online-{report_digest[:16]}",
-            report_version="p0-19.online.v1",
+            report_version="p0-19.online.v2",
             execution_mode=P019ExecutionMode.ONLINE_FAST,
             status=status,
             generated_at=datetime.now().astimezone().isoformat(),

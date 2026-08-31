@@ -144,3 +144,8 @@ def test_project_dotenv_supplies_rotated_dsn_without_process_env(tmp_path) -> No
         settings.database.postgres_dsn.get_secret_value()
         == "postgresql://amr:rotated-local-secret@127.0.0.1:5432/amr_agent"
     )
+
+
+def test_prompt_cache_can_be_disabled_by_environment() -> None:
+    settings = load_settings(environ={"LLM_PROMPT_CACHE_ENABLED": "false"})
+    assert settings.model_gateway.prompt_cache_enabled is False

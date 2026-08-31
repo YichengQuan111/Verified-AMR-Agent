@@ -844,12 +844,32 @@
 - 原因：评测侧 `_exception_recovery_ok` 对需要 replan 的异常主要检查 `replan_count>=1` 和
   `plan_version>=2`，衡量的是“预期恢复动作/新版本是否发生”，没有再次要求最终
   `expected_outcome == observed_outcome`。字段名称把动作级指标误写成了终态级指标。
-- 最终解决：README、P0-19/P0-18 说明和交接文档统一按逐例最终 expected/observed 结果重算，
-  Fixed/ReAct/PEVR 为 3/10、4/10、9/10；原始 JSON/JSONL 保持为不可变实验产物，并明确其中
-  10/10 字段的旧口径。本步只做文档校正，没有静默修改评测代码或报告 digest。
+- 最终解决：评测聚合改为 `recovery_terminal_correct_count` 严格按 `expected==observed`，
+  `successful_recovery_count` 只统计确实发生恢复动作且最终完成的异常路径；v1 在线报告因不是独立
+  ReAct 已整体作废，不能继续引用其中 3/10、4/10、9/10 或 10/10。
 - 后续避免：报告同时保留“恢复动作达标”和“最终终态正确”时，必须使用不同字段名和测试；面向
-  用户的成功率一律从最终终态重算。若后续修复聚合器，应版本化报告契约、增加
-  `exception-004` 反例，并重新生成新报告，不能手改历史 artifact。
+  用户的成功率一律从最终终态重算。修复聚合器必须版本化报告契约并重新实跑，不能手改历史 artifact。
+
+## 2026-08-28 · 不能把异常后一次 retry 称为独立 ReAct
+
+- 现象：P0-19 在线 ReAct 实例化 `PEVRGraphRunner`，复用 `guard → understand → retrieve → plan → validate → execute → verify → finish`，只在图抛异常后调用一次模型做 `retry/stop`。报告却把它写成独立 ReAct，并给出 54/60 等分数。
+- 原因：评测层想快速得到“有界恢复”对照，把安全 retry adapter 挂到 ReAct 名字下；公平性还宣称 `same_prompts=true`，掩盖了控制策略并未独立运行的事实。
+- 最终解决：抽出策略无关 `SharedPrefixService`；新增评测层 `ReActRunner`/`ReActDecision` 持续循环；P0-18 在线 Harness 拒绝再执行伪 ReAct；配置升级为 `p0-19.online.v2`，旧 v1 progress 不能 resume；异常终态按 `expected==observed` 重算，恢复动作另计。
+- 后续避免：策略对照必须能证明“未调用生产图”和“正常 case 也有多轮 decide/act/observe”。名字、Prompt 版本和 Runner 版本都要进 manifest；一次边界 retry 只能叫 recovery adapter，不能叫 ReAct。
+
+## 2026-08-28 · 共享 Understand 的单次输出 Token 不能比 PEVR 更紧
+
+- 现象：独立 ReAct 在线正常例约 19s 即以 `StructuredOutputError` 失败，`model_call_count=0`；同一例 Fixed/PEVR 能完成。原始 JSON 在约第 177 行被截断。
+- 原因：`ReActRequest.requested_output_tokens` 默认 1024，共享 `SharedPrefixService.understand` 把该值当作 TaskContract 单次上限；`PEVRRequest` 默认 4096。decide 循环的 512 上限被误用到前置 Understand。
+- 最终解决：ReAct 入口默认并对齐为 4096；在线 Harness 显式传入；decide 仍单独 `min(512, …)`。用单测锁住与 `PEVRRequest` 相同的默认值。
+- 后续避免：策略无关前置阶段的单次生成上限必须与生产 PEVR 入口一致；循环内的短决策 Schema 只能在 decide 调用处收紧，不能改入口默认。
+
+## 2026-08-28 · 封闭参数契约必须进入每轮 ReAct 上下文，账本 digest 必须与 Registry 相同
+
+- 现象：Understand 修好后，正常例仍失败。一例 `complete_effect` 抛 `ToolResult.input_digest 与 Effect Ledger 不一致`，评测只留下无轨迹 harness 异常；另一例 12 轮 decide 中 11 次 `extra_argument`，模型给 `plan_multi_amr_routes` 传了 `order_ids`/`seed`。
+- 原因：账本对原始 dict 做 SHA，真实 Registry 对 `input_model`（`by_alias` dump）做 SHA。decide 上下文只给了工具名，没有给 P0-04 顶层键白名单，系统提示还把 `$frozen order_ids/seed` 写成通用写法。
+- 最终解决：`_effect_input_digest` 与 PEVR `_task_input_digest` 对齐；每轮上下文写入 `tool_argument_policies`；系统提示列出各工具允许键。额外参数仍拒绝，不静默丢弃。
+- 后续避免：策略无关的“封闭参数契约”必须出现在模型可见上下文里；副作用预留指纹必须复用生产 Registry 的规范化 digest，不能另写一套。
 
 ## 2026-08-28 · 稀疏必需证据标注会形成低 Precision、高 Recall/nDCG
 
@@ -864,5 +884,47 @@
 - 后续避免：不得依据本次 holdout 分数事后设置默认门禁，也不能把未标注候选直接称为语义无关。
   若要做 MAP、分级 nDCG 或更有解释力的 Precision，应先独立补齐候选池的完整/分级人工标注并冻结
   版本，再运行新的 holdout；不能在看完结果后补标签抬分。
+
+## 2026-08-30 · llama.cpp 前缀缓存要求稳定内容必须在节点 Prompt 之前
+
+- 现象：五个 P0-05 节点和 ReAct 都有很长的 system 文本，但安全边界原先追加在节点专属 2-shot/Schema 之后。llama.cpp `cache_prompt` 只从 Token 序列开头匹配公共前缀；`parallel_slots=1` 时槽内只保留上一请求的 KV。跨节点调用几乎无法复用那段安全文本。
+- 原因：前缀匹配是“从左到右的最长公共 Token”，不是“任意相同段落”。节点正文一旦分叉，后面的稳定规则不再是前缀。另外 `agent.runtime.prefix` 是 Guard/Understand/Retrieve 共享前置，名字容易让人误以为已经做了模型 KV 缓存。
+- 最终解决：抽出 `amr.shared.system_prefix@1.0.0`，放到每个节点 system 消息最前面；网关 `extra_body` 显式发送 `cache_prompt`；`TokenUsage.cached_input_tokens` 记录命中。P0-05 升为 `1.2.0`，ReAct 升为 `2.1.0`。同一节点连续调用（ReAct 多轮、Schema 修复）仍可命中整段 system；跨节点只保证共享前缀命中。
+- 后续避免：不要把随请求变化的合同、RAG、run_id 放进共享前缀。不要为了“整段节点 Prompt 都命中”去把 `parallel_slots` 改成 5，除非同步改 Fast manifest、显存预算和启动脚本哈希。关闭缓存用 `LLM_PROMPT_CACHE_ENABLED=false`；llama.cpp 文档指出缓存命中会改变 prefill batch，logits 不一定与冷启动逐 bit 相同。
+
+## 2026-08-30 · 关闭 `cache_prompt` 时长 Prompt 节点会打满默认 120s，加速比不能含超时
+
+- 现象：同一套 P0-05 在线样例，`cache_off` 下 `understand_goal`/`plan_tasks`/`replan` 连续两次都在约 120 013 ms 以 `TIME_BUDGET_EXCEEDED` 失败，usage 为空；`cache_on` 则 12/12 成功，同节点第二轮 `cached_input_tokens` 几乎等于 `input_tokens`。若用 12 次全量 wall 合计算加速比（约 3.5x），会把 7 次超时的 120s 罚时算进“无缓存更慢”。
+- 原因：仓库默认 `LLM_GENERATION_TIMEOUT_SECONDS=120`。关闭缓存时约 3k–4k prompt 的 prefill 可到 70–90s，再加上 JSON 生成，墙钟经常超过 120s；客户端先放弃，llama.cpp 槽上可能仍在跑。Python 默认 stdout 块缓冲时，对照脚本的进度行要等阶段结束才出现。
+- 最终解决：公平口径只比较两侧都成功的同一节点/轮次（本次 5 对，加速比 4.639）。`cache_off` 成功调用必须看到 `cached_input_tokens=0` 才算开关有效。对照脚本改为逐行 flush，并仅在该脚本进程内把生成超时默认放到 180s，不改仓库默认。证据文件是 `tmp/` 生成物。
+- 后续避免：不要把超时失败写成模型语义失败；不要用含超时的全量 wall 当发布数字。生成阶段仍占墙钟大头，前缀缓存主要缩短 prompt eval。不要把本次节点级 4.6x 外推成 P0-19 180 例同等加速。
+
+## 2026-08-30 · PEVR 60 例全量墙钟加速比不能拿 0 次模型调用的超时跟完整 LLM 跑对打
+
+- 现象：生产 PEVR 的 P0-18 在线 60 例，关缓存 26/60、只有 12 次模型调用，开缓存 50/60、117 次调用；全量墙钟比是 0.59（开缓存更慢）。
+- 原因：关缓存组大量正常订单在默认 120s 内 `model_calls=0` 失败，墙钟停在超时罚时；开缓存组才真正跑完 Understand/Plan 等主链，单例可到约 300s。短路径（核验、安全拒绝）本来就不吃前缀 KV。
+- 最终解决：把 50/60 与 24 例翻盘记成“关缓存打不到模型、开缓存能跑完”的可用性结果，不把 0.59 写成缓存负优化。两侧都有模型调用的只有 4 例，墙钟比约 1.03，样本太小不能当加速结论。
+- 后续避免：PEVR/在线评测对照必须同时报 `evaluation_pass_count` 和 `model_call_count`。全量 60 含 sidecar 短例。不要覆盖正式 P0-18 报告身份。
+
+## 2026-08-31 · 8080 代理还在不代表 llama-server 还在；有缓存 60 例不要覆盖旧对照目录
+
+- 现象：交接仍写 Fast 在跑，但 `127.0.0.1:18080` 无监听；旧 `secure_proxy`（PID=21720）仍占 8080，无密钥 401、带密钥 502。
+- 原因：llama-server 已退出，启动器 pwsh 还卡在代理子进程上。`start_local.ps1 -StartFast` 若发现 8080 被占用且 `/v1/models` 不健康会直接抛错，不会覆盖。
+- 最终解决：精确停止代理与 `start_fast_secure.ps1` 启动器后重新 `-StartFast`。有缓存 60 例写到新目录 `tmp/p018_pevr_cache_compare_20260831/cache_on/`。
+- 后续避免：启动前同时查 8080 和 18080。用户只要有缓存阶段时，不要跑会先执行 `cache_off` 的 `compare_pevr_prompt_cache.py`。不要覆盖已有对照证据。
+
+## 2026-08-31 · 热机后关缓存也能跑完 PEVR；8/30 的超时不能当成 `cache_prompt=false` 的必然结果
+
+- 现象：同日有缓存 59/60、133 次调用、约 38.5 分钟；随后 breaker + 关缓存同样 59/60、133 次调用、约 41.8 分钟。全量加速比 1.086，两侧都有模型调用且都通过的 35 对是 1.088。这与 8/30 关缓存 26/60、仅 12 次调用、大量 120s 超时完全不同。
+- 原因：本次关缓存是在 Fast 已跑完有缓存 60 例、GPU/权重已热的条件下进行的，默认 120s 够用；8/30 先跑关缓存，prefill 更容易打满超时，客户端放弃后槽上可能仍在算，后续例继续恶化。`cache_prompt` 主要砍 prompt eval，生成仍占 PEVR 墙钟大头，所以热机公平对照只有约 8–9%。
+- 最终解决：把 2026-08-31 的 1.086 记成热机公平墙钟差；保留 8/30 作为冷/先关缓存时的可用性证据。两套目录都不覆盖。
+- 后续避免：不要用热机关缓存成绩去否定冷启动超时。不要把 PEVR 闭环 1.09x 写成节点级 4.6x。配对必须同时报通过数和 `model_call_count`。
+
+## 2026-08-31 · 非流式日志里 `prompt eval time` 印在请求结束；TTFT 不能用 launch 到该行的间隔
+
+- 现象：若把 `launch_slot` 到 `prompt eval time` 日志行的时间差当成 TTFT，会得到约 16s，和整次 `total time` 几乎一样。
+- 原因：llama.cpp 在生成结束后才打印 `prompt eval time`/`eval time`/`total time`。真正的 prefill 结束时刻是 `prompt processing, progress = 1.00`，或该字段本身的毫秒值。
+- 最终解决：TTFT 用 launch→progress=1.00；无 progress 行（前缀命中）时用 `prompt eval time` 的毫秒值。命中率用 `1 - prompt_eval_tokens/prompt_tokens`。
+- 后续避免：不要把模型 total time 或案例墙钟标成 TTFT。对外表必须同时写命中率，关缓存应为 0。
 
 

@@ -233,7 +233,11 @@ class SmartDeferral(P019Contract):
 
 
 class FairnessEvidence(P019Contract):
-    """证明三种策略没有更换数据、Prompt、工具、配置或 Fast 身份。"""
+    """证明三种策略共享数据集、工具、安全门禁和预算包络。
+
+    在线独立 ReAct 使用专用控制 Prompt，因此 ``same_prompts`` 只记录事实，
+    不再作为硬门禁。``react_uses_pevr_runner`` 必须为 false。
+    """
 
     dataset_id: str = Field(min_length=1, max_length=128)
     dataset_version: str = Field(min_length=1, max_length=32)
@@ -251,14 +255,32 @@ class FairnessEvidence(P019Contract):
     same_prompts: bool
     same_config: bool
     same_model: bool
+    same_shared_context_contract: bool = True
+    same_initial_retrieval: bool = True
+    same_safety_gates: bool = True
+    same_budget_envelope: bool = True
+    strategy_prompt_versions: dict[str, str] = Field(default_factory=dict)
+    react_uses_pevr_runner: Literal[False] = False
     react_production_path_touched: Literal[False] = False
 
     @model_validator(mode="after")
     def validate_all_gates(self) -> "FairnessEvidence":
-        """公平性门禁任一失败都不能被报告成可比较实验。"""
+        """共享实验条件必须成立；控制 Prompt 允许按策略不同。"""
 
-        if not all((self.same_dataset, self.same_tools, self.same_prompts, self.same_config, self.same_model)):
-            raise ValueError("P0-19 公平性门禁未全部通过")
+        shared = (
+            self.same_dataset,
+            self.same_tools,
+            self.same_config,
+            self.same_model,
+            self.same_shared_context_contract,
+            self.same_initial_retrieval,
+            self.same_safety_gates,
+            self.same_budget_envelope,
+        )
+        if not all(shared):
+            raise ValueError("P0-19 共享实验条件未全部通过")
+        if self.react_uses_pevr_runner or self.react_production_path_touched:
+            raise ValueError("独立 ReAct 不得复用或触碰生产 PEVR 图")
         return self
 
 
@@ -266,7 +288,7 @@ class P019Report(P019Contract):
     """P0-19 完整报告，包含原始 180 条策略轨迹和汇总结论。"""
 
     report_id: str = Field(min_length=1, max_length=128)
-    report_version: Literal["p0-19.v1", "p0-19.v2", "p0-19.online.v1"] = "p0-19.v1"
+    report_version: Literal["p0-19.v1", "p0-19.v2", "p0-19.online.v1", "p0-19.online.v2"] = "p0-19.v1"
     execution_mode: P019ExecutionMode = P019ExecutionMode.INDEPENDENT_ORACLE
     status: Literal["passed", "failed"]
     generated_at: str = Field(min_length=1)

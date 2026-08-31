@@ -33,7 +33,7 @@
 历史 `tmp/p018_eval_p020_final` 的 60/60 与 P0-19 三策略 60/60 来自未消费 oracle 的离线 runner 和同源 Trace Replay，**废止为发布验收**。2026-08-21 审计修复后：
 
 - P0-18：独立 `evaluate_oracle()`，未知键 fail closed。本步 `.\scripts\run_p018_eval.ps1 -OutputDir .\tmp\p020_release_p018` 为 60/60、`report_id=p018-85eaad378d39c29d`。
-- P0-19：`offline_independent_oracle`。本步 Workflow 52/60、ReAct 53/60、PEVR 60/60，`report_id=p019-cf6986ed9cc65f8e`。
+- P0-19：离线 `offline_independent_oracle` 本步 Workflow 52/60、遗留 react 槽位 53/60、PEVR 60/60，`report_id=p019-cf6986ed9cc65f8e`。在线独立 ReAct 对照是 `p0-19.online.v2` 报告 `p019-online-5bf27026e1607cfe`：Fixed/ReAct/PEVR 全例符合 52/60、46/60、59/60，异常终态 3/10、6/10、9/10，七项零容忍均为 0。旧 `p019-online-45906c9d5366a0e9` 因复用 PEVR 图且只做一次 retry，已作废。
 - 真实 RAG holdout：Recall@K=1、MRR=1、Precision@K=0.236364、nDCG@K=1、citation=1、answerability=1、ACL=0；坏阈值退出码 2。Precision/nDCG 使用唯一文档+章节二元 oracle，不可答例不参与排序指标。
 - 演示视频：仓库内可播放媒体文件仍为 0。
 

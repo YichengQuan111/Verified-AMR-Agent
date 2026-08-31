@@ -1,9 +1,10 @@
 # AMR Agent 项目交接上下文
 
-最后更新：2026-08-28
-当前实现里程碑记录：P0-00～P0-20 代码已落地。P0-19 已新增 Fixed Workflow、有界 ReAct、生产 PEVR 的**真实 Fast 三策略完整闭环**：三者分别执行与 P0-18 在线闭环完全相同的固定 60 例，共 180 条；报告 `p019-online-45906c9d5366a0e9` 状态 `passed`，全例符合分别为 53/60、54/60、59/60，任务完成为 37/44、38/44、43/44，按最终 expected/observed 终态计算的异常正确数为 3/10、4/10、9/10，七项零容忍均为 0。现有生成报告的 PEVR `recovery_terminal_correct_count=10/10` 是恢复动作口径，不是最终终态口径；`p018-exception-004` 最终仍为 failed。PEVR 仍是唯一生产主链，图、恢复器、默认预算、Prompt、工具和 Validator 未改；Fixed/ReAct 仅在评测 Harness。2026-08-21 原审计文档仍是 **FAIL** 快照，H06 正式演示视频和真实 dispatch 窗口 OS 强杀仍未补，因此发布 Verdict 仍不能写成 PASS。Smart 继续硬禁用。
-RAG 评测器现已在真实 12 例 holdout 上补充章节级 Precision@K=`0.236364`、nDCG@K=`1.0`；Recall@K/MRR/Section Recall/Citation/Answerability 仍为 1，ACL leak=0。新字段不修改生产检索、语料或阈值。
-当前下一步：三策略对照和 RAG 排序指标均已收口。若要扩展 MAP、分级 nDCG 或更完整的 Precision，应先冻结完整/分级相关性标注再建立新 holdout，不能按当前分数补标签或设置默认门槛；Smart 对照必须等待用户明确启用。生产 `warehouse_v1.json` 未改。2026-08-28 本步结束实测 Compose API/PostgreSQL/Qdrant healthy，Fast 8080/18080 无监听，Smart 未启动。不要把 Docker `:8000` 当作宿主调试端口。
+最后更新：2026-08-31
+当前实现里程碑记录：P0-00～P0-20 代码已落地。P0-19 在线对照为 **`p0-19.online.v2` 独立 ReAct**：报告 `p019-online-5bf27026e1607cfe`，digest `5bf27026e1607cfe…d82f456`，Fixed/ReAct/PEVR 全例符合 **52/60、46/60、59/60**，异常终态 **3/10、6/10、9/10**，七项零容忍均为 0，`react_uses_pevr_runner=false`。旧 `p0-19.online.v1` 一次 retry 已作废，不能 `--resume`。离线独立执行仍作恢复额度回归；其中 react 槽位是 `max_retries=1` 遗留夹具。Smart 继续硬禁用。2026-08-21 原审计文档仍是 FAIL 快照，H06 正式演示视频仍未补。
+RAG 评测器现已在真实 12 例 holdout 上补充章节级 Precision@K=`0.236364`、nDCG@K=`1.0`；Recall@K/MRR/Section Recall/Citation/Answerability 仍为 1，ACL leak=0。
+当前下一步：2026-08-31 生产 PEVR 有/无 `cache_prompt` 对照已写入 README：仅 LLM 36 例，TTFT/prefill p50 加速约 **1.44×**，Token 命中率 **43.2% vs 0%**，案例端到端 p50 **1.10×**。证据 `tmp/p018_pevr_cache_compare_20260831/`（含 `llm_only_cache_metrics.json`）。不要覆盖 2026-08-30 的 `tmp/p018_pevr_cache_compare/`，也不要把 59/60 写成新的正式 P0-18 发布分数。P0-05 Prompt 现为 `1.2.0`，ReAct 为 `2.1.0`。P0-19 v2 三策略在线 180 仍是前缀缓存前的成绩，未重跑。Fast 仍在运行，未停止。不要把 Docker `:8000` 当作宿主调试端口。不要把离线 react 槽位写成独立 ReAct。Smart 对照仍须用户明确启用。
+
 
 ## 1. 文档用途与维护要求
 
@@ -52,8 +53,10 @@ RAG 评测器现已在真实 12 例 holdout 上补充章节级 Precision@K=`0.23
   `/health/model` 实测 HTTP 503 `MODEL_CONNECTION_FAILED`。
 - 2026-08-21 收口复验：Compose `amr-api`/`amr-postgres`/`amr-qdrant` 均为 healthy，端口只发布到 `127.0.0.1`。Fast 由 `scripts/start_fast_secure.ps1` 拉起：`127.0.0.1:18080` 为 llama-server，`127.0.0.1:8080` 为强制 Bearer 代理；`check_model_gateway.py --profile fast` 返回 alias `qwen3.6-fast`、IQ4_NL、ctx=16384、GGUF SHA-256=`B228C988…F337E6`。Smart launcher 未运行。
 - 2026-08-22 P0-18 在线 60 例评测期间 Fast 在 `127.0.0.1:8080`（Bearer 无密钥返回 401，属预期）。本步结束时 **未停止 Fast**。Smart 未启动。Qdrant/PostgreSQL 被在线 RAG sidecar 实际使用。
-- 2026-08-28 P0-19 三策略在线收口检查：Compose `amr-api`、`amr-postgres`、`amr-qdrant` 均为 healthy，监听仅在 loopback 的 8000/5432/6333/6334；Fast 8080/18080 均无监听且无相关 llama/proxy 进程，Smart 未启动。180 条在线进度已完整落盘，评测进程已退出。
-- Git 仍在 `main`，基线提交为 `e6a4f07`；工作树含审计修复与本步启动器编码/超时修正。本次没有 stage、commit、reset 或删除用户变更。
+- 2026-08-28 P0-19 v2 在线收口：Compose `amr-api`/`amr-postgres`/`amr-qdrant` healthy。Fast 由 `scripts/start_local.ps1 -StartFast` 拉起：llama-server PID=33468 监听 `127.0.0.1:18080`，鉴权代理 `127.0.0.1:8080`，alias `qwen3.6-fast`，IQ4_NL，ctx=16384，GGUF SHA-256=`B228C988…F337E6`，manifest SHA=`488B5420…AED0686B4`。Smart 未启动。评测进程已退出；180 条已覆盖 `tmp/p019_online_strategy_compare`。
+- 2026-08-30 有/无 `cache_prompt` 实测结束时：Compose `amr-api`/`amr-postgres`/`amr-qdrant` 仍 healthy（容器已运行约 43 分钟）。Fast 由本会话 `scripts/start_local.ps1 -StartFast` 拉起且 **未停止**：llama-server PID=31596 监听 `127.0.0.1:18080`，鉴权代理 PID=21720 监听 `127.0.0.1:8080`。Smart 未启动。对照进程已退出。
+- 2026-08-31 有缓存 PEVR 60 例开始前：Compose 三容器仍 healthy（已运行约 15 小时）。旧 Fast 代理 PID=21720 仍占 `127.0.0.1:8080`，但 `18080` 上 llama-server 已不在，带密钥的 `/health` 返回 502。已精确停止代理 21720 与启动器 pwsh 30480，再执行 `.\scripts\start_local.ps1 -StartFast`。新 Fast：**llama-server PID=20928** 监听 `127.0.0.1:18080`，鉴权代理 PID=33452 监听 `127.0.0.1:8080`，alias `qwen3.6-fast`，IQ4_NL，ctx=16384，GGUF SHA-256=`B228C988…F337E6`。Smart 未启动。
+- Git 仍在 `main`，基线提交为 `e6a4f07`；工作树含前缀缓存实现与对照脚本。本次没有 stage、commit、reset 或删除用户变更。
 
 ## 4. 已完成能力与关键决策
 
@@ -95,6 +98,10 @@ RAG 评测器现已在真实 12 例 holdout 上补充章节级 Precision@K=`0.23
   `MODEL_PROFILE_DISABLED`。启用的 Fast 才请求 `/v1/models` 并要求单模型 alias 精确匹配。
 - OpenAI SDK 隐式重试关闭；连接超时和生成超时分开配置。
 - `ChatMessage` 只允许 `system`、`user`、`assistant`，请求接口不接受 tools、文件、Shell 或任意透传参数。
+- `extra_body` 仍是 Provider 内部白名单：思考开关、`top_k` 和显式 `cache_prompt`。调用方不能追加
+  llama.cpp 的文件/Shell/Agent 键。`prompt_cache_enabled` 默认 true，可用环境变量
+  `LLM_PROMPT_CACHE_ENABLED=false` 关闭。
+- `TokenUsage.cached_input_tokens` 记录前缀 KV 命中；llama.cpp 默认本来就会按 Token 前缀复用槽内缓存。
 - Fast 固定关闭思考、预算 0；Smart 的开启思考/预算 512 Token 参数仅为以后复验保留，
   当前不能进入生成调用。
 - `generate_structured()` 从 Pydantic 模型导出 JSON Schema，并用同一模型验证结果。
@@ -125,17 +132,17 @@ RAG 评测器现已在真实 12 例 holdout 上补充章节级 Precision@K=`0.23
 
 | 节点函数 | Prompt ID / 版本 | 输出模型 | 已提交 Schema |
 |---|---|---|---|
-| `understand_goal()` | `amr.p005.understand_goal` / `1.1.0` | `TaskContract` | `TaskContract.schema.json` |
-| `plan_tasks()` | `amr.p005.plan_tasks` / `1.1.0` | `PlanTasksOutput` | `PlanTasksOutput.schema.json` |
-| `verify_observation()` | `amr.p005.verify_observation` / `1.1.0` | `ObservationVerification` | `ObservationVerification.schema.json` |
-| `replan()` | `amr.p005.replan` / `1.1.0` | `ReplanOutput` | `ReplanOutput.schema.json` |
-| `compose_report()` | `amr.p005.compose_report` / `1.1.0` | `FinalReport` | `FinalReport.schema.json` |
+| `understand_goal()` | `amr.p005.understand_goal` / `1.2.0` | `TaskContract` | `TaskContract.schema.json` |
+| `plan_tasks()` | `amr.p005.plan_tasks` / `1.2.0` | `PlanTasksOutput` | `PlanTasksOutput.schema.json` |
+| `verify_observation()` | `amr.p005.verify_observation` / `1.2.0` | `ObservationVerification` | `ObservationVerification.schema.json` |
+| `replan()` | `amr.p005.replan` / `1.2.0` | `ReplanOutput` | `ReplanOutput.schema.json` |
+| `compose_report()` | `amr.p005.compose_report` / `1.2.0` | `FinalReport` | `FinalReport.schema.json` |
 
 每份 Prompt 都有“职责”“禁止事项”“两个示例（2-shot）”“输出要求”四节，并包含恰好两组虚构的“输入摘要 → 合法 JSON 输出”。两组示例覆盖互补边界，例如低风险/高风险审批、正常 DAG/审批门禁、验证通过/局部重规划、自动恢复/人工接管、全部完成/未完成报告。示例明确禁止复制其中的 ID、事实和证据。
 
-`PromptDefinition.validated_examples()` 按固定标记解析两组示例：输入必须是 JSON 对象，示例输出还必须通过该节点绑定的实时 Pydantic 模型。示例数量、编号、JSON 或 Schema 任一不合法都会在模型调用前失败。`render_system_prompt()` 继续直接调用 `model_json_schema()` 注入实时输出 Schema；Prompt 语义改变后版本统一从 `1.0.0` 升为 `1.1.0`。静态示例属于 system Prompt，不是用户历史；每次调用仍只构造一条 system 和一条当前 user 上下文消息。
+`PromptDefinition.validated_examples()` 按固定标记解析两组示例：输入必须是 JSON 对象，示例输出还必须通过该节点绑定的实时 Pydantic 模型。示例数量、编号、JSON 或 Schema 任一不合法都会在模型调用前失败。`render_system_prompt()` 先拼接共享前缀 `amr.shared.system_prefix@1.0.0`（角色/世界、安全边界、输出纪律），再写入 Prompt-ID/版本、节点模板和实时 `model_json_schema()`。安全边界必须位于节点专属正文之前，llama.cpp 才能按 Token 前缀跨节点复用 KV。静态示例属于 system Prompt，不是用户历史；每次调用仍只构造一条 system 和一条当前 user 上下文消息。五个节点 system 文本的公共前缀字节必须完全一致。独立 ReAct 的 `REACT_SYSTEM_PROMPT` 使用同一前缀，版本 `amr.eval.p019.react_agent@2.1.0`。
 
-`StandalonePromptNode` 只依赖 `ModelProviderProtocol`，没有导入 LangGraph。上述五个具名函数均可用 Fake Provider 单独运行；P0-13 接入状态图时只能包装这些入口，不应复制 Prompt、摘要或预算逻辑。
+`StandalonePromptNode` 只依赖 `ModelProviderProtocol`，没有导入 LangGraph。上述五个具名函数均可用 Fake Provider 单独运行；P0-13 接入状态图时只能包装这些入口，不应复制 Prompt、摘要或预算逻辑。不要把 `agent.runtime.prefix`（Guard/Understand/Retrieve 共享前置）与模型前缀缓存当成同一模块。
 
 ### 4.7 P0-06：FastAPI 与 PostgreSQL
 
@@ -2111,135 +2118,61 @@ DAG 使用 `agent.planning.dag.topological_sort()` 中的 Kahn 算法：计算�
 - 验证：源图与仓库副本 SHA-256 一致，PNG 尺寸为 2545×855；README 相对路径可解析；`git diff --check` 通过。
 - 不要改生产 `warehouse_v1.json`。不要改离线 oracle。不要用 Docker `:8000`。
 
-### 2026-08-28 · P0-19 三策略同 60 例真实 Fast 完整闭环
+### 2026-08-28 · P0-19 独立 ReAct Agent（p0-19.online.v2）
 
 #### 本步完成与未完成
 
-- 完成：Fixed Workflow、有界 ReAct、生产 PEVR 各自真实执行固定
-  `evals/p018/dataset.json` 的 60 个 case，共 180 条。P0-19 在线配置强制精确复用
-  `evals/p018/online_config.json`，并固定 Latin-square 交错顺序。三策略各 60 个唯一 case，
-  case ID 集与 P0-18 完全一致；`p019_online_progress.jsonl` 和
-  `p019_raw_trajectories.jsonl` 都是 180 行/180 个唯一策略-case。
-- 完成：报告 `p019-online-45906c9d5366a0e9`，digest
-  `45906c9d5366a0e9a04f47315481a0da854aa609e39cd777ffce360486ed0de3`，版本
-  `p0-19.online.v1`，模式 `online_fast_three_strategy_closed_loop`，状态 `passed`。数据集
-  SHA-256=`3a8a8d799a68cedd58ea674c02f1e9a433f16b708c50e4ce9c085a7df4ee3368`，
-  P0-18 在线配置 SHA-256=`fc6945218fa22ac64d6eef5ff57414fe987269680c051a0ba98717d5b5ffc5ef`。
-- 实测结果：Fixed/ReAct/PEVR 的全例预期符合为 **53/60、54/60、59/60**；正向任务完成为
-  **37/44、38/44、43/44**；计划合法为 **34/34、35/35、35/35**；异常终态正确为
-  **3/10、4/10、9/10**；七项零容忍全部为 0。PEVR 唯一未符合预期为
-  `p018-exception-004`。
-- 口径更正：上行按 10 个异常例最终 `expected_outcome == observed_outcome` 统计。生成报告里的
-  PEVR `recovery_terminal_correct_count=10/10` 复用了恢复动作谓词；工位占用例虽 retry 2 次、
-  replan 1 次并生成 v2，最终仍因 8 步工具预算耗尽而 `failed/recovery_fallback`，故最终终态只能
-  计 9/10。原始 JSON/JSONL 作为不可变实验产物不手工改写。
-- 在线成本：模型调用 **118/123/132**，Token **763108/783192/842143**，逐例墙钟 P50
-  **43632.9625/43817.502/45251.638 ms**，P95 **93729.69715/83042.75825/98235.541 ms**。
-  峰值 RSS **16166.121/16181.176/16172.645 MB**；GPU 汇总均为 0.0 MB，但属于
-  Windows 进程级近似，不能解释为模型未占显存或节点级成本。
-- ReAct 控制器本轮只在安全门允许的 2 个 case 上调用，两次均为 `retry`，共 482 Token；
-  Trace 明确 `raw_chain_of_thought_stored=false`。Fixed/ReAct 仅是评测 Harness；生产 PEVR 图、
-  `FaultRecoveryController`、默认预算、Prompt、ToolSpec、Validator 和地图均未改。
-- 用户要求「从 100 条继续」时，第 100 条已经完整落盘；原评测进程仍按同一 manifest 在后台继续，
-  最终完成 180/180，没有重复第 100 条。若进程真正中断，固定入口 `--resume` 会从首个缺失的
-  `strategy + case_id` 继续，且配置/数据/调度变化时拒绝拼接。
-- 未完成：没有做多轮重复、置信区间或并行吞吐实验；Smart 仍硬禁用，未启动、未测试；没有补
-  H06 正式演示视频，也没有在真实 dispatch 窗口做 OS 强杀。上述缺口不因在线报告 status=passed
-  而关闭。
+- 完成：抽出 `SharedPrefixService`；PEVR 入口节点改为调用它，生产图后续阶段不变。
+- 完成：评测层独立 `ReActRunner`（`p0-19.react.v2`）与 `amr.eval.p019.react_agent@2.0.0`；Retrieve 之后持续循环；不实例化 `PEVRGraphRunner`。
+- 完成：从 `evals/p018/online.py` 删除伪 ReAct 一次 retry 控制器；在线三策略选择三个真正独立 runner。
+- 完成：配置/报告版本 `p0-19.online.v2`；旧 v1 manifest 不能 resume；异常终态按 expected==observed。
+- 完成：不带 `-Resume` 实跑 180/180，覆盖默认 `tmp/p019_online_strategy_compare`。报告
+  `p019-online-5bf27026e1607cfe`，digest
+  `5bf27026e1607cfebf641d285221fdda978fe5b97c5bc6959968ff6e8d82f456`，状态 `passed`。
+  Fixed/ReAct/PEVR 全例符合 **52/60、46/60、59/60**；任务完成 **36/44、30/44、43/44**；
+  计划合法 **33/36、24/32、34/37**；异常终态 **3/10、6/10、9/10**（已用 expected==observed 复核）；
+  成功恢复 **0/1、4/4、6/7**；七项零容忍全部为 0。PEVR 唯一未符合预期仍为 `p018-exception-004`。
+- 完成：ReAct 模型调用 326、Token 888837；Fixed 117/757143；PEVR 132/841688。ReAct 主路径
+  Trace 无 `plan_tasks` 节点；正常例可见多轮 `react_decide`/`react_act`/`react_observe`。
+- 未完成：没有多轮重复/置信区间/并行吞吐；Smart 仍硬禁用；H06 正式演示视频未补；未在真实
+  dispatch 窗口做 OS 强杀。
 
-#### 公共接口与依赖变化
+#### 公共接口
 
-- `OnlineControlStrategy` 新增 `fixed_workflow/react/pevr`；`OnlineFastHarness` 默认仍是 PEVR，
-  既有调用方不传参数时行为不变。
-- 新增严格 `ReActControllerDecision`，Prompt ID=`amr.eval.p019.react_recovery`、version=`1.0.0`；
-  只允许 `retry/stop` 与配对 reason code，不保存自由思维链。确定性前置门为
-  `retryable && idempotent && (!has_side_effects || side_effect_not_found)`，最多一次 retry、零 replan。
-- `P019ExecutionMode` 新增 `online_fast_three_strategy_closed_loop`；报告版本新增
-  `p0-19.online.v1`，Token/延迟来源新增 `online_trace`/`online_wall_clock`。对应三份 P019 Schema
-  已重导出。
-- 新增 `evals/p019/online_config.json`、`evals/p019/online.py`，CLI 支持 `--mode online`、
-  `--resume`、`--verification-timeout`。运行 manifest 绑定 dataset/config/schedule digest。
-- 直接依赖新增 `psutil>=7.2,<7.3`，锁定 `7.2.2`。没有新增 HTTP API、Pydantic 业务字段、
-  数据库迁移、ToolName、C++ 接口或生产状态机边。
-- 全量 Schema 导出还校正三个既有 Demo Schema 的中文 description 漂移；Demo 字段和行为未变。
-- P0-18 在线配置只校正已过期的 manifest/launcher SHA；模型、量化、ctx、temperature、地图、
-  Prompt、工具、预算和计分未变。manifest SHA=`488B5420B1F0B4DEB76E60014E99C3A86820A0559B06EFEA9842237AED0686B4`，
-  launcher SHA=`8EC0360C30EA5CC9E17F4C7012EFDEF33C65DEB42D1F1F26DE168966F1693805`，
-  model SHA 仍为 `B228C988C624DFFE0B57235A395FA79562D4362FED545820F9B7D78908F337E6`。
+- `ReActActionType`/`ReActDecision`/`ReActStep`/`ReActRunState`/`ReActRequest`/`ReActRunResult`/`ReActInterrupt`
+- `ReActOnlineHarness`、`ReActRunner`、`SharedPrefixService`
+- `FairnessEvidence` 新增 `same_shared_context_contract`、`same_initial_retrieval`、`same_safety_gates`、`same_budget_envelope`、`strategy_prompt_versions`、`react_uses_pevr_runner=false`；`same_prompts` 不再作为硬门禁
+- `P019Report.report_version` 增加 `p0-19.online.v2`
+- 在线配置键 `react_agent` 取代 `react_controller`
+- `ReActRequest.requested_output_tokens` 默认 4096，与 `PEVRRequest` 对齐
 
 #### 重要设计决策
 
-- 公平性是同一 60 例、同一 Fast 制品、同一共享节点/工具/配置/计分，不是把同一 Trace 投影三遍。
-  每个策略拥有独立 run/trace/principal，并保存自己的真实终态和完整 P0-17 Trace。
-- Fixed 关闭恢复；ReAct 只在故障边界增加一次外部模型决定；PEVR 保持生产恢复。ReAct 不得导入
-  生产图，不能为了提高分数放宽副作用安全门或预算。
-- 沿用 P0-18 原分流：正常/充电/可恢复异常/审批走共享八阶段图；RAG、权限、安全、验证类走
-  同一 live sidecar。因此“同一完整 60 例”不等于每一例都经过 dispatch。
-- 资源采样把评测进程、子进程和 8080/18080 监听进程作为一个本机观测集合；CPU/RSS 0.5 秒、
-  GPU 约 5 秒。不要把其峰值解释成某个 LLM 节点的因果开销。
-- `scripts/start_local.ps1` 仅把有 transcript/退出检测/禁用进度的 Fast 父包装器隐藏；内层
-  llama-server 仍通过重定向标准流启动，不叠加 Hidden。实际启动已成功，Smart 仍不在路径。
-- 用户原有 `README.md` 修改以及本步期间出现的其他未跟踪临时文件均未覆盖、删除或登记为本步交付。
+- 本轮主对照固定每例一次共同初始 Retrieve；进入 ReAct 后禁止再检索。
+- 控制 Prompt 天然不同，不得宣称 `same_prompts=true`。
+- `finish` 只是请求完成；dispatch 必须 Validator digest + HITL + Effect 一次。
+- Effect 账本指纹必须用与 ToolRegistry 相同的 `input_model` canonical dump；decide 上下文必须带封闭参数契约。
+- 真实独立 ReAct 分数低于旧 v1 的 54/60 时仍如实覆盖，不得中途改数据集/Prompt/阈值抬分。
 
 #### 实际验证命令与结果
 
-- `E:\Anaconda\envs\torch128\python.exe -m pytest -q -p no:cacheprovider`：**354 passed，2 warnings**。
-- `.\scripts\run_smoke.ps1`：退出码 0；环境/依赖（含 psutil 7.2.2）匹配，PostgreSQL 8 张核心表
-  和 Qdrant collection 健康，Python **354 passed、2 warnings**，C++ CTest **39/39 passed**。
-- `E:\Anaconda\envs\torch128\python.exe scripts\export_schemas.py`：成功；P019 与三份既有 Demo
-  Schema 按运行时模型重导出。
-- P0-19 离线 CLI 回归：status=passed，180 条；PowerShell 入口语法解析通过。在线专项与受影响
-  回归先后实际得到 **32 passed**、**112 passed**，再进入上述全量 354。
-- 三策略 Fast startup preflight 均返回 alias `qwen3.6-fast`，model SHA
-  `B228…37E6`、manifest SHA `488B…86B4`。真实正常 pilot `p018-normal-001` 三策略均 completed；
-  Fixed/ReAct/PEVR 分别 4/4/4 次业务模型调用。真实异常 pilot `p018-exception-005`：Fixed failed，
-  ReAct 一次控制器 retry 后 completed，PEVR 生产恢复后 completed。
-- 正式命令：`python -m evals.p019.run_compare --mode online --config evals/p019/online_config.json --output-dir tmp/p019_online_strategy_compare --verification-timeout 120`；
-  项目 `.env` 已先加载。最终报告 status=passed，完整指标见本条和
-  `docs/P019_STRATEGY_COMPARISON.md`。
-- 最终产物复核：Pydantic 报告可解析；三策略各 60 个唯一 case 且与 dataset 精确相同；进度和
-  原始 JSONL 均 180 行；ReAct 控制器 2 条/482 Token/无原始思维链。
-- 文档收口后复跑 `pytest tests\unit\test_p019_online.py tests\unit\test_p019_compare.py tests\unit\test_p020_deployment.py -q -p no:cacheprovider`：**14 passed，1 warning**；同一命令链中的报告契约/180 行覆盖断言和 `git diff --check` 均通过。
+- 专项：`E:\Anaconda\envs\torch128\python.exe -m pytest tests\unit\test_p019_online.py tests\unit\test_p019_compare.py tests\unit\test_p019_react_agent.py tests\unit\test_p018_online.py tests\unit\test_p013_pevr.py tests\unit\test_p014_checkpoint.py tests\unit\test_p015_faults.py tests\unit\test_p016_security.py -q -p no:cacheprovider`：**109 passed**，1 warning（jieba pkg_resources）。
+- `E:\Anaconda\envs\torch128\python.exe scripts\export_schemas.py`：成功，含 `ReActDecision/ReActStep/ReActRunState`。
+- `.\scripts\run_smoke.ps1`：退出码 0；Python **369 passed、2 warnings**；CTest **39/39 passed**。
+- 在线：`.\scripts\run_p019_compare.ps1 -Mode online -OutputDir tmp\p019_online_v2_run`（无 `-Resume`），约 7802 s，退出码 0；再覆盖写入 `tmp/p019_online_strategy_compare`。JSONL 180 行/180 个唯一策略-case。
 
-#### 环境、服务和下一工作包直接复用
+#### 服务与限制
 
-- 2026-08-28 收口时 Compose `amr-api`、`amr-postgres`、`amr-qdrant` 均 healthy，loopback
-  8000/5432/6333/6334 正在监听。Fast 8080/18080 已退出；Smart 未启动。模型进程当前不需要
-  为报告复核保持运行。
-- 报告位于 `tmp/p019_online_strategy_compare/p019_strategy_comparison.{json,md}`，原始轨迹为
-  `p019_raw_trajectories.jsonl`，三策略子报告位于同目录的 `fixed_workflow/`、`react/`、`pevr/`。
-  运行产物不是源码；复核时不要手改 progress 或 manifest。
-- 若下一步做统计重复，保持同一 60 例和公平性门禁，另建输出目录并记录轮次/机器状态；不要覆盖
-  本次 report digest。若下一步启用 Smart，必须获得用户明确指示并建立独立配置/报告，不能混入
-  本次 Fast 180 条。
-- PEVR 主链不需要因本次对照回退或改预算。新在线样本是随机实测证据，不是要写回生产策略的
-  oracle；唯一 `exception-004` 失败应如实保留。
+- Fast 本步结束时仍在运行（llama-server PID 33468）。Smart 未启动。生产 `warehouse_v1.json` 未改。
+- 沿用 P0-18 sidecar 分流，不是全部 60 例都进入 ReAct 循环。本轮禁止 ReAct 重复检索。
+
+### 2026-08-28 · P0-19 三策略同 60 例真实 Fast 完整闭环
+
+> **作废**：v1 把异常后一次 retry/stop 称为 ReAct，并复用 `PEVRGraphRunner`。该实现与分数表已删除，不得再引用。v2 报告见上节 `p019-online-5bf27026e1607cfe`。
 
 ### 2026-08-28 · README 三策略实验对比与异常终态口径校正
 
-- 完成：在 `README.md` 新增“三策略在线实验结果对比”，表格严格只保留“策略、全例符合、
-  异常终态正确、模型调用 / Token”四列；随后先做总体成本/收益对比，再用低电量、计划不可行且
-  保留完成效果、幂等工具超时和工位持续占用四个真实 case 说明 PEVR 的恢复优势与预算边界。
-- 完成：从 `tmp/p019_online_strategy_compare/p019_strategy_comparison.json` 的 180 条 raw result
-  逐例重算异常最终终态，确认 Fixed/ReAct/PEVR 为 3/10、4/10、9/10；同步修正
-  `docs/P019_STRATEGY_COMPARISON.md`、`docs/P018_EVAL.md` 和本交接入口中的引用。
-- 未完成：本步没有修改 `_exception_recovery_ok`、P019 Pydantic 契约、报告生成器或任何历史
-  JSON/JSONL artifact；自动聚合字段 `recovery_terminal_correct_count` 仍会对 PEVR 显示动作级
-  10/10。若以后修复，应版本化契约并重新执行/生成新报告，不能覆盖本次 digest。
-- 公共接口变化：无 HTTP、Pydantic Schema、数据库字段、Alembic revision、ToolName、Prompt、
-  生产 PEVR 状态机或评测配置变化；本步为纯 Markdown 文档变更，无核心代码注释需求。
-- 关键决策：面向用户的“异常终态正确”必须按最终 `expected_outcome == observed_outcome` 统计；
-  “发生 retry/replan 且生成 v2”只能称为恢复动作达标，不能替代最终任务结果。
-- 实际验证：PowerShell 读取最终 P019 JSON，逐策略断言 60 例、全例符合 53/54/59、异常最终
-  终态 3/4/9、模型调用 118/123/132、Token 763108/783192/842143，并断言 README 四列表格、
-  四个 case ID 和详细报告链接，结果输出 `PASS: 三策略逐例终态、调用量、Token、README 四列表格与案例均一致`。
-- 实际验证：`git diff --check` 退出码 0；仅输出既有 LF→CRLF 转换提醒，无空白错误。
-- 未运行：未执行 pytest、CTest 或 `scripts/run_smoke.ps1`，因为本步不修改运行时代码、配置、
-  Schema 或生成逻辑；不得把此前 354 passed / CTest 39/39 冒充为本步重跑结果。
-- 外部服务：本步没有启动、停止或重新检查任何服务；沿用上条 P0-19 收口事实作为最近快照，
-  但不能据此推断未来仍在线。Fast/Smart 均未因本次文档修改启动。
-- 下一步直接需要的信息：README 和正式说明统一引用最终终态 9/10；历史生成报告的 10/10 只能
-  附带“恢复动作口径”说明。生产 PEVR 主链无须因本次文档校正改动。
+> 该条目当时引用的 53/54/59 来自已作废的 v1。README 现已改为 v2 报告 `p019-online-5bf27026e1607cfe` 的 52/46/59。异常终态按 expected==observed 的口径仍然有效，数字以 v2 的 3/10、6/10、9/10 为准。
 
 ### 2026-08-28 · README 增加 RAG 检索评测章节
 
@@ -2310,4 +2243,93 @@ DAG 使用 `agent.planning.dag.topological_sort()` 中的 Kahn 算法：计算�
   Top-K 全候选的完整语义准确率；nDCG@K=1 也只说明已标注章节排序理想。若要 MAP、分级 nDCG、
   更强 Precision 或生成 Faithfulness，先独立补齐标签/答案判分契约并版本化，再运行新评测；
   `tmp/p020_release_rag_eval_rank_metrics.json` 是生成证据，不得手工改写或登记为源码。
+
+### 2026-08-30 · llama.cpp Prompt 前缀缓存
+
+- 完成：抽出跨节点共享 system 前缀 `amr.shared.system_prefix@1.0.0`（角色/世界、安全边界、输出纪律），放到五个 P0-05 节点和独立 ReAct 的 system 消息最前面；网关 `extra_body` 显式发送 `cache_prompt`；`TokenUsage` 增加可选 `cached_input_tokens`。P0-05 Prompt 版本升为 `1.2.0`，ReAct 升为 `2.1.0`。仍保持一条 system + 一条当前 user，不传历史。
+- 未完成：没有启动 Fast，没有重跑 `smoke_p005_prompts.py` 或 P0-19 在线 180；旧报告 `p019-online-5bf27026e1607cfe` 仍是前缀缓存前的成绩，不能写成新分数。没有改 `parallel_slots=1`，也没有做按节点分槽/落盘 KV。
+- 公共契约变化：`agent.context` 导出 `render_shared_system_prefix` / `P005_PROMPT_VERSION` / `SHARED_PREFIX_*`；`ModelGatewaySettings.prompt_cache_enabled`（环境变量 `LLM_PROMPT_CACHE_ENABLED`）；`TokenUsage.cached_input_tokens`；llama.cpp `extra_body.cache_prompt` 进入网关白名单。业务 JSON Schema 形状未改；ReAct Schema 默认 `prompt_version` 同步为 `2.1.0`。
+- 关键决策：稳定内容必须是 Token **前缀**。安全边界从节点 2-shot/Schema 之后移到前面，否则跨节点无法命中 KV。`agent.runtime.prefix` 仍只是 Guard/Understand/Retrieve 共享前置，不是模型缓存。同一节点连续调用可命中整段 system；跨节点只保证共享前缀。调用方仍不能注入任意 llama.cpp 参数。
+- 实际验证：`E:\Anaconda\envs\torch128\python.exe -m pytest -q tests/unit` → **339 passed, 1 warning**（jieba `pkg_resources`）。其中专项 `test_shared_system_prefix.py`、`test_p005_context_engineering.py`、`test_model_provider.py`、`test_settings.py`、`test_p019_react_agent.py`、`test_p019_online.py`、`test_p004_contracts.py` 共 121 passed。`python scripts/export_schemas.py` 退出码 0。`python -m compileall` 对本步改动的 Python 文件退出码 0。
+- 未运行：`.\scripts\run_smoke.ps1` 在 Alembic 检查处失败：`psycopg.errors.ConnectionTimeout`；`docker compose ps` 无法连接 Docker Desktop 引擎（`dockerDesktopLinuxEngine` named pipe 不存在）。因此未跑集成测试、CTest 和真实模型。未启动 Fast/Smart；8080/18080 本步未探测。
+- 外部服务当前状态：Docker 引擎未运行，不能沿用 2026-08-28 的 healthy 记录。本步没有启动或停止 PostgreSQL、Qdrant、API 或 Fast。
+- 已知限制/风险：llama.cpp 文档指出 `cache_prompt` 改变 prefill batch 时 logits 不一定与冷启动逐 bit 相同；需要比特级复现时设 `LLM_PROMPT_CACHE_ENABLED=false`。`parallel_slots=1` 时槽内只保留上一请求 KV。共享前缀会增加每次输入 Token，仍计入既有预算门禁。P0-18 `dataset.json` 各例仍写 `p0-05=1.1.0`（用例编写时版本），运行时注册表已是 `1.2.0`。
+- 下一步直接需要的信息：若要验证真实加速，先启动 Docker/Postgres 跑 smoke，再 `scripts/start_fast_secure.ps1` 后跑 `smoke_p005_prompts.py`，并观察 llama.cpp 日志或 `cached_input_tokens`。不要把旧 180 例分数当作本前缀的成绩。
+
+### 2026-08-30 · Fast 有/无 `cache_prompt` 实测对照
+
+- 完成：Docker 已由用户拉起后，本会话启动 Fast（未启动 Smart），并运行 `scripts/compare_prompt_cache.py --repeats 2`。对照顺序为 GPU warmup → breaker → `cache_off`（五节点各连续 2 次 + ReAct 2 次）→ breaker → `cache_on` 同样 12 次。证据写入 `tmp/prompt_cache_compare.json`（16448 字节，SHA-256=`8097a3d1876b1f439e2a76066645ded4ff5bf8247502b1a5180ab3597922676c`），是生成物不是源码。脚本随后补了 `matched_successes` 公平口径与 stdout flush；对照脚本在该进程内把 `LLM_GENERATION_TIMEOUT_SECONDS` 默认放到 180，不改仓库默认 120s。
+- 未完成：没有重跑 P0-19 **在线** 180，也没有把仓库默认生成超时改成 180s。本次 `cache_off` 仍使用当时网关默认 120s，因此 7/12 命中 `TIME_BUDGET_EXCEEDED`。没有停止 Fast。
+- 公共契约变化：无。只增加对照脚本与离线汇总测试。
+- 关键决策：全量 wall 加速比会把超时失败算进去，公平口径只比较两侧都成功的同一节点/轮次。`cache_off` 成功调用的 `cached_input_tokens` 均为 0，证明开关有效；`cache_on` 同节点第二轮命中率约 0.998–0.999，跨节点首轮约 0.70–0.87（共享前缀），ReAct 两轮均为 0.956。
+- 实际验证：
+  - `E:\PowerShell7\7\pwsh.exe -NoProfile -File .\scripts\start_local.ps1 -StartFast` 退出码 0。
+  - `E:\Anaconda\envs\torch128\python.exe scripts\compare_prompt_cache.py --repeats 2 --output tmp\prompt_cache_compare.json` 退出码 1（因 `cache_off` 7 次超时），墙钟约 1453s。`cache_on` **12/12 PASS**；`cache_off` **5/12 PASS**。
+  - 全量汇总（含超时）：`cache_off` wall 合计 1124535.3 ms、命中率 0.0；`cache_on` wall 合计 321123.4 ms、`cached_input_tokens` 合计 30828 / 输入 34140、命中率 0.903；该全量加速比 3.502 不可作为公平结论。
+  - 配对成功 5 次：`cache_off` 284403.3 ms vs `cache_on` 61304.9 ms，加速比 **4.639**。其中 `verify_observation` 第 2 轮 93118 ms → 6670 ms（命中 2127/2131）；`compose_report` 第 2 轮 66702 ms → 16233 ms（命中 2591/2595）。
+  - `E:\Anaconda\envs\torch128\python.exe -m pytest -q tests/unit/test_prompt_cache_compare.py tests/unit/test_shared_system_prefix.py` → **6 passed**。
+  - Docker 起来后、Fast 启动前：`.\scripts\run_smoke.ps1` 退出码 0；pytest **375 passed, 2 warnings**（24.91s），CTest **39/39**。
+  - 同会话离线 P0-19：`.\scripts\run_p019_compare.ps1 -Mode independent -OutputDir tmp\p019_strategy_compare_prefix_cache` 退出码 0，约 4.9s，`raw_result_count=180`，`status=passed`，报告 `p019-e96dadec0fa56a06`。这是 oracle 离线夹具，不是 Fast 在线 180，不能当缓存加速成绩。
+- 未运行：P0-19 **三策略在线** 180、Smart。P0-18 生产 PEVR 在线 60 已在后续对照中各跑一轮，见下条。完整 smoke 已在本步 Docker 恢复后跑过，不再记为未运行。
+- 外部服务当前状态：Compose 三容器 healthy。Fast 仍在：`127.0.0.1:18080` PID=31596，`127.0.0.1:8080` PID=21720。Smart 未启动。
+- 已知限制/风险：默认 120s 生成超时在关闭缓存、约 4k prompt 的节点上经常不够（prefill 可到 70–90s）。对照脚本打印默认块缓冲，后续已 `flush=True`。生成阶段仍占墙钟大头，前缀命中主要砍的是 prompt eval。
+- 下一步直接需要的信息：不要把本次 4.6x 外推为 P0-19 180 例会同等加速。若要补齐 `cache_off` 全成功曲线，需显式提高超时后再跑，不能把本次超时写成模型失败。Fast 仍占用 GPU，需要释放时再停。
+
+### 2026-08-30 · P0-18 生产 PEVR 60 例有/无 `cache_prompt`
+
+- 完成：`scripts/compare_pevr_prompt_cache.py --output-root tmp\p018_pevr_cache_compare` 退出码 0，墙钟约 12669s（约 3.5h）。只跑生产 PEVR，未跑 Fixed/ReAct。证据 `tmp/p018_pevr_cache_compare/p018_pevr_cache_compare.json`（22144 字节，SHA-256=`9c7068a9625279f6e6c8fcb65f213464e50977b74364fd3dbe85bb71a26131ba`），分阶段报告 `cache_off/p018_online_eval.json`（`p018-online-3e6aca436823326b`）与 `cache_on/p018_online_eval.json`（`p018-online-d6862f612b5a25b4`）。生成物不是源码。
+- 未完成：没有重跑 P0-19 三策略在线 180。没有把仓库默认 120s 生成超时改掉。没有停止 Fast。
+- 公共契约变化：无。
+- 关键决策：全量 60 例墙钟加速比 **0.59** 不能当结论。关缓存几乎没打到模型（12 次调用、26/60 通过），开缓存才真正跑 PEVR（117 次调用、50/60 通过）。24 例从失败翻成通过。两侧都调用过模型的只有 4 例，墙钟比 1.030；两侧都通过的 26 例多为 RAG/安全/核验短路径，墙钟比 1.101。
+- 实际验证：关缓存 pass=26/60、`model_call_count=12`、阶段约 4702s、p50≈120073ms；开缓存 pass=50/60、`model_call_count=117`、阶段约 7963s、p50≈120082ms、p95≈302006ms。29 例关缓存 0 次模型调用、开缓存有调用。
+- 未运行：Fixed、独立 ReAct、P0-19 在线 180、Smart。
+- 外部服务当前状态：Fast 仍在 `127.0.0.1:18080` PID=31596、代理 `127.0.0.1:8080` PID=21720。Smart 未启动。
+- 已知限制/风险：关缓存组大量 `model_calls=0` 打满 120s，不能解释为“缓存让 PEVR 变慢”。本对照 JSON 未采集 `cached_input_tokens`。不要覆盖或改写既有 P0-18/P0-19 正式在线报告身份。
+- 下一步直接需要的信息：若还要看 PEVR 主链加速，应提高超时或只统计两侧都有模型调用且都通过的例，并补 usage 命中字段。不要把本次 50/60 写成新的正式 P0-18 发布分数。
+
+### 2026-08-31 · 有缓存生产 PEVR 60 例（无缓存按指令延期）
+
+- 完成：按用户明确指令，只跑 `LLM_PROMPT_CACHE_ENABLED=true` 的生产 PEVR P0-18 在线 60 例，**没有**启动无缓存阶段，也没有调用会连跑两阶段的 `scripts/compare_pevr_prompt_cache.py`。命令：`E:\Anaconda\envs\torch128\python.exe -u -m evals.p018.run_eval --config evals\p018\online_config.json --output-dir tmp\p018_pevr_cache_compare_20260831\cache_on --verification-timeout 120`，环境变量 `LLM_PROFILE=fast`、`LLM_PROMPT_CACHE_ENABLED=true`，未设置 `LLM_MODEL`。退出码 0，进程墙钟 **2311708ms**（约 38.5 分钟）。本步无核心代码注释需求（未改运行时代码）。
+- 未完成：无缓存 60 例未跑。没有重跑 P0-19 三策略在线 180。没有停止 Fast。没有把仓库默认 120s 生成超时改掉。
+- 公共契约变化：无。
+- 关键决策：新证据写入 `tmp/p018_pevr_cache_compare_20260831/`，**不覆盖** 2026-08-30 的 `tmp/p018_pevr_cache_compare/`。本次 59/60 只是有缓存对照的一半，不能写成新的正式 P0-18 发布分数，也不能拿它和 8/30 关缓存组（大量超时、12 次模型调用）直接算加速比。
+- 实际验证：
+  - `.\scripts\start_local.ps1 -StartFast` 退出码 0；网关预检 alias=`qwen3.6-fast`；`prompt_cache_enabled=True`。
+  - 报告 `p018-online-8d791bd33c57957b`，digest `8d791bd33c57957b…d21794b0`，JSON SHA-256=`C53F906F039638C2216DC61B76BBB9F61EFA9498C6F7D5281D8B4B5244D353C4`（1153110 字节），`status=passed`（零容忍全 0）。
+  - 全量：pass=**59/60**，`model_call_count=133`，`wall_ms_sum=2305268.2`，mean=38421.1，p50=44722.8，p95=72895.4，max=85762.2。有模型调用的 36 例：35/36 通过，墙钟 mean=63003.6，p50=68549.9。任务完成 43/44（0.977273），恢复终态正确 10/10。
+  - 唯一失败：`p018-exception-004`（`workstation_occupied`），`observed=failed`，`model_calls=3`，原因 `TOOL_BUDGET_EXHAUSTED`（工具步数预算耗尽），不是生成超时。
+  - 正常订单 20/20 completed（各 4 次调用）、充电 5/5 charged（各 3 次调用）。逐例进度在 `p018_online_progress.jsonl`。
+- 未运行：无缓存 60 例、Fixed、独立 ReAct、P0-19 在线 180、Smart、完整 smoke（本步未改代码）。
+- 外部服务当前状态：Compose `amr-api`/`amr-postgres`/`amr-qdrant` 仍 healthy。Fast **未停止**：llama-server PID=20928 `127.0.0.1:18080`，鉴权代理 PID=33452 `127.0.0.1:8080`。Smart 未启动。
+- 已知限制/风险：在线报告仍未逐例采集 `cached_input_tokens`。本次有缓存墙钟（约 38.5 分钟、p50≈45s）明显快于 8/30 开缓存阶段（约 7963s、p50≈120s、50/60），不能单凭本次推断“缓存比上次更有效”，因为 8/30 是先跑关缓存再跑开缓存，且当时大量超时。后续无缓存测试必须单独设输出目录、显式 `LLM_PROMPT_CACHE_ENABLED=false`，并在阶段前发 breaker；若仍用默认 120s，关缓存可能再次大量 `model_calls=0`。
+- 下一步直接需要的信息：用户给出明确指令后再跑无缓存 60 例；配对时用 `tmp/p018_pevr_cache_compare_20260831/cache_on/` 与新的 `cache_off/`，不要改写 8/30 目录。需要释放 GPU 时再停 Fast。
+
+### 2026-08-31 · 无缓存生产 PEVR 60 例并与有缓存配对
+
+- 完成：用户明确下令后，在阶段前发送 breaker（`cached_input_tokens=0`，486.8ms），再以 `LLM_PROMPT_CACHE_ENABLED=false` 跑同一套 P0-18 在线 60 例。命令与有缓存轮相同，仅缓存开关和输出目录不同：`--output-dir tmp\p018_pevr_cache_compare_20260831\cache_off`，`--verification-timeout 120`。退出码 0，进程墙钟 **2507999ms**（约 41.8 分钟）。配对汇总 `tmp/p018_pevr_cache_compare_20260831/p018_pevr_cache_compare.json`（23252 字节，SHA-256=`01D9C737A12D4E74DA56497936976D91D5C1EA7E5E1394242A47A3F0DD5B59BB`）。本步无核心代码注释需求（未改运行时代码）。
+- 未完成：没有重跑 P0-19 三策略在线 180。没有停止 Fast。没有改仓库默认 120s 生成超时。
+- 公共契约变化：无。
+- 关键决策：这是与同日有缓存轮可配对的对照：两侧都 **59/60**、都 **133** 次模型调用、都只失败 `p018-exception-004`。因此全量墙钟比 **1.086** 可以当作“Fast 已预热、默认 120s 够用”条件下的 PEVR 墙钟差，不能外推成节点级 4.6x，也不能拿来否定 8/30 那次关缓存大量超时的事实（那次 Fast 更冷、先跑关缓存）。不要覆盖 8/30 目录，也不要把 59/60 写成正式 P0-18 发布分数。
+- 实际验证：
+  - 无缓存报告 `p018-online-1d5bc152914699d0`，digest `1d5bc152914699d0…0cedd8e9`，JSON SHA-256=`3EA08AA665A34CE279627ED917C8A487DCF238D6EC6FE1073E5BB28FB7C2CEBA`（1153202 字节），`status=passed`。
+  - 无缓存全量：pass=59/60，`model_call_count=133`，`wall_ms_sum=2502612.5`，mean=41710.2，p50=48370.6，p95=80548.2，max=85064.5。有模型调用的 36 例：35/36，mean=68525.7，p50=75114.2。
+  - 有缓存全量（同日先跑）：pass=59/60，133 次调用，`wall_ms_sum=2305268.2`，p50=44722.8。
+  - 60 对对齐加速比 **1.086**；两侧都通过 59 对同样是 1.086；两侧都有模型调用且都通过的 35 对 **1.088**（无缓存墙钟和 2414928.7ms，有缓存 2219919.0ms）。LLM 例逐例加速比 min=0.947、p50=1.094、max=1.478。
+  - 唯一失败仍是 `p018-exception-004`（`TOOL_BUDGET_EXHAUSTED`），不是超时。
+- 未运行：Fixed、独立 ReAct、P0-19 在线 180、Smart、完整 smoke（本步未改代码）。
+- 外部服务当前状态：Compose 三容器仍 healthy。Fast **未停止**：llama-server PID=20928 `127.0.0.1:18080`，鉴权代理 PID=33452 `127.0.0.1:8080`。Smart 未启动。
+- 已知限制/风险：在线报告仍未逐例采集 `cached_input_tokens`。生成仍占墙钟大头，前缀缓存大约只省 8–9% PEVR 闭环时间。8/30 关缓存 26/60、12 次调用仍然有效，不能用本次热机结果去改写那次结论。
+- 下一步直接需要的信息：需要释放 GPU 时再停 Fast。若要看冷启动关缓存曲线，必须在 Fast 刚加载完、未先跑有缓存 60 例的条件下重测，不能用本次热机 1.086 代替。
+
+### 2026-08-31 · README 写入仅 LLM 案例的 TTFT/prefill/命中率/端到端
+
+- 完成：从 `tmp/llama-server.err.log` 按时间窗拆开有/无缓存阶段，只保留 prompt≥200 Token 的 132 次生成；端到端只用 `model_call_count>0` 的 36 例墙钟。数字写入 `README.md` 与 `tmp/p018_pevr_cache_compare_20260831/llm_only_cache_metrics.json`。本步无核心代码注释需求（未改运行时代码）。
+- 未完成：在线评测报告仍不逐调用落 `cached_input_tokens`/TTFT；README 数字来自 llama.cpp 日志事后解析。
+- 公共契约变化：无。
+- 关键决策：TTFT 不得用 `launch` 到请求结束的时间（那是整次生成）。单槽非流式下 TTFT 取 prefill 结束。关缓存命中率必须为 0 才把开关写进对外表。
+- 实际验证：有缓存 TTFT p50=3233.0ms、prefill p50=3349.2ms、命中率 0.4319、端到端 p50=68549.9ms；无缓存 TTFT p50=4648.9ms、prefill p50=4829.7ms、命中率 0、端到端 p50=75114.2ms。
+- 未运行：未重跑评测、未停 Fast、未跑 smoke。
+- 外部服务当前状态：Fast 仍在 PID 20928/33452，未停止。
+- 已知限制/风险：Trace 记 133 次调用、日志完整计时 132 次，差 1 次未进入 TTFT 样本。端到端含仿真，不能当成纯模型延迟。
+- 下一步直接需要的信息：对外只引用 README 这张 LLM 表，不要再用全量 60 例 1.086 当 cache 主结论。
 

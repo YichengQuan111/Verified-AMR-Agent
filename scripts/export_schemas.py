@@ -68,6 +68,7 @@ from evals.p018.contracts import (  # noqa: E402
     EvalReport,
 )
 from evals.p019.contracts import P019Report, StrategyCaseResult, StrategySummary  # noqa: E402
+from evals.p019.react_contracts import ReActDecision, ReActRunState, ReActStep  # noqa: E402
 from services.demo.contracts import (  # noqa: E402
     DemoLauncherRequest,
     DemoLauncherStatus,
@@ -151,6 +152,9 @@ SCHEMA_MODELS: dict[str, type[BaseModel]] = {
     "P019Report.schema.json": P019Report,
     "P019StrategyCase.schema.json": StrategyCaseResult,
     "P019StrategySummary.schema.json": StrategySummary,
+    "ReActDecision.schema.json": ReActDecision,
+    "ReActStep.schema.json": ReActStep,
+    "ReActRunState.schema.json": ReActRunState,
     # 演示 UI 扩展（用户指令优先于 scope.md 的 P0 前端排除项）：浏览器只消费
     # 这五份契约，必须从运行时 Pydantic 模型同源导出，防止前端按猜测字段渲染。
     "DemoWarehouseMap.schema.json": DemoWarehouseMap,

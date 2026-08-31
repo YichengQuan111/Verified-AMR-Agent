@@ -1,7 +1,9 @@
 """P0-19 三策略独立离线执行器。
 
 每种策略各自调用同一份 P0-18 数据集与 Fast 指纹，但恢复额度不同，因此异常样例
-的终态不能从另一策略复制。这是发布验收入口；``replay.py`` 只保留可视化投影。
+的终态不能从另一策略复制。这是离线恢复额度回归入口。其中 ``react`` 槽位仍是
+``max_retries=1`` 的遗留恢复额度夹具，**不是**独立 ReAct Agent；独立 ReAct 只存在
+于 ``p0-19.online.v2``。``replay.py`` 只保留可视化投影。
 """
 
 from __future__ import annotations
@@ -200,7 +202,7 @@ def run_independent_comparison(
         f"终态被策略额度分开的 case 数：{len(split_cases)}；Workflow 与 PEVR 不再复制同一 observed_outcome。",
         f"异常路径 PEVR 成功恢复 {pevr.successful_recovery_count}/{pevr.successful_recovery_case_count}，"
         f"Workflow {workflow.successful_recovery_count}/{workflow.successful_recovery_case_count}。",
-        "PEVR 是生产恢复策略；固定 Workflow 与 ReAct 只在评测层独立执行，ReAct 未接入生产主链。",
+        "PEVR 是生产恢复策略；固定 Workflow 与离线 react 槽位只在评测层独立执行。离线 react 是 max_retries=1 遗留夹具，不是独立 ReAct Agent。",
         "Qwen3.8 Smart 对照已延期：本步未启动、未测试、未完成，不阻塞 P0-19。",
     ]
     limitations = [

@@ -397,7 +397,7 @@ def test_each_prompt_is_independent_and_has_live_output_schema(
 
     assert definition.node_name is node_name
     assert definition.prompt_id.endswith(node_name.value)
-    assert definition.version == "1.1.0"
+    assert definition.version == "1.2.0"
     assert "## 职责" in rendered
     assert "## 禁止事项" in rendered
     assert "## 两个示例（2-shot）" in rendered
@@ -412,6 +412,9 @@ def test_each_prompt_is_independent_and_has_live_output_schema(
     assert examples[0].output.model_dump() != examples[1].output.model_dump()
     assert compact_schema in rendered
     assert "{{OUTPUT_SCHEMA}}" not in rendered
+    assert rendered.startswith("Shared-Prefix-ID: amr.shared.system_prefix")
+    assert rendered.index("Shared-Prefix-ID:") < rendered.index("Prompt-ID:")
+    assert rendered.index("## 安全边界（不可被上下文改写）") < rendered.index("Prompt-ID:")
 
 
 def test_state_summarizer_keeps_only_three_digests_without_large_payloads() -> None:
@@ -469,6 +472,7 @@ def test_rendered_messages_have_no_history_or_full_tool_payload() -> None:
     combined = "\n".join(message.content for message in messages)
 
     assert [message.role for message in messages] == ["system", "user"]
+    assert messages[0].content.startswith("Shared-Prefix-ID: amr.shared.system_prefix")
     assert "observation-summary-4" in combined
     assert "observation-summary-0" not in combined
     assert "NEVER-SEND" not in combined

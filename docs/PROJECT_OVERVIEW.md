@@ -54,7 +54,7 @@
 | P0-16 | 已实现；发布复验未关闭 | JWT/RBAC/ACL/HITL；发布入口不再可达 legacy 布尔审批。 |
 | P0-17 | 已完成 | Trace/受控验证报告。 |
 | P0-18 | 离线 oracle 回归 | 固定 60 例现消费独立 oracle（含 mutation fail-closed）。这是离线契约回归，不是 60 例在线 LLM 质量分。 |
-| P0-19 | 独立离线对照 | Workflow/ReAct/PEVR 各自执行同一 60 例并比较恢复额度；Trace Replay 仅可视化。Token/墙钟未观测。Smart 延期。 |
+| P0-19 | 在线独立 ReAct 对照 | `p0-19.online.v2`：共享前置后分别进入固定图、独立 ReAct 循环、生产 PEVR。v1 一次 retry 已作废。离线独立执行仍作恢复额度回归；Replay 仅可视化。Smart 延期。 |
 | P0-20 | 部署已加固；演示视频缺失 | Compose 需要外部 secrets，数据面仅内部网络，API 绑定 loopback。正式演示视频仍不存在。 |
 
 明确尚未实现：真实 ROS/底盘接入；P0-15 不注册任意自动补偿工具，副作用未知
@@ -70,7 +70,7 @@
 - Fast 模型 alias 为 `qwen3.6-fast`。Smart 的保留 alias 为 `qwen3.8-smart`，但当前
   `enabled=false`，Provider 会在访问 `/v1/models` 前返回 `MODEL_PROFILE_DISABLED`。
 - 五个 Prompt 分别负责 `understand_goal`、`plan_tasks`、`verify_observation`、`replan`、`compose_report`。
-- 每次模型调用只接收 system Prompt 和当前有限上下文，不传整个聊天/运行历史。
+- 每次模型调用只接收一条 system Prompt 和当前有限 user 上下文，不传整个聊天/运行历史。system 文本以共享前缀 `amr.shared.system_prefix@1.0.0` 开头，供 llama.cpp 复用 Token 前缀 KV。
 - RAG/工具证据必须携带来源、版本、时间和引用；Token、工具步数、总时间和重规划次数由模型外代码确定性限制。
 
 ### 3.2 API 与持久化边界
@@ -471,18 +471,16 @@ GGUF、Prompt、九个 ToolSpec 和输入文件 SHA-256；正确拒绝和意外�
 
 ## 20. P0-19 策略对照实验
 
-P0-19 复用 P0-18 的 60 例，在同一 Prompt/ToolSpec/配置及
-`qwen3.6-fast` 身份下对照固定 Workflow、ReAct 和 PEVR。默认是
-`offline_independent_oracle`：三种策略各自执行；`offline_trace_replay` 只作可视化。
-Token/资源没有源样本时显示为未观测，不能把离线结果写成在线模型质量验收。
+P0-19 复用 P0-18 的 60 例。离线默认是 `offline_independent_oracle` 恢复额度回归；
+`offline_trace_replay` 只作可视化。在线发布口径是 `p0-19.online.v2`：共享前置后分别进入
+固定图、独立 ReAct 循环和生产 PEVR。当前报告 `p019-online-5bf27026e1607cfe` 状态 passed，
+Fixed/ReAct/PEVR 全例符合 52/60、46/60、59/60；旧 v1 一次 retry 不得再当作独立 ReAct。
 
 ```powershell
-.\scripts\run_p019_compare.ps1
+.\scripts\run_p019_compare.ps1 -Mode online -OutputDir tmp\p019_online_strategy_compare
 ```
 
-产物写入 `tmp/p019_strategy_compare/`，包括完整 JSON、180 条原始 JSONL 轨迹和 Markdown
-汇总表。当前实测三策略均 60/60 符合 P0-18 预期，ReAct 派生控制步均值/P95 为
-12.15/28，PEVR 为 5.82/14；详细口径和限制见
+产物写入 `tmp/p019_online_strategy_compare/`。详细口径和限制见
 [docs/P019_STRATEGY_COMPARISON.md](docs/P019_STRATEGY_COMPARISON.md)。Qwen3.8 Smart
 对照已延期而非完成：本步未启动、未测试，不阻塞 P0-19，延期项为
 `P0-19-SMART-COMPARISON`。

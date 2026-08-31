@@ -1,6 +1,6 @@
 {
   "eval_config_id": "amr-p019-online-config",
-  "version": "p0-19.online.v1",
+  "version": "p0-19.online.v2",
   "execution_mode": "online_fast_three_strategy_closed_loop",
   "p018_dataset_path": "evals/p018/dataset.json",
   "p018_config_path": "evals/p018/online_config.json",
@@ -13,7 +13,7 @@
     "temperature": 0.1,
     "reasoning_enabled": false
   },
-  "shared_pevr_entry_budgets": {
+  "shared_prefix_budgets": {
     "max_total_seconds": 300,
     "max_input_tokens": 30000,
     "max_output_tokens": 5000,
@@ -24,29 +24,29 @@
       "id": "fixed_workflow",
       "production_path": false,
       "fault_recovery_enabled": false,
-      "description": "复用八阶段固定图，异常后立即停止；不重试、不重规划。"
+      "description": "共享 Guard/Understand/初次 Retrieve 后进入固定八阶段图；异常后立即停止，不重试、不重规划。"
     },
     {
       "id": "react",
       "production_path": false,
       "fault_recovery_enabled": false,
-      "description": "复用同一固定图；仅在评测边界由 Fast 做一次结构化 retry/stop 决策。"
+      "description": "共享前置后进入独立 decide→guard→act→observe 循环；不实例化 PEVR 图，本轮不重复检索。"
     },
     {
       "id": "pevr",
       "production_path": true,
       "fault_recovery_enabled": true,
-      "description": "原生产 PEVR 自动恢复与 max_retries=2/max_replans=2 原生预算，不作收紧。"
+      "description": "共享前置后进入生产 PEVR 图，保留 max_retries=2/max_replans=2 原生恢复预算。"
     }
   ],
-  "react_controller": {
-    "prompt_id": "amr.eval.p019.react_recovery",
-    "prompt_version": "1.0.0",
-    "max_retries": 1,
-    "max_replans": 0,
-    "max_output_tokens": 256,
-    "raw_chain_of_thought_stored": false,
-    "deterministic_safety_gate": "retryable && idempotent && (!has_side_effects || side_effect_not_found)"
+  "react_agent": {
+    "prompt_id": "amr.eval.p019.react_agent",
+    "prompt_version": "2.1.0",
+    "runner_version": "p0-19.react.v2",
+    "max_loop_iterations": 12,
+    "allow_repeat_retrieve": false,
+    "uses_pevr_runner": false,
+    "raw_chain_of_thought_stored": false
   },
   "schedule": {
     "policy": "latin_square_interleaved",

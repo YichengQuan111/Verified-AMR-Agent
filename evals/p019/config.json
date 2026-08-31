@@ -23,7 +23,7 @@
     {
       "id": "react",
       "production_path": false,
-      "description": "评测层有限重试：max_retries=1、max_replans=0；不接入生产主链。"
+      "description": "离线遗留夹具：评测层 max_retries=1、max_replans=0，用于恢复额度差异回归；不是独立 ReAct Agent，不得当作在线 ReAct 质量结论。"
     },
     {
       "id": "pevr",

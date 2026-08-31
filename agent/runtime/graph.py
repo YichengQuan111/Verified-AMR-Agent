@@ -74,6 +74,14 @@ from agent.runtime.pevr import (
     PEVRTraceEvent,
     PEVR_STAGE_ORDER,
 )
+from agent.runtime.prefix import (
+    SHARED_ENTRY_BUDGETS,
+    SharedPrefixError,
+    SharedPrefixService,
+    canonicalize_charging_contract,
+    canonicalize_contract_against_snapshot,
+    validate_contract_against_snapshot,
+)
 from agent.runtime.hitl import (
     ApprovalGrant,
     HITLInterrupt,
@@ -308,19 +316,8 @@ class PEVRGraphRunner:
     completed 就直接再次派发。
     """
 
-    ENTRY_BUDGETS = {
-        # P0-13 会调用 understand、plan、verify、compose_report 四个独立
-        # Prompt；预算是整次运行的累计上限，而不是单次 llama.cpp 上下文窗口。
-        # Fast 的单次 context_window 由网关固定为 16384，这里只避免把多个
-        # 合法节点的输入相加后误判为 fallback。
-        "max_total_seconds": 300,
-        "max_input_tokens": 30000,
-        "max_output_tokens": 5000,
-        "max_tool_steps": 8,
-        # P0-15 的默认自动恢复额度；合同仍可显式收紧到 0～2。
-        "max_replans": 2,
-        "max_retries": 2,
-    }
+    # 入口预算与 SharedPrefixService 同源，禁止在 PEVR 私有节点里另写一套数字。
+    ENTRY_BUDGETS = SHARED_ENTRY_BUDGETS
     DEFAULT_PAYLOAD_KG = 1.0
 
     def __init__(
@@ -392,6 +389,16 @@ class PEVRGraphRunner:
             or _RegistryExternalStateReconciler(self.registry, clock)
         )
         self._clock = clock
+        # Guard/Understand/初次 Retrieve 抽到策略无关组件；图节点只保留
+        # Trace、Checkpoint 和 PEVR 异常映射，生产行为保持不变。
+        self._prefix = SharedPrefixService(
+            self.provider,
+            self.registry,
+            self.snapshot_provider,
+            clock=self._clock,
+            entry_budgets=self.ENTRY_BUDGETS,
+            security_required=self.security_required,
+        )
         self.graph = self._build_graph()
 
     def _registry_approval_verifier(
@@ -1953,94 +1960,31 @@ class PEVRGraphRunner:
     def _guard_node(self, state: PEVRGraphState) -> dict[str, Any]:
         """执行入口长度、角色、环境和工具审批声明检查。"""
 
-        request = state["request"]
-        if request.principal_role is not UserRole.OPERATOR:
-            raise PEVRExecutionError(PEVRStage.GUARD, "role_not_allowed", "正常执行必须使用 operator")
-        if self.security_required and request.principal is None:
-            raise PEVRExecutionError(
-                PEVRStage.GUARD,
-                "principal_required",
-                "安全 PEVR 必须使用已验签 Principal",
-            )
-        dispatch_spec = self.registry.get(ToolName.DISPATCH_SIMULATION).spec
-        if not dispatch_spec.requires_approval:
-            raise PEVRExecutionError(
-                PEVRStage.GUARD,
-                "dispatch_approval_contract_missing",
-                "dispatch_simulation 的 requires_approval 声明缺失",
-            )
-        # 这里不自动批准；只验证调用上下文能否表达可信审批。真正的拒绝在
-        # Executor 即将调用副作用工具前再次检查，避免 Planner 改写审批事实。
+        try:
+            self._prefix.guard(state["request"])
+        except SharedPrefixError as exc:
+            raise PEVRExecutionError(PEVRStage.GUARD, exc.code, str(exc)) from exc
         return {"stage": PEVRStage.GUARD, "stage_trace": self._mark_stage(state, PEVRStage.GUARD)}
 
     def _understand_node(self, state: PEVRGraphState) -> dict[str, Any]:
         """用 Fast/Smart 网关把自然语言订单冻结为 TaskContract。"""
 
         request = state["request"]
-        snapshot = self.snapshot_provider.get_snapshot(request.environment_ref)
-        context = build_node_context(
-            node_name=PromptNodeName.UNDERSTAND_GOAL,
-            request_id=f"{request.run_id}:understand",
-            node_input={
-                "raw_request": request.raw_request,
-                "environment_ref": snapshot.environment_ref,
-                "environment_snapshot": {
-                    "state_version": snapshot.state_version,
-                    "map_width": snapshot.map_width,
-                    "map_height": snapshot.map_height,
-                    "location_ids": sorted(snapshot.location_positions),
-                    "blocked_cells": [item.model_dump(mode="json") for item in snapshot.blocked_cells],
-                },
-                "available_orders": [item.model_dump(mode="json") for item in snapshot.orders],
-                "fixed_execution_defaults": {
-                    "max_total_seconds": self.ENTRY_BUDGETS["max_total_seconds"],
-                    "max_input_tokens": self.ENTRY_BUDGETS["max_input_tokens"],
-                    "max_output_tokens": self.ENTRY_BUDGETS["max_output_tokens"],
-                    "minimum_battery_percent": 20,
-                    "maximum_load_kg": 100,
-                    "enforce_time_windows": True,
-                    "max_tool_steps": 8,
-                    "max_replans": 2,
-                    "max_retries": 2,
-                },
-            },
-            budget_limits=self._budget_limits(None),
-            budget_usage=state["budget_usage"],
-            requested_output_tokens=self._requested_output_tokens(
+        try:
+            prefix_result = self._prefix.understand(
                 request,
-                self._budget_limits(None),
-                state["budget_usage"],
-            ),
-            generated_at=self._clock(),
-        )
-        result = understand_goal(self.provider, context)
-        self._append_model_trace(state, result, node=PromptNodeName.UNDERSTAND_GOAL.value)
-        contract = cast(TaskContract, self._node_output_or_fail(result, PEVRStage.UNDERSTAND, "understand_goal"))
-        # 动态订单快照：LLM 合同对齐到服务端重建的订单真值后再做逐字段相等校验，
-        # 不放松 order_snapshot_mismatch。种子默认 Provider 没有 injected_orders。
-        # 充电合同走 injected_charging，禁止再灌占位 TransportOrder。
-        if getattr(self.snapshot_provider, "injected_charging", None):
-            contract = self._canonicalize_charging_contract(contract, snapshot)
-        elif getattr(self.snapshot_provider, "injected_orders", None):
-            contract = self._canonicalize_contract_against_snapshot(contract, snapshot)
-        self._validate_contract_against_snapshot(contract, snapshot)
-        now = self._clock()
-        run_state = RunState(
-            run_id=request.run_id,
-            status=RunStatus.PLANNING,
-            plan_version=1,
-            task_contract=contract,
-            plan_tasks=[],
-            amr_states=[item.model_copy(deep=True) for item in snapshot.amrs],
-            orders=[item.model_copy(deep=True) for item in contract.orders],
-            observations=[],
-            current_task_id=None,
-            completed_task_ids=[],
-            failed_task_ids=[],
-            created_at=now,
-            updated_at=now,
-            replan_count=0,
-        )
+                budget_usage=state["budget_usage"],
+                requested_output_tokens=self._requested_output_tokens(
+                    request,
+                    self._budget_limits(None),
+                    state["budget_usage"],
+                ),
+            )
+        except SharedPrefixError as exc:
+            raise PEVRExecutionError(PEVRStage.UNDERSTAND, exc.code, str(exc)) from exc
+        self._append_model_trace(state, prefix_result.node_result, node=PromptNodeName.UNDERSTAND_GOAL.value)
+        contract = prefix_result.contract
+        run_state = prefix_result.run_state
         ensure_run = getattr(self.checkpoint_store, "ensure_run", None)
         if callable(ensure_run):
             # 只有合同和初始 RunState 都通过 Pydantic 后才创建/绑定 PostgreSQL
@@ -2051,7 +1995,7 @@ class PEVRGraphRunner:
             "stage_trace": self._mark_stage(state, PEVRStage.UNDERSTAND),
             "contract": contract,
             "run_state": run_state,
-            "budget_usage": result.usage_after,
+            "budget_usage": prefix_result.budget_usage,
             "model_call_count": state.get("model_call_count", 0) + 1,
         }
 
@@ -2060,34 +2004,12 @@ class PEVRGraphRunner:
         contract: TaskContract,
         snapshot: EnvironmentSnapshot,
     ) -> TaskContract:
-        """把 LLM 合同订单/环境约束强制覆盖为快照真值，并清零 missing_information。
+        """把 LLM 合同订单/环境约束强制覆盖为快照真值，并清零 missing_information。"""
 
-        沿用 plan 侧 canonicalize 先例：这些字段由服务端按地点白名单重建，
-        LLM 没有合法选择权。覆盖后仍走 ``_validate_contract_against_snapshot``
-        的逐字段相等校验。快照订单为空时拒绝而不是猜一份订单。
-        """
-
-        if not snapshot.orders:
-            raise PEVRExecutionError(
-                PEVRStage.UNDERSTAND,
-                "dynamic_order_missing",
-                "动态订单快照没有可对齐的订单真值",
-            )
-        constraints = contract.constraints.model_copy(
-            update={
-                "map_width": snapshot.map_width,
-                "map_height": snapshot.map_height,
-                "blocked_cells": list(snapshot.blocked_cells),
-            }
-        )
-        return contract.model_copy(
-            update={
-                "orders": [item.model_copy(deep=True) for item in snapshot.orders],
-                "environment_ref": snapshot.environment_ref,
-                "constraints": constraints,
-                "missing_information": [],
-            }
-        )
+        try:
+            return canonicalize_contract_against_snapshot(contract, snapshot)
+        except SharedPrefixError as exc:
+            raise PEVRExecutionError(PEVRStage.UNDERSTAND, exc.code, str(exc)) from exc
 
     def _canonicalize_charging_contract(
         self,
@@ -2096,82 +2018,23 @@ class PEVRGraphRunner:
     ) -> TaskContract:
         """把充电合同冻结为快照真值：空订单、指定 AMR/充电站，并清零 missing_information。"""
 
-        injected = getattr(self.snapshot_provider, "injected_charging", None)
-        goal = injected if isinstance(injected, ChargingGoal) else contract.charging
-        if goal is None:
-            raise PEVRExecutionError(
-                PEVRStage.UNDERSTAND,
-                "charging_goal_missing",
-                "充电快照没有可对齐的充电目标",
+        try:
+            return canonicalize_charging_contract(
+                contract,
+                snapshot,
+                injected=getattr(self.snapshot_provider, "injected_charging", None),
             )
-        constraints = contract.constraints.model_copy(
-            update={
-                "map_width": snapshot.map_width,
-                "map_height": snapshot.map_height,
-                "blocked_cells": list(snapshot.blocked_cells),
-            }
-        )
-        return contract.model_copy(
-            update={
-                "orders": [],
-                "charging": goal.model_copy(deep=True),
-                "environment_ref": snapshot.environment_ref,
-                "constraints": constraints,
-                "missing_information": [],
-                "completion_criteria": ["目标 AMR 在指定充电站达到目标电量并产生 charging.completed"],
-            }
-        )
+        except SharedPrefixError as exc:
+            raise PEVRExecutionError(PEVRStage.UNDERSTAND, exc.code, str(exc)) from exc
 
     @staticmethod
     def _validate_contract_against_snapshot(contract: TaskContract, snapshot: EnvironmentSnapshot) -> None:
         """确认合同与当前快照一致，且没有未解决的执行必需信息。"""
 
-        if contract.environment_ref != snapshot.environment_ref:
-            raise PEVRExecutionError(PEVRStage.UNDERSTAND, "environment_ref_mismatch", "合同环境与固定快照不一致")
-        if contract.constraints.map_width != snapshot.map_width or contract.constraints.map_height != snapshot.map_height:
-            raise PEVRExecutionError(PEVRStage.UNDERSTAND, "map_size_mismatch", "合同地图尺寸与固定快照不一致")
-        if contract.constraints.blocked_cells != snapshot.blocked_cells:
-            raise PEVRExecutionError(PEVRStage.UNDERSTAND, "blocked_cells_mismatch", "合同封路与固定环境快照不一致")
-        if contract.missing_information:
-            raise PEVRExecutionError(PEVRStage.UNDERSTAND, "missing_information", "正常闭环不能带未解决的执行必需信息")
-        if contract.is_charging_contract():
-            goal = contract.charging
-            assert goal is not None
-            amr_ids = {item.amr_id for item in snapshot.amrs}
-            if goal.amr_id not in amr_ids:
-                raise PEVRExecutionError(
-                    PEVRStage.UNDERSTAND,
-                    "charging_amr_not_found",
-                    f"充电合同引用了未知 AMR: {goal.amr_id}",
-                )
-            if goal.charge_station not in snapshot.location_positions:
-                raise PEVRExecutionError(
-                    PEVRStage.UNDERSTAND,
-                    "charging_station_not_found",
-                    f"充电合同引用了未知充电站: {goal.charge_station}",
-                )
-            if contract.orders:
-                raise PEVRExecutionError(
-                    PEVRStage.UNDERSTAND,
-                    "charging_order_not_allowed",
-                    "充电合同不能携带运输订单",
-                )
-            return
-        snapshot_orders = {item.order_id: item for item in snapshot.orders}
-        for order in contract.orders:
-            if order.order_id not in snapshot_orders or order != snapshot_orders[order.order_id]:
-                raise PEVRExecutionError(
-                    PEVRStage.UNDERSTAND,
-                    "order_snapshot_mismatch",
-                    f"合同订单不是固定快照中的原始订单: {order.order_id}",
-                )
-            for location_id in (order.pickup, order.dropoff):
-                if location_id not in snapshot.location_positions:
-                    raise PEVRExecutionError(
-                        PEVRStage.UNDERSTAND,
-                        "location_not_found",
-                        f"订单 {order.order_id} 引用了未知工位: {location_id}",
-                    )
+        try:
+            validate_contract_against_snapshot(contract, snapshot)
+        except SharedPrefixError as exc:
+            raise PEVRExecutionError(PEVRStage.UNDERSTAND, exc.code, str(exc)) from exc
 
     def _retrieve_node(self, state: PEVRGraphState) -> dict[str, Any]:
         """通过真实 P0-12 RAG 工具取得 ACL 过滤后的冻结证据。"""
@@ -2179,30 +2042,18 @@ class PEVRGraphRunner:
         request = state["request"]
         contract = cast(TaskContract, state["contract"])
         run_state = cast(RunState, state["run_state"])
-        query = (
-            f"{contract.goal}；请参考仓储电量安全余量、充电 SOP 和充电完成事件。"
-            if contract.is_charging_contract()
-            else (
-                f"{contract.goal}；请参考仓储运输 SOP、交通冲突、电量安全余量、"
-                "Validator 和运输完成条件。"
-            )
+        prefix_result = self._prefix.retrieve(
+            request,
+            contract,
+            run_state=run_state,
+            budget_usage=state["budget_usage"],
         )
-        retrieve_arguments = {
-            "query": query,
-            "top_k": 5,
-            "role_scope": request.principal_role,
-        }
-        result = self.registry.execute(
-            ToolName.RETRIEVE_KNOWLEDGE,
-            retrieve_arguments,
-            role=request.principal_role,
-            call_id=f"{request.run_id}:retrieve",
-        )
+        result = prefix_result.tool_result
         self._append_tool_trace(
             state,
             result,
             node=PEVRStage.RETRIEVE,
-            parameters=retrieve_arguments,
+            parameters=prefix_result.retrieve_arguments,
         )
         if result.status is not ToolResultStatus.SUCCESS:
             raise PEVRExecutionError(
@@ -2210,11 +2061,15 @@ class PEVRGraphRunner:
                 result.error.code if result.error is not None else "retrieve_failed",
                 result.error.message if result.error is not None else "RAG 检索失败",
             )
-        response = RetrievalResponse.model_validate(result.output)
-        if response.status is not RetrievalStatus.ANSWERABLE:
-            raise PEVRExecutionError(PEVRStage.RETRIEVE, "insufficient_evidence", response.reason)
-        rag_evidence = response.to_context_evidence(collected_at=result.finished_at)
-        observation = self._observation_from_tool(result, task_id=None)
+        response = prefix_result.response
+        if response is None or response.status is not RetrievalStatus.ANSWERABLE:
+            raise PEVRExecutionError(
+                PEVRStage.RETRIEVE,
+                "insufficient_evidence",
+                response.reason if response is not None else "RAG 检索失败",
+            )
+        rag_evidence = prefix_result.rag_evidence
+        observation = prefix_result.observation
         observations = [*state.get("observations", []), observation]
         updated_state = self._replace_run_state(run_state, observations=observations, status=RunStatus.PLANNING)
         tool_results = [*state.get("tool_results", []), result]
@@ -2227,7 +2082,7 @@ class PEVRGraphRunner:
             "observations": observations,
             "tool_results": tool_results,
             "tool_task_ids": [*state.get("tool_task_ids", []), None],
-            "budget_usage": self._add_tool_usage(state["budget_usage"], result),
+            "budget_usage": prefix_result.budget_usage,
         }
 
     def _plan_node(self, state: PEVRGraphState) -> dict[str, Any]:

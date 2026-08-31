@@ -62,6 +62,50 @@ def _read_field(value: Any, name: str, default: Any = None) -> Any:
     return getattr(value, name, default)
 
 
+def _non_negative_int(value: Any) -> int | None:
+    """拒绝 bool，只接受 >=0 的整数缓存命中计数。"""
+
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        return None
+    return value
+
+
+def extract_cached_input_tokens(response: Any) -> int | None:
+    """从 llama.cpp / OpenAI 兼容响应读取前缀 KV 命中 Token 数。
+
+    优先 OpenAI ``prompt_tokens_details.cached_tokens``，再回退 llama.cpp
+    ``timings.cache_n``。SDK 可能丢弃未知字段，因此同时检查 ``model_extra``。
+    """
+
+    usage = _read_field(response, "usage")
+    details = _read_field(usage, "prompt_tokens_details")
+    cached = _non_negative_int(_read_field(details, "cached_tokens"))
+    if cached is not None:
+        return cached
+    cached = _non_negative_int(_read_field(usage, "prompt_tokens_cached"))
+    if cached is not None:
+        return cached
+
+    timings = _read_field(response, "timings")
+    if timings is None:
+        extra = _read_field(response, "model_extra")
+        if isinstance(extra, Mapping):
+            timings = extra.get("timings")
+        elif extra is None:
+            dump = getattr(response, "model_dump", None)
+            if callable(dump):
+                try:
+                    dumped = dump()
+                except TypeError:
+                    dumped = None
+                if isinstance(dumped, Mapping):
+                    timings = dumped.get("timings")
+    cached = _non_negative_int(_read_field(timings, "cache_n"))
+    if cached is not None:
+        return cached
+    return _non_negative_int(_read_field(response, "tokens_cached"))
+
+
 class ModelProvider:
     """P0 业务代码访问模型的唯一入口。
 
@@ -275,7 +319,12 @@ class ModelProvider:
         last_error = "unknown validation failure"
         current_messages = list(normalised_messages)
         final_call: ModelCallResult | None = None
-        token_totals = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
+        token_totals = {
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "total_tokens": 0,
+            "cached_input_tokens": 0,
+        }
         token_fields_seen: set[str] = set()
         # 默认 maximum_attempts=2：首次生成 + 最多一次修复。
         maximum_attempts = 1 + self.settings.max_schema_repair_attempts
@@ -433,16 +482,9 @@ class ModelProvider:
             "top_p": self.settings.active_profile.top_p,
             "max_tokens": effective_output_tokens,
             "stream": False,
-            # 这是 Provider 内部固定的 llama.cpp 模板参数：Fast 关闭思考；
-            # Smart 参数仅为以后重新验收保留，当前会在 startup() 的网络调用前被拒绝。
-            # 即使日后显式启用，调用方也不能覆盖这段 extra_body。
-            "extra_body": {
-                "chat_template_kwargs": {
-                    "enable_thinking": self.settings.active_profile.reasoning_enabled
-                },
-                "reasoning_budget": self.settings.active_profile.reasoning_budget_tokens,
-                "top_k": self.settings.active_profile.top_k,
-            },
+            # extra_body 仍是 Provider 内部白名单：思考开关、top_k 与前缀 KV 缓存。
+            # 调用方不能覆盖这段对象，也不能追加 tools/文件/任意 llama.cpp 键。
+            "extra_body": self._llama_extra_body(),
             "timeout": httpx.Timeout(
                 timeout=effective_timeout_seconds,
                 connect=min(
@@ -480,6 +522,7 @@ class ModelProvider:
 
         # 最后只向业务层返回稳定字段，隐藏 OpenAI SDK 的具体响应类。
         usage = _read_field(response, "usage")
+        cached_input_tokens = extract_cached_input_tokens(response)
         return ModelCallResult(
             content=content,
             response_id=_read_field(response, "id"),
@@ -489,6 +532,19 @@ class ModelProvider:
                 input_tokens=_read_field(usage, "prompt_tokens"),
                 output_tokens=_read_field(usage, "completion_tokens"),
                 total_tokens=_read_field(usage, "total_tokens"),
+                cached_input_tokens=cached_input_tokens,
             ),
             version=version,
         )
+
+    def _llama_extra_body(self) -> dict[str, Any]:
+        """构造 llama.cpp extra_body 白名单，含显式 cache_prompt。"""
+
+        return {
+            "chat_template_kwargs": {
+                "enable_thinking": self.settings.active_profile.reasoning_enabled
+            },
+            "reasoning_budget": self.settings.active_profile.reasoning_budget_tokens,
+            "top_k": self.settings.active_profile.top_k,
+            "cache_prompt": self.settings.prompt_cache_enabled,
+        }

@@ -8,7 +8,7 @@
 - 真实本地 Qwen3.6 Fast（alias `qwen3.6-fast`）P0-13 HITL 闭环正式连续实测 3 次：`p020-release-hitl-{1,2,3}-20260821-2028`。每次先 `waiting_approval`（退出码 3），再签名批准恢复为 `completed`；8/8 阶段、5/5 工具、Validator 错误 0、仿真完成、`ORDER-001`、4 次模型调用、Approval=1、Effect=1。历史 `p014-fast-online-*` 为 Approval=0，不能再写成 HITL 发布证据。
 - P0-18 固定 60 例默认是 `offline_deterministic_oracle` 契约回归：现已独立消费 `case.oracle`，mutation 会失败。它证明固定安全/恢复/工具门禁，不证明 60 例在线 LLM 生成质量。
 - 2026-08-22 另有独立 `online_fast_closed_loop`：真实 Qwen3.6 Fast + 加难地图。**当前引用以 2026-08-23 略降评测地图并修装货/HITL 后重跑为准**：报告 `p018-online-fa1d397a8f60ad17`，模型调用 133 次，任务完成率 **43/44（97.7%）**，异常恢复率 **10/10（100%）**，正常订单 **20/20**，充电 **5/5 charged**，评测符合预期 59/60（含正确拒绝），七项零容忍均为 **0**。对照 `p018-online-fad484647c97878f`（22/44、9/10、正常订单 6/20）是修装货语义之前的加难图结果，不能混写。这不是离线 60/60。
-- P0-19 发布口径是三种策略独立离线执行。2026-08-21 收口实测：Workflow 52/60、ReAct 53/60、PEVR 60/60。同源 Trace Replay 只用于可视化。
+- P0-19 在线发布口径是 `p0-19.online.v2` 独立 ReAct 循环对照，报告 `p019-online-5bf27026e1607cfe`：Fixed/ReAct/PEVR 为 52/60、46/60、59/60。旧 `p0-19.online.v1` 指标已作废。离线 `offline_independent_oracle` 仍用于恢复额度回归（其中 react 槽位是 max_retries=1 遗留夹具）；同源 Trace Replay 只用于可视化。
 - 真实 RAG holdout（8 test + 4 attack）测得 Recall@K=1、MRR=1、Precision@K=0.236364、nDCG@K=1、citation=1、answerability=1、ACL=0；Precision/nDCG 按唯一文档+章节二元 oracle 计算且排除不可答例。`--minimum-hybrid-score 1 --minimum-vector-score 1` 退出码 2。
 - 实现 PostgreSQL Checkpoint/Effect Ledger、生产图有限 retry/replan、JWT/RBAC/HITL 和固定验证白名单；七类异常的生产图测试使用 FakeRegistry，不等于现场设备/真实 C++ 故障注入已关闭。
 - P0-20 Compose 已改为必需 secrets、内部数据网络和 loopback API；正式演示视频仍缺失，不能用文字脚本替代。
@@ -16,7 +16,7 @@
 ## 必须同时注明的限定
 
 - P0-18 默认 60 例执行模式是 `offline_deterministic_oracle`，模型调用数为 0；修复后的 oracle 消费只提升离线回归可信度。在线 60 例是另一条命令/另一份报告；2026-08-23 当前引用完成率 97.7%、恢复率 100%、充电 5/5 `charged`、正常订单 20/20。唯一漏的正向例是 `p018-exception-004` 工具步数预算耗尽。
-- P0-19 默认 `offline_independent_oracle`：三种策略各自跑同一数据集，异常恢复指标应能分开；Token、CPU、RSS、GPU 未观测，Trace 延迟不是墙钟。
+- P0-19 在线当前结果是 `p0-19.online.v2` 报告 `p019-online-5bf27026e1607cfe`（覆盖写入 `tmp/p019_online_strategy_compare`）：Fixed/独立 ReAct/PEVR 全例符合 **52/60、46/60、59/60**，任务完成 **36/44、30/44、43/44**，异常终态按 expected==observed 为 **3/10、6/10、9/10**，七项零容忍均为 0。不得把已作废的 v1 一次 retry 分数写成独立 ReAct。离线 `offline_independent_oracle`：三种策略各自跑同一数据集，异常恢复额度应能分开；Token、CPU、RSS、GPU 未观测，Trace 延迟不是墙钟。
 - Qwen3.8 Smart alias 保留但 `enabled=false`；历史 P0-05 在线验收仅 2/5，Smart 对照延期，未完成。
 - P0 范围不含 ROS 2、Gazebo、真实底盘、CBS/ECBS、MILP、Redis/Celery/Kubernetes 或任意代码执行 Sandbox。
 - 正式演示视频（`.mp4/.mov/.mkv/.webm/.avi`）当前为 0；在真实 HITL 闭环录制并登记 SHA-256 之前，不得把口播脚本写成 P0-20 视频交付。

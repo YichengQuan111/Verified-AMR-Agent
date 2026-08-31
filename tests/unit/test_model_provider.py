@@ -135,6 +135,7 @@ def test_structured_output_is_validated_without_exposing_tools() -> None:
         "chat_template_kwargs": {"enable_thinking": False},
         "reasoning_budget": 0,
         "top_k": 20,
+        "cache_prompt": True,
     }
     generation_timeout = request["timeout"]
     assert isinstance(generation_timeout, httpx.Timeout)
@@ -235,3 +236,37 @@ def test_tool_role_is_rejected_before_any_request() -> None:
 
     assert client.models.calls == []
     assert client.completions.calls == []
+
+
+def test_prompt_cache_flag_is_sent_and_cached_tokens_are_recorded() -> None:
+    client = FakeOpenAIClient(
+        ["qwen3.6-fast"],
+        ['{"pickup":"P1","dropoff":"S3","quantity":2}'],
+        cached_input_tokens=8,
+    )
+    provider = ModelProvider(make_settings(), client=client)
+
+    result = provider.generate_structured(MESSAGES, TransportExtraction)
+
+    assert result.call.usage.cached_input_tokens == 8
+    assert result.total_usage.cached_input_tokens == 8
+    assert client.completions.calls[0]["extra_body"]["cache_prompt"] is True
+
+
+def test_prompt_cache_can_be_disabled_without_exposing_extra_keys() -> None:
+    client = FakeOpenAIClient(
+        ["qwen3.6-fast"],
+        ['{"pickup":"P1","dropoff":"S3","quantity":2}'],
+    )
+    provider = ModelProvider(make_settings(prompt_cache_enabled=False), client=client)
+
+    provider.generate_structured(MESSAGES, TransportExtraction)
+
+    extra_body = client.completions.calls[0]["extra_body"]
+    assert extra_body["cache_prompt"] is False
+    assert set(extra_body) == {
+        "chat_template_kwargs",
+        "reasoning_budget",
+        "top_k",
+        "cache_prompt",
+    }

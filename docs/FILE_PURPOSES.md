@@ -1167,6 +1167,7 @@ Fast 运行。新增/修改的核心 Python 已补中文模块说明、docstring
 隔离、模型调用前安全门、完整 Trace、资源采样、manifest 恢复和失败关闭行为；没有修改 C++
 核心代码，因此无 C++ 注释需求。JSON、Schema、PowerShell、依赖锁和 Markdown 不支持或不需要
 核心代码注释。`tmp/p019_online_strategy_compare/` 是可复核运行证据和断点进度，不是源码交付物；
+该目录随后被同日 `p0-19.online.v2` 独立 ReAct 实跑覆盖，当前指标以报告 `p019-online-5bf27026e1607cfe` 为准。
 `__pycache__/`、`.pytest_cache/`、`build/` 仍是自动生成物。
 
 | 变更 | 文件 | 作用 | 调用方/下游 |
@@ -1240,6 +1241,57 @@ Fast 运行。新增/修改的核心 Python 已补中文模块说明、docstring
 | 修改 | `docs/LESSONS_LEARNED.md` | 沉淀稀疏必需证据标注导致低 Precision 但高 Recall/nDCG 的解释与防虚高规则。 | 后续扩展 MAP、分级 nDCG 或相关性标注时复用。 |
 | 修改 | `docs/HANDOFF_CONTEXT.md` | 记录加法式 JSON 字段、真实运行命令/报告 SHA、测试结果、服务状态和后续标注边界。 | 跨任务唯一交接入口。 |
 | 修改 | `docs/FILE_PURPOSES.md` | 更新既有评测器职责并登记本步全部源码、测试、文档和生成物边界。 | 文件职责唯一入口；本行文档无核心代码注释需求。 |
+
+## 2026-08-28：P0-19 独立 ReAct Agent（p0-19.online.v2）
+
+本步核心 Python 均补充了中文模块/类/函数注释。旧 v1 一次 retry 适配器已从 P0-18 在线 Harness 删除。
+
+| 变更 | 文件 | 作用 | 下游影响 |
+|---|---|---|---|
+| 新建 | `agent/runtime/prefix.py` | 策略无关 Guard/Understand/初次 Retrieve；PEVR 与独立 ReAct 共用，不编排 plan 之后的固定图。 | 生产 PEVR 节点包装、P0-19 `ReActRunner`。 |
+| 修改 | `agent/runtime/graph.py` | PEVR 入口节点改为调用 `SharedPrefixService`，保留 Trace/Checkpoint 与生产恢复行为。 | P0-13～P0-16 回归；禁止把前置逻辑再复制进评测 ReAct。 |
+| 新建 | `evals/p019/react_contracts.py` | 独立 ReAct 的 Decision/Step/RunState/终态契约；Prompt `amr.eval.p019.react_agent` / `2.0.0`。 | Schema 导出、评测 Runner、测试。 |
+| 新建 | `evals/p019/react_runner.py` | 持续 `decide→guard→act→observe→terminal_check`；受控引用物化、HITL/Effect/预算门禁；不导入调用 `PEVRGraphRunner.run`。每轮上下文含封闭参数契约；Effect 指纹与 Registry input_model 对齐。 | `ReActOnlineHarness`。 |
+| 新建 | `evals/p019/react_eval.py` | 评测层独立 ReAct Harness，覆盖 P0-18 闭环主路径，sidecar 仍复用父类；Understand 显式 `requested_output_tokens=4096`。 | P0-19 在线三策略执行器。 |
+| 修改 | `evals/p018/online.py` | 删除伪 ReAct 控制器；`REACT` 策略若误入 P0-18 Harness 立即失败。 | 仅 Fixed/PEVR 走 `PEVRGraphRunner`。 |
+| 修改 | `evals/p019/online.py` | 三策略分别选择 Fixed/ReAct/PEVR runner；manifest 含 v2 Prompt/Runner 版本；公平性 `same_prompts=false`。 | 在线 180 例 CLI。 |
+| 修改 | `evals/p019/contracts.py`、`dataset.py`、`online_config.json`、`replay.py`、`reporting.py`、`independent.py`、`config.json` | 升级报告/配置版本，纠正异常终态口径，Replay/离线 react 槽位标明可视化或遗留夹具。 | 配置校验、报告渲染、离线回归。 |
+| 修改 | `scripts/export_schemas.py` | 导出 `ReActDecision`/`ReActStep`/`ReActRunState` 与更新后的 `P019Report`。 | `docs/schemas/*`、契约测试。 |
+| 新建 | `tests/unit/test_p019_react_agent.py` | 覆盖不调用 PEVR 图、多轮循环、单工具、引用/冻结拒绝、HITL、预算终止、finish 检查。 | 独立 ReAct 回归。 |
+| 修改 | `tests/unit/test_p019_online.py` | 改为 v2 配置、拒绝 v1 resume、循环事件与终态重算。 | 在线对照回归。 |
+| 修改 | `docs/schemas/P019Report.schema.json` 等及新建 ReAct Schema | 与运行时模型同源导出。 | 机器契约消费者。 |
+| 修改 | `README.md`、`evals/README.md`、`docs/P019_STRATEGY_COMPARISON.md`、`docs/TEST_REPORT.md`、`docs/RESUME_FACTS.md`、`docs/PROJECT_OVERVIEW.md`、`docs/HANDOFF_CONTEXT.md`、`docs/LESSONS_LEARNED.md` | 作废 v1 伪 ReAct 分数，只引用 v2 契约与覆盖后的默认报告路径。 | 发布说明与交接。 |
+| 生成物 | `tmp/p019_online_strategy_compare/*` | v2 在线 180 例覆盖写入（报告 `p019-online-5bf27026e1607cfe`）；staging 目录 `tmp/p019_online_v2_run` 为同一次运行副本，不是源码。 | 当前默认实验结果。 |
+
+## 2026-08-30：llama.cpp Prompt 前缀缓存
+
+本步核心 Python 补充了中文模块/函数注释，说明为何稳定内容必须成为 Token 前缀、以及与 `agent.runtime.prefix` 的职责边界。没有修改 C++、数据库或 Alembic。`evals/p018/dataset.json` 各例仍标注用例编写时的 `p0-05=1.1.0`，不改冻结数据集身份。
+
+| 变更 | 文件 | 作用 | 下游影响 |
+|---|---|---|---|
+| 新建 | `agent/context/prompts/shared_system_prefix.md` | 跨节点字节稳定的角色/世界、安全边界和输出纪律正文。 | 五个 P0-05 节点与独立 ReAct 的 system 公共前缀。 |
+| 新建 | `agent/context/shared_prefix.py` | 加载、校验并前置共享前缀；提供 ID/版本/SHA-256。公共契约，禁止写入动态上下文。 | `PromptDefinition.render_system_prompt()`、`REACT_SYSTEM_PROMPT`。 |
+| 修改 | `agent/context/prompt_registry.py` | 把共享前缀放到节点 2-shot/Schema 之前；P0-05 版本升为 `1.2.0`。安全边界不再追加在节点正文之后。 | P0-13 PEVR 节点、预算估算、在线评测。 |
+| 修改 | `agent/context/__init__.py` | 导出共享前缀入口与 `P005_PROMPT_VERSION`。 | 测试与评测复用。 |
+| 修改 | `services/model_gateway/provider.py`、`contracts.py` | `extra_body` 白名单增加 `cache_prompt`；`TokenUsage.cached_input_tokens` 读取 OpenAI/llama.cpp 命中字段。 | 所有 `generate_text`/`generate_structured` 调用。 |
+| 修改 | `services/config/settings.py`、`config/default.toml` | 新增 `prompt_cache_enabled` 与环境变量 `LLM_PROMPT_CACHE_ENABLED`。 | 部署与对照实验可关闭缓存。 |
+| 修改 | `evals/p019/react_runner.py`、`react_contracts.py`、`react_eval.py`、`online.py`、`dataset.py`、`online_config.json` | ReAct system 使用同一前缀；Prompt 版本 `2.1.0`。 | P0-19 在线配置门禁与报告身份。 |
+| 修改 | `evals/p018/config.json`、`evals/p018/online_config.json` | 声明运行时 Prompt 版本 `1.2.0`，与注册表对齐。 | 后续评测报告的 `prompt_versions`。 |
+| 修改 | `scripts/smoke_p005_prompts.py` | 在线五节点冒烟断言 `P005_PROMPT_VERSION`。 | Prompt 改版后的 Fast 预检。 |
+| 修改 | `docs/schemas/ReActStep.schema.json`、`ReActRunState.schema.json`、`P019Report.schema.json` | 由 `export_schemas.py` 同步 ReAct 默认 `prompt_version=2.1.0`，并让已提交的 P019Report 与当前 v2 契约一致。 | 机器契约消费者。 |
+| 新建 | `tests/unit/test_shared_system_prefix.py` | 前缀稳定性、幂等拼接、五节点与 ReAct 公共前缀。 | 防止前缀漂移破坏 KV 命中。 |
+| 修改 | `tests/unit/test_p005_context_engineering.py`、`test_model_provider.py`、`test_settings.py`、`test_p019_react_agent.py`、`tests/unit/fakes.py` | 覆盖前缀位置、`cache_prompt` 开关和 cached token 解析。 | 网关与 ReAct 回归。 |
+| 修改 | `docs/HANDOFF_CONTEXT.md`、`docs/FILE_PURPOSES.md`、`docs/LESSONS_LEARNED.md`、`docs/PROJECT_OVERVIEW.md`、`docs/P019_STRATEGY_COMPARISON.md` | 交接、职责、缓存前缀教训和当前版本。 | 后续 Agent 不得把安全边界再追加到节点正文之后。 |
+| 新建 | `scripts/compare_prompt_cache.py` | Fast 上有/无 `cache_prompt` 的实测对照：warmup、breaker、P0-05 五节点各连续两次、ReAct 两轮；汇总命中率与配对成功墙钟。 | 人工/Agent 跑在线对照；不进入生产路径。 |
+| 新建 | `scripts/compare_pevr_prompt_cache.py` | 只跑生产 PEVR 的 P0-18 在线 60 例，关/开 `cache_prompt` 各一轮，按 case_id 对齐墙钟。不跑 Fixed/ReAct。 | 有 LLM 的 PEVR 耗时对照；生成物在 `tmp/`。 |
+| 新建 | `tests/unit/test_pevr_prompt_cache_compare.py` | 百分位、60 例汇总、按 case_id 配对加速比的离线测试。 | 防止把未对齐的例算进加速比。 |
+| 新建 | `tests/unit/test_prompt_cache_compare.py` | 命中率、汇总公式、配对成功加速比的离线测试；不启动模型。 | 防止把超时失败算进加速比。 |
+| 生成物 | `tmp/prompt_cache_compare.json` | 2026-08-30 Fast 节点级实测原始记录与汇总；SHA-256=`8097a3d1…7922676c`。 | 证据，不得登记为源码，不得手工改写后当新实验。 |
+| 生成物 | `tmp/p018_pevr_cache_compare/` | 2026-08-30 生产 PEVR 60 例有/无缓存对照；汇总 SHA-256=`9c7068a9…a26131ba`。分阶段 `p018_online_eval.json` 只是对照证据，不是新的正式发布报告。 | 不得覆盖既有 P0-18 正式在线报告身份。 |
+| 生成物 | `tmp/p018_pevr_cache_compare_20260831/` | 2026-08-31 生产 PEVR 有/无 `cache_prompt` 对照：`cache_on` 报告 `p018-online-8d791bd33c57957b`，`cache_off` 报告 `p018-online-1d5bc152914699d0`，汇总 SHA-256=`01D9C737…D5B59BB`。`llm_only_cache_metrics.json` 从 llama.cpp 日志重算仅 LLM 案例的 TTFT/prefill/命中率/端到端。本步无核心代码注释需求。 | 不得覆盖 8/30 对照目录，也不得当作新的正式 P0-18 发布报告。 |
+| 修改 | `README.md`、`docs/HANDOFF_CONTEXT.md`、`docs/LESSONS_LEARNED.md` | README 增加仅 LLM 案例的 TTFT/prefill/命中率/端到端表；交接与教训同步口径。 | GitHub 首页实验阅读者。 |
+
+
 
 
 

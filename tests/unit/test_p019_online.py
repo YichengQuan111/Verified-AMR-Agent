@@ -1,8 +1,10 @@
-"""P0-19 在线三策略的配置、安全 ReAct、采样与报告适配单测。"""
+"""P0-19 在线三策略的配置、采样、公平性与报告适配单测。"""
 
 from __future__ import annotations
 
-from types import SimpleNamespace
+import json
+
+import pytest
 
 from evals.p018.contracts import (
     EvalCaseStatus,
@@ -11,70 +13,54 @@ from evals.p018.contracts import (
     EvalReportCase,
 )
 from evals.p018.dataset import load_dataset
-from evals.p018.online import OnlineFastHarness, ReActControllerDecision
 from evals.p019 import P019Strategy
 from evals.p019.dataset import DEFAULT_ONLINE_CONFIG_PATH, load_config
 from evals.p019.online import (
+    OnlineComparisonError,
     OnlineThreeStrategyComparison,
     ProcessResourceSampler,
     _online_case_result,
 )
-from evals.p019.replay import _aggregate
-from services.model_gateway.contracts import TokenUsage
+from evals.p019.react_contracts import REACT_PROMPT_ID, REACT_PROMPT_VERSION, REACT_RUNNER_VERSION
+from evals.p019.replay import _aggregate, _recovery_metrics
 
 
-class _RetryProvider:
-    """只返回最小结构化 retry 决定，且记录是否发生真实控制器调用。"""
-
-    def __init__(self) -> None:
-        self.calls = 0
-
-    def generate_structured(self, *args, **kwargs):
-        """模拟网关已校验的结构化响应，不复制生产节点实现。"""
-
-        del args, kwargs
-        self.calls += 1
-        return SimpleNamespace(
-            value=ReActControllerDecision(
-                action="retry",
-                reason_code="retry_transient_idempotent",
-                observation_summary="瞬态工具超时且调用幂等，可安全重试一次。",
-            ),
-            attempts=1,
-            repaired=False,
-            total_usage=TokenUsage(input_tokens=30, output_tokens=12, total_tokens=42),
-            call=SimpleNamespace(version=SimpleNamespace(served_alias="qwen3.6-fast")),
-        )
-
-
-def _fault_exception(*, has_side_effects: bool, side_effect_not_found: bool) -> Exception:
-    """构造带 P0-15 FaultSignal 的超时异常，精确控制副作用安全事实。"""
-
-    from agent.runtime.graph import PEVRGraphRunner
-
-    error = RuntimeError("tool timed out")
-    error.fault = PEVRGraphRunner.classify_failure(  # type: ignore[attr-defined]
-        {"code": "tool_timeout", "message": "tool timed out", "retryable": True},
-        idempotent=True,
-        has_side_effects=has_side_effects,
-        side_effect_not_found=side_effect_not_found,
-    )
-    return error
-
-
-def test_online_config_reuses_exact_p018_dataset_and_config() -> None:
-    """在线比较不能偷偷替换 P0-18 的 60 例或硬地图配置。"""
+def test_online_config_reuses_exact_p018_dataset_and_independent_react_agent() -> None:
+    """在线比较不能偷偷替换 P0-18 的 60 例，且必须声明独立 ReAct Agent。"""
 
     config = load_config(DEFAULT_ONLINE_CONFIG_PATH)
     assert config["execution_mode"] == "online_fast_three_strategy_closed_loop"
+    assert config["version"] == "p0-19.online.v2"
     assert config["p018_dataset_path"] == "evals/p018/dataset.json"
     assert config["p018_config_path"] == "evals/p018/online_config.json"
-    assert config["react_controller"]["max_retries"] == 1
-    assert config["react_controller"]["max_replans"] == 0
+    assert config["react_agent"]["prompt_id"] == REACT_PROMPT_ID
+    assert config["react_agent"]["prompt_version"] == REACT_PROMPT_VERSION
+    assert config["react_agent"]["runner_version"] == REACT_RUNNER_VERSION
+    assert config["react_agent"]["uses_pevr_runner"] is False
+    assert config["react_agent"]["allow_repeat_retrieve"] is False
+    assert "react_controller" not in config
+
+
+def test_legacy_online_v1_config_is_rejected(tmp_path) -> None:
+    """旧一次 retry 配置不能再被当成当前在线实验加载。"""
+
+    payload = json.loads(DEFAULT_ONLINE_CONFIG_PATH.read_text(encoding="utf-8"))
+    payload["version"] = "p0-19.online.v1"
+    payload["react_controller"] = {
+        "prompt_id": "amr.eval.p019.react_recovery",
+        "prompt_version": "1.0.0",
+        "max_retries": 1,
+        "max_replans": 0,
+    }
+    payload.pop("react_agent", None)
+    path = tmp_path / "online_config.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    with pytest.raises(ValueError, match="p0-19.online.v2"):
+        load_config(path)
 
 
 def test_latin_square_balances_each_strategy_position() -> None:
-    """60 例中每个策略必须各有 20 次位于首、中、末位置。"""
+    """60 例中每个策略必须各有 20 次位于首、中、末位置，共 180 条独立身份。"""
 
     comparison = object.__new__(OnlineThreeStrategyComparison)
     comparison.config = load_config(DEFAULT_ONLINE_CONFIG_PATH)
@@ -86,38 +72,42 @@ def test_latin_square_balances_each_strategy_position() -> None:
         for position, (strategy, _) in enumerate(row):
             positions[strategy][position] += 1
     assert all(counts == [20, 20, 20] for counts in positions.values())
+    assert len(schedule) == 180
+    assert len({(strategy, case.case_id) for strategy, case in schedule}) == 180
 
 
-def test_react_calls_fast_only_after_deterministic_safety_gate() -> None:
-    """安全瞬态错误可让 Fast 决定 retry，事件不得保存原始思维链。"""
+def test_v2_manifest_rejects_legacy_v1_progress(tmp_path) -> None:
+    """旧 v1 manifest/progress 不得通过 --resume 被新实现复用。"""
 
-    harness = object.__new__(OnlineFastHarness)
-    harness.provider = _RetryProvider()
-    harness.verification_timeout_seconds = 120.0
-    retry, event = harness._react_recovery_decision(
-        _fault_exception(has_side_effects=False, side_effect_not_found=False)
+    from evals.p019.dataset import rooted_path
+
+    comparison = object.__new__(OnlineThreeStrategyComparison)
+    comparison.resume = True
+    comparison.config = load_config(DEFAULT_ONLINE_CONFIG_PATH)
+    comparison.config_path = DEFAULT_ONLINE_CONFIG_PATH
+    comparison.dataset = load_dataset()
+    comparison.p018_dataset_path = rooted_path("evals/p018/dataset.json")
+    comparison.p018_config_path = rooted_path("evals/p018/online_config.json")
+    comparison.manifest_path = tmp_path / "p019_online_run_manifest.json"
+    comparison.progress_path = tmp_path / "p019_online_progress.jsonl"
+    comparison.manifest_path.write_text(
+        json.dumps(
+            {
+                "execution_mode": "online_fast_three_strategy_closed_loop",
+                "dataset_sha256": "a" * 64,
+                "p018_config_sha256": "b" * 64,
+                "p019_config_sha256": "c" * 64,
+                "case_id_digest": "d" * 64,
+                "schedule_digest": "e" * 64,
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
     )
-    assert retry is True
-    assert harness.provider.calls == 1
-    assert event["event_type"] == "model"
-    assert event["total_tokens"] == 42
-    assert event["metadata"]["raw_chain_of_thought_stored"] is False
-    assert "rationale" not in event["metadata"]
-
-
-def test_react_blocks_unknown_side_effect_before_model_call() -> None:
-    """副作用是否落地未知时必须在模型前停止，Prompt 不能覆盖安全事实。"""
-
-    harness = object.__new__(OnlineFastHarness)
-    harness.provider = _RetryProvider()
-    harness.verification_timeout_seconds = 120.0
-    retry, event = harness._react_recovery_decision(
-        _fault_exception(has_side_effects=True, side_effect_not_found=False)
-    )
-    assert retry is False
-    assert harness.provider.calls == 0
-    assert event["node"] == "react_safety_gate"
-    assert event["status"] == "denied"
+    comparison.progress_path.write_text("", encoding="utf-8")
+    with pytest.raises(OnlineComparisonError, match="身份已变化"):
+        comparison._load_progress()
 
 
 def test_resource_sampler_reports_observed_cpu_and_rss(monkeypatch) -> None:
@@ -134,20 +124,21 @@ def test_resource_sampler_reports_observed_cpu_and_rss(monkeypatch) -> None:
     assert resource.peak_gpu_memory_mb is None
 
 
-def test_online_case_uses_wall_clock_online_tokens_and_actual_react_event() -> None:
-    """在线汇总必须读取真实墙钟/Token/资源，而不是复用离线投影口径。"""
+def test_online_case_uses_wall_clock_online_tokens_and_actual_react_loop() -> None:
+    """在线汇总必须读取真实墙钟/Token/资源，并记录独立 ReAct 循环事件。"""
 
     event = {
         "sequence": 1,
         "event_type": "model",
-        "node": "react_controller",
+        "node": "react_decide",
         "status": "completed",
-        "prompt_id": "amr.eval.p019.react_recovery",
+        "prompt_id": REACT_PROMPT_ID,
+        "prompt_version": REACT_PROMPT_VERSION,
         "input_tokens": 30,
         "output_tokens": 12,
         "total_tokens": 42,
         "latency_ms": 50,
-        "metadata": {"attempts": 1, "action": "retry"},
+        "metadata": {"action_type": "tool", "raw_chain_of_thought_stored": False},
     }
     case = EvalReportCase(
         case_id="p018-normal-001",
@@ -177,8 +168,38 @@ def test_online_case_uses_wall_clock_online_tokens_and_actual_react_event() -> N
     )
     assert result.token_usage.source == "online_trace"
     assert result.latency_ms == 125.5
-    assert result.projection_events[0]["kind"] == "actual_react_decision"
+    assert result.projection_events[0]["kind"] == "actual_react_loop"
     assert summary.latency.wall_clock is True
     assert summary.latency.source == "online_wall_clock"
     assert summary.resource.source == "online_sampler"
 
+
+def test_recovery_terminal_correct_recomputes_from_expected_observed() -> None:
+    """禁止把执行过 retry/replan 计为最终终态正确。"""
+
+    events = [{"sequence": 1, "event_type": "node", "node": "finish", "status": "failed"}]
+    case = EvalReportCase(
+        case_id="p018-exception-004",
+        category=EvalCategory.EXCEPTION,
+        scenario="workstation_occupied",
+        expected_outcome=EvalOutcome.COMPLETED,
+        observed_outcome=EvalOutcome.FAILED,
+        status=EvalCaseStatus.FAILED,
+        evaluation_passed=False,
+        failure_code="recovery_fallback",
+        failure_reason="工位持续占用",
+        trace_id="trace-p019-pevr-p018-exception-004",
+        trace_events=events,
+        metrics={"recovery_terminal_correct": 1, "recovery_replan_success": 1},
+        replan_count=2,
+        retry_count=2,
+    )
+    applicable, terminal_correct, successful_recovery = _recovery_metrics(case)
+    assert applicable is True
+    assert terminal_correct is False
+    assert successful_recovery is False
+    result = _online_case_result(P019Strategy.PEVR, case)
+    assert result.recovery_success is False
+    assert result.expected_outcome == EvalOutcome.COMPLETED
+    assert result.observed_outcome == EvalOutcome.FAILED
+    assert result.recovery_success == (result.expected_outcome == result.observed_outcome)

@@ -23,16 +23,31 @@ class FakeModels:
 
 
 class FakeCompletions:
-    def __init__(self, responses: list[str] | None = None) -> None:
+    def __init__(
+        self,
+        responses: list[str] | None = None,
+        *,
+        cached_input_tokens: int | None = None,
+    ) -> None:
         self.responses = list(responses or ["ok"])
         self.calls: list[dict[str, Any]] = []
+        self.cached_input_tokens = cached_input_tokens
 
     def create(self, **kwargs: Any) -> Any:
         self.calls.append(kwargs)
         if not self.responses:
             raise AssertionError("fake completion response queue is empty")
         content = self.responses.pop(0)
-        return SimpleNamespace(
+        usage = SimpleNamespace(
+            prompt_tokens=10,
+            completion_tokens=5,
+            total_tokens=15,
+        )
+        if self.cached_input_tokens is not None:
+            usage.prompt_tokens_details = SimpleNamespace(
+                cached_tokens=self.cached_input_tokens
+            )
+        response = SimpleNamespace(
             id=f"response-{len(self.calls)}",
             system_fingerprint="fake-fingerprint",
             choices=[
@@ -41,12 +56,14 @@ class FakeCompletions:
                     message=SimpleNamespace(content=content),
                 )
             ],
-            usage=SimpleNamespace(
-                prompt_tokens=10,
-                completion_tokens=5,
-                total_tokens=15,
-            ),
+            usage=usage,
         )
+        if self.cached_input_tokens is not None:
+            response.timings = SimpleNamespace(
+                cache_n=self.cached_input_tokens,
+                prompt_n=2,
+            )
+        return response
 
 
 class FakeOpenAIClient:
@@ -54,8 +71,13 @@ class FakeOpenAIClient:
         self,
         aliases: list[str],
         responses: list[str] | None = None,
+        *,
+        cached_input_tokens: int | None = None,
     ) -> None:
         self.models = FakeModels(aliases)
-        self.completions = FakeCompletions(responses)
+        self.completions = FakeCompletions(
+            responses,
+            cached_input_tokens=cached_input_tokens,
+        )
         self.chat = SimpleNamespace(completions=self.completions)
 

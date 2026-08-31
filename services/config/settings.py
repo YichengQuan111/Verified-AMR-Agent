@@ -148,6 +148,9 @@ class ModelGatewaySettings(StrictSettingsModel):
     # 提高到 4096，具体节点仍由 Context 预算继续收紧。
     max_output_tokens: int = Field(default=1024, gt=0)
     validate_on_startup: bool = True
+    # 发给 llama.cpp 的 cache_prompt；默认开启，让稳定 system 前缀复用 KV。
+    # 关闭后每次都完整预填充，便于对照实验排除缓存对 logits 的批次差异。
+    prompt_cache_enabled: bool = True
     profiles: dict[str, ModelProfileSettings] = Field(default_factory=_default_profiles)
 
     @field_validator("base_url")
@@ -458,6 +461,10 @@ def _apply_environment(data: dict[str, Any], environ: Mapping[str, str]) -> dict
         "MODEL_GATEWAY_VALIDATE_ON_STARTUP": (
             ("model_gateway", "validate_on_startup"),
             lambda value: _parse_bool("MODEL_GATEWAY_VALIDATE_ON_STARTUP", value),
+        ),
+        "LLM_PROMPT_CACHE_ENABLED": (
+            ("model_gateway", "prompt_cache_enabled"),
+            lambda value: _parse_bool("LLM_PROMPT_CACHE_ENABLED", value),
         ),
         "POSTGRES_DSN": (("database", "postgres_dsn"), str),
         "AMR_JWT_SECRET": (("security", "jwt_secret"), str),

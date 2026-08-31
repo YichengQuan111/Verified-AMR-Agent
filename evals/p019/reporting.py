@@ -97,11 +97,16 @@ def report_to_markdown(report: P019Report) -> str:
         "| 项目 | 结果 |",
         "| --- | --- |",
         f"| 同一数据集/60例 | `{report.fairness.same_dataset}`；`{report.fairness.case_id_digest}` |",
-        f"| 同一 Prompt 版本 | `{report.fairness.same_prompts}`；`{_md(report.fairness.prompt_versions)}` |",
+        f"| 同一共享前置契约 | `{report.fairness.same_shared_context_contract}` |",
+        f"| 同一初次 Retrieve | `{report.fairness.same_initial_retrieval}` |",
         f"| 同一 ToolSpec 版本 | `{report.fairness.same_tools}`；`{_md(report.fairness.tool_spec_versions)}` |",
+        f"| 同一安全门禁 | `{report.fairness.same_safety_gates}` |",
+        f"| 同一预算包络 | `{report.fairness.same_budget_envelope}` |",
+        f"| 控制 Prompt 是否相同 | `{report.fairness.same_prompts}`；策略 Prompt=`{_md(report.fairness.strategy_prompt_versions or report.fairness.prompt_versions)}` |",
         f"| 同一 P0-18 配置 | `{report.fairness.same_config}`；SHA-256=`{report.fairness.p018_config_sha256}` |",
         f"| P0-19 策略配置 | `{report.report_version}`；SHA-256=`{report.fairness.p019_config_sha256}` |",
         f"| 同一 Qwen3.6 Fast | `{report.fairness.same_model}`；`qwen3.6-fast` |",
+        f"| ReAct 是否调用 PEVR 图 | `{report.fairness.react_uses_pevr_runner}` |",
         f"| ReAct 是否触碰生产主链 | `{report.fairness.react_production_path_touched}` |",
         "",
         "## 汇总表",
@@ -154,7 +159,7 @@ def report_to_markdown(report: P019Report) -> str:
             f"- JSONL 原始轨迹（每行一个策略-case）：`p019_raw_trajectories.jsonl`。",
             f"- {source_label}：`{_md(report.source_report.get('path'))}`，SHA-256=`{_md(source_sha256)}`。",
             (
-                "- 在线 ReAct 只保存结构化 retry/stop 决定与确定性安全门禁，不保存原始思维链；Fixed/PEVR 也保存各自实际控制事实。"
+                "- 在线独立 ReAct 只保存短 decision_summary、动作、Observation 和安全事实，不保存原始思维链；Fixed/PEVR 保存各自实际控制事实。"
                 if report.execution_mode.value == "online_fast_three_strategy_closed_loop"
                 else "- Replay 模式的 ReAct think/act/observe 仅是可视化投影，不代表新的在线调用。"
             ),

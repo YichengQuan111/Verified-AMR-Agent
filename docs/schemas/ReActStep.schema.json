@@ -1,0 +1,650 @@
+{
+  "$defs": {
+    "ConstraintViolation": {
+      "additionalProperties": false,
+      "description": "验证器或仿真器发现的一条可定位约束违规。",
+      "properties": {
+        "code": {
+          "minLength": 1,
+          "title": "Code",
+          "type": "string"
+        },
+        "message": {
+          "minLength": 1,
+          "title": "Message",
+          "type": "string"
+        },
+        "task_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Task Id"
+        },
+        "amr_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Amr Id"
+        },
+        "evidence": {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "title": "Evidence",
+          "type": "object"
+        }
+      },
+      "required": [
+        "code",
+        "message",
+        "task_id",
+        "amr_id",
+        "evidence"
+      ],
+      "title": "ConstraintViolation",
+      "type": "object"
+    },
+    "JsonValue": {},
+    "Observation": {
+      "additionalProperties": false,
+      "description": "一次工具、仿真、验证或人工操作产生的结构化状态证据。",
+      "properties": {
+        "observation_id": {
+          "minLength": 1,
+          "title": "Observation Id",
+          "type": "string"
+        },
+        "run_id": {
+          "maxLength": 64,
+          "minLength": 1,
+          "title": "Run Id",
+          "type": "string"
+        },
+        "task_id": {
+          "anyOf": [
+            {
+              "maxLength": 128,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Task Id"
+        },
+        "source": {
+          "$ref": "#/$defs/ObservationSource"
+        },
+        "observed_at": {
+          "format": "date-time",
+          "title": "Observed At",
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/ObservationStatus"
+        },
+        "summary": {
+          "minLength": 1,
+          "title": "Summary",
+          "type": "string"
+        },
+        "state_delta": {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "title": "State Delta",
+          "type": "object"
+        },
+        "evidence_refs": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Evidence Refs",
+          "type": "array"
+        },
+        "tool_result": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ToolResult"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "violations": {
+          "items": {
+            "$ref": "#/$defs/ConstraintViolation"
+          },
+          "title": "Violations",
+          "type": "array"
+        },
+        "requires_replan": {
+          "title": "Requires Replan",
+          "type": "boolean"
+        },
+        "requires_human": {
+          "title": "Requires Human",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "observation_id",
+        "run_id",
+        "task_id",
+        "source",
+        "observed_at",
+        "status",
+        "summary",
+        "state_delta",
+        "evidence_refs",
+        "tool_result",
+        "violations",
+        "requires_replan",
+        "requires_human"
+      ],
+      "title": "Observation",
+      "type": "object"
+    },
+    "ObservationSource": {
+      "description": "状态证据的来源。",
+      "enum": [
+        "tool",
+        "simulator",
+        "validator",
+        "human",
+        "system"
+      ],
+      "title": "ObservationSource",
+      "type": "string"
+    },
+    "ObservationStatus": {
+      "description": "一次观测对当前执行的判断。",
+      "enum": [
+        "ok",
+        "warning",
+        "error",
+        "blocked"
+      ],
+      "title": "ObservationStatus",
+      "type": "string"
+    },
+    "ReActActionType": {
+      "description": "模型每轮只能选择一个受控动作。",
+      "enum": [
+        "tool",
+        "finish",
+        "stop"
+      ],
+      "title": "ReActActionType",
+      "type": "string"
+    },
+    "ReActDecision": {
+      "additionalProperties": false,
+      "description": "模型单轮结构化决定；不保存原始思维链。",
+      "properties": {
+        "action_type": {
+          "$ref": "#/$defs/ReActActionType"
+        },
+        "tool_name": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ToolName"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "arguments": {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "title": "Arguments",
+          "type": "object"
+        },
+        "decision_summary": {
+          "maxLength": 300,
+          "minLength": 1,
+          "title": "Decision Summary",
+          "type": "string"
+        },
+        "reason_code": {
+          "maxLength": 64,
+          "minLength": 1,
+          "title": "Reason Code",
+          "type": "string"
+        }
+      },
+      "required": [
+        "action_type",
+        "decision_summary",
+        "reason_code"
+      ],
+      "title": "ReActDecision",
+      "type": "object"
+    },
+    "ReActSafetyGateResult": {
+      "additionalProperties": false,
+      "description": "确定性动作门禁结果；模型不能放宽 denied。",
+      "properties": {
+        "allowed": {
+          "title": "Allowed",
+          "type": "boolean"
+        },
+        "code": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Code",
+          "type": "string"
+        },
+        "message": {
+          "maxLength": 500,
+          "minLength": 1,
+          "title": "Message",
+          "type": "string"
+        },
+        "details": {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "title": "Details",
+          "type": "object"
+        }
+      },
+      "required": [
+        "allowed",
+        "code",
+        "message"
+      ],
+      "title": "ReActSafetyGateResult",
+      "type": "object"
+    },
+    "ToolError": {
+      "additionalProperties": false,
+      "description": "工具失败时可序列化、可分类的错误证据。",
+      "properties": {
+        "category": {
+          "$ref": "#/$defs/ToolErrorCategory"
+        },
+        "code": {
+          "minLength": 1,
+          "title": "Code",
+          "type": "string"
+        },
+        "message": {
+          "minLength": 1,
+          "title": "Message",
+          "type": "string"
+        },
+        "retryable": {
+          "title": "Retryable",
+          "type": "boolean"
+        },
+        "details": {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "title": "Details",
+          "type": "object"
+        }
+      },
+      "required": [
+        "category",
+        "code",
+        "message",
+        "retryable",
+        "details"
+      ],
+      "title": "ToolError",
+      "type": "object"
+    },
+    "ToolErrorCategory": {
+      "description": "稳定错误分类，供后续重试、重规划和人工接管策略使用。",
+      "enum": [
+        "invalid_argument",
+        "permission_denied",
+        "timeout",
+        "not_found",
+        "conflict",
+        "unavailable",
+        "unsafe_plan",
+        "internal"
+      ],
+      "title": "ToolErrorCategory",
+      "type": "string"
+    },
+    "ToolName": {
+      "description": "P0-12 计划实现的九个工具名称；P0-04 仅定义白名单。",
+      "enum": [
+        "retrieve_knowledge",
+        "get_fleet_state",
+        "allocate_tasks",
+        "plan_multi_amr_routes",
+        "validate_fleet_plan",
+        "dispatch_simulation",
+        "query_execution_state",
+        "run_verification_suite",
+        "request_approval"
+      ],
+      "title": "ToolName",
+      "type": "string"
+    },
+    "ToolResult": {
+      "additionalProperties": false,
+      "description": "一次工具调用的统一结果、错误和审计证据。",
+      "properties": {
+        "tool_name": {
+          "$ref": "#/$defs/ToolName"
+        },
+        "call_id": {
+          "minLength": 1,
+          "title": "Call Id",
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/ToolResultStatus"
+        },
+        "output": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/JsonValue"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "error": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ToolError"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "started_at": {
+          "format": "date-time",
+          "title": "Started At",
+          "type": "string"
+        },
+        "finished_at": {
+          "format": "date-time",
+          "title": "Finished At",
+          "type": "string"
+        },
+        "duration_ms": {
+          "minimum": 0,
+          "title": "Duration Ms",
+          "type": "integer"
+        },
+        "evidence_refs": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Evidence Refs",
+          "type": "array"
+        },
+        "effect_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Effect Id"
+        },
+        "tool_version": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Tool Version"
+        },
+        "principal_role": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UserRole"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "principal_subject": {
+          "anyOf": [
+            {
+              "maxLength": 128,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Principal Subject"
+        },
+        "input_digest": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Input Digest"
+        },
+        "output_digest": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Output Digest"
+        },
+        "idempotency_key": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Idempotency Key"
+        },
+        "audit_metadata": {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "title": "Audit Metadata",
+          "type": "object"
+        }
+      },
+      "required": [
+        "tool_name",
+        "call_id",
+        "status",
+        "output",
+        "error",
+        "started_at",
+        "finished_at",
+        "duration_ms",
+        "evidence_refs",
+        "effect_id"
+      ],
+      "title": "ToolResult",
+      "type": "object"
+    },
+    "ToolResultStatus": {
+      "description": "一次工具调用的终态。",
+      "enum": [
+        "success",
+        "failed",
+        "timeout",
+        "denied"
+      ],
+      "title": "ToolResultStatus",
+      "type": "string"
+    },
+    "UserRole": {
+      "description": "P0 固定的两级工具访问角色。",
+      "enum": [
+        "viewer",
+        "operator"
+      ],
+      "title": "UserRole",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "一轮 decide → guard → act → observe 的可审计记录。",
+  "properties": {
+    "step_id": {
+      "maxLength": 64,
+      "minLength": 1,
+      "title": "Step Id",
+      "type": "string"
+    },
+    "sequence": {
+      "minimum": 1,
+      "title": "Sequence",
+      "type": "integer"
+    },
+    "decision": {
+      "$ref": "#/$defs/ReActDecision"
+    },
+    "safety_gate": {
+      "$ref": "#/$defs/ReActSafetyGateResult"
+    },
+    "tool_result": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ToolResult"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "observation": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Observation"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "input_tokens": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Input Tokens",
+      "type": "integer"
+    },
+    "output_tokens": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Output Tokens",
+      "type": "integer"
+    },
+    "total_tokens": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Total Tokens",
+      "type": "integer"
+    },
+    "latency_ms": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Latency Ms",
+      "type": "integer"
+    },
+    "prompt_id": {
+      "default": "amr.eval.p019.react_agent",
+      "minLength": 1,
+      "title": "Prompt Id",
+      "type": "string"
+    },
+    "prompt_version": {
+      "default": "2.1.0",
+      "minLength": 1,
+      "title": "Prompt Version",
+      "type": "string"
+    },
+    "model_version": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Model Version"
+    },
+    "tool_version": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Tool Version"
+    },
+    "raw_chain_of_thought_stored": {
+      "const": false,
+      "default": false,
+      "title": "Raw Chain Of Thought Stored",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "step_id",
+    "sequence",
+    "decision",
+    "safety_gate"
+  ],
+  "title": "ReActStep",
+  "type": "object"
+}

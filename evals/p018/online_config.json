@@ -35,11 +35,11 @@
     }
   },
   "prompts": {
-    "amr.p005.understand_goal": {"version": "1.1.0", "path": "agent/context/prompts/understand_goal.md"},
-    "amr.p005.plan_tasks": {"version": "1.1.0", "path": "agent/context/prompts/plan_tasks.md"},
-    "amr.p005.verify_observation": {"version": "1.1.0", "path": "agent/context/prompts/verify_observation.md"},
-    "amr.p005.replan": {"version": "1.1.0", "path": "agent/context/prompts/replan.md"},
-    "amr.p005.compose_report": {"version": "1.1.0", "path": "agent/context/prompts/compose_report.md"}
+    "amr.p005.understand_goal": {"version": "1.2.0", "path": "agent/context/prompts/understand_goal.md"},
+    "amr.p005.plan_tasks": {"version": "1.2.0", "path": "agent/context/prompts/plan_tasks.md"},
+    "amr.p005.verify_observation": {"version": "1.2.0", "path": "agent/context/prompts/verify_observation.md"},
+    "amr.p005.replan": {"version": "1.2.0", "path": "agent/context/prompts/replan.md"},
+    "amr.p005.compose_report": {"version": "1.2.0", "path": "agent/context/prompts/compose_report.md"}
   },
   "tools": {
     "contract_version": "p0-12.v1",

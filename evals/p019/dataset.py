@@ -20,7 +20,7 @@ ALLOWED_EXECUTION_MODES = {
     "offline_trace_replay",
     "online_fast_three_strategy_closed_loop",
 }
-ALLOWED_VERSIONS = {"p0-19.v1", "p0-19.v2", "p0-19.online.v1"}
+ALLOWED_VERSIONS = {"p0-19.v1", "p0-19.v2", "p0-19.online.v1", "p0-19.online.v2"}
 
 
 def _rooted(relative: str) -> Path:
@@ -61,22 +61,28 @@ def load_config(path: str | Path = DEFAULT_CONFIG_PATH) -> dict[str, object]:
             raise ValueError(f"P0-19 缺少仓库内 {key}")
         _rooted(value)
     if payload.get("execution_mode") == "online_fast_three_strategy_closed_loop":
-        if payload.get("version") != "p0-19.online.v1":
-            raise ValueError("在线三策略闭环必须使用 p0-19.online.v1")
+        if payload.get("version") != "p0-19.online.v2":
+            raise ValueError("在线三策略闭环必须使用 p0-19.online.v2；旧 p0-19.online.v1 不能复用")
         if payload.get("p018_dataset_path") != "evals/p018/dataset.json":
             raise ValueError("在线三策略必须精确复用 P0-18 固定 60 例数据集")
         if payload.get("p018_config_path") != "evals/p018/online_config.json":
             raise ValueError("在线三策略必须精确复用 P0-18 在线闭环配置")
-        controller = payload.get("react_controller")
-        if not isinstance(controller, Mapping):
-            raise ValueError("在线 ReAct 必须声明评测层控制器")
+        if payload.get("react_controller") is not None:
+            raise ValueError("在线 v2 不得再声明 react_controller/react_recovery")
+        agent = payload.get("react_agent")
+        if not isinstance(agent, Mapping):
+            raise ValueError("在线独立 ReAct 必须声明 react_agent")
+        # 延迟导入，避免离线配置加载也拉起 ReAct 契约；身份字符串必须与常量同源。
+        from evals.p019.react_contracts import REACT_PROMPT_ID, REACT_PROMPT_VERSION, REACT_RUNNER_VERSION
+
         if (
-            controller.get("prompt_id") != "amr.eval.p019.react_recovery"
-            or controller.get("prompt_version") != "1.0.0"
-            or controller.get("max_retries") != 1
-            or controller.get("max_replans") != 0
+            agent.get("prompt_id") != REACT_PROMPT_ID
+            or agent.get("prompt_version") != REACT_PROMPT_VERSION
+            or agent.get("runner_version") != REACT_RUNNER_VERSION
+            or agent.get("allow_repeat_retrieve") is not False
+            or agent.get("uses_pevr_runner") is not False
         ):
-            raise ValueError("ReAct 控制器身份或有界恢复额度不匹配")
+            raise ValueError("独立 ReAct Agent 身份、禁止重复检索或禁止 PEVR 图约束不匹配")
         schedule = payload.get("schedule")
         if not isinstance(schedule, Mapping) or schedule.get("policy") != "latin_square_interleaved":
             raise ValueError("在线三策略必须使用固定 Latin-square 交错顺序")

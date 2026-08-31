@@ -2,8 +2,9 @@
 
 实验器先验证 P0-18 报告的 digest、60 个 case、Fast 模型指纹、Prompt/ToolSpec
 版本和全部逐例 Trace，再对同一份证据做三种控制流投影。固定 Workflow 与 PEVR
-保留源事件；ReAct 仅在报告中展开 think/act/observe 控制步。所有业务终态、
-工具错误和安全计数直接来自源事件，防止通过改 fixture 让某策略看起来更好。
+保留源事件；ReAct 的 think/act/observe 只是可视化投影，**不能**代表独立 ReAct
+Agent，也不能当作发布质量对照。所有业务终态、工具错误和安全计数直接来自源
+事件。在线独立 ReAct 对照见 ``p0-19.online.v2``。
 """
 
 from __future__ import annotations
@@ -52,6 +53,7 @@ POSITIVE_OUTCOMES = {
 ERROR_STATUSES = {"failed", "timeout", "denied"}
 ACTION_EVENT_TYPES = {"tool", "verification"}
 PLAN_NODES = {"plan", "validate"}
+PLAN_TOOLS = {"validate_fleet_plan", "plan_multi_amr_routes"}
 TRACE_DURATION_NOTE = "延迟来自 P0-18 TraceEvent 的确定性字段，不是在线服务墙钟测量。"
 TOKEN_NOTE = "P0-18 为 offline_deterministic_oracle，源 Trace 没有模型调用/Token 样本。"
 RESOURCE_NOTE = "P0-18 源 Trace 没有 CPU/RSS/GPU 采样，不能把缺失样本解释为零消耗。"
@@ -209,26 +211,37 @@ def _trace_resource(events: Sequence[Mapping[str, Any]]) -> ResourceObservation:
 
 
 def _plan_metrics(case: EvalReportCase) -> tuple[bool, bool | None]:
-    """从实际 plan/validate 事件推断计划是否评估过、是否通过。"""
+    """从 plan/validate 节点或 validate_fleet_plan 工具事件推断计划是否评估过。"""
 
     events = case.trace_events
-    evaluated = any(event.get("node") in PLAN_NODES for event in events)
+    evaluated = any(
+        event.get("node") in PLAN_NODES or event.get("tool_name") in PLAN_TOOLS for event in events
+    )
     if not evaluated:
         return False, None
-    validate_events = [event for event in events if event.get("node") == "validate"]
+    validate_events = [
+        event
+        for event in events
+        if event.get("node") == "validate" or event.get("tool_name") == "validate_fleet_plan"
+    ]
     legal = bool(validate_events) and all(event.get("status") == "completed" for event in validate_events)
     legal = legal and case.zero_tolerance.total() == 0
     return True, legal
 
 
 def _recovery_metrics(case: EvalReportCase) -> tuple[bool, bool | None, bool | None]:
-    """按 P0-18 异常 fixture 的原始指标计算终止和成功重规划。"""
+    """异常终态正确严格按 expected==observed；成功恢复必须发生恢复动作且最终完成。"""
 
     applicable = case.category.value == "exception_local_replan"
     if not applicable:
         return False, None, None
-    terminal_correct = bool(case.metrics.get("recovery_terminal_correct", 0))
-    successful_recovery = bool(case.metrics.get("recovery_replan_success", 0))
+    terminal_correct = case.expected_outcome == case.observed_outcome
+    recovery_action = (
+        case.replan_count > 0
+        or case.retry_count > 0
+        or int(case.metrics.get("react_recovery_action_count") or 0) > 0
+    )
+    successful_recovery = recovery_action and case.observed_outcome in POSITIVE_OUTCOMES
     return True, terminal_correct, successful_recovery
 
 
@@ -553,12 +566,12 @@ def compare_source_report(
         f"三种策略共用同一 P0-18 60 例源报告和 Fast 指纹；任务完成率 {pevr.task_completion_count}/{pevr.positive_case_count}，全例预期符合率 {pevr.evaluation_pass_count}/{pevr.case_count}。",
         f"计划合法率为 {pevr.plan_legal_count}/{pevr.plan_evaluated_count}，异常终止/恢复正确率为 {pevr.recovery_terminal_correct_count}/{pevr.recovery_case_count}，成功重规划率为 {pevr.successful_recovery_count}/{pevr.successful_recovery_case_count}（仅统计最终完成的异常路径）；三种策略结果相同，因为均复用同一真实源 Trace。",
         f"工具错误共 {pevr.tool_error_count} 次，其中意外工具错误 {pevr.unexpected_tool_error_count} 次；这些错误保留了预期拒绝/阻塞轨迹，没有从数据中删除。",
-        f"ReAct 的派生控制步均值/P95 为 {react.step_count_mean:.2f}/{react.step_count_p95:.2f}，PEVR 为 {pevr.step_count_mean:.2f}/{pevr.step_count_p95:.2f}；该差异是 think-act-observe 投影开销，不是新的在线墙钟测量。",
-        "PEVR 是生产主链；固定 Workflow 与 ReAct 仅作 P0-19 评测投影，ReAct 未修改、未接入生产主链。",
+        f"ReAct 的派生控制步均值/P95 为 {react.step_count_mean:.2f}/{react.step_count_p95:.2f}，PEVR 为 {pevr.step_count_mean:.2f}/{pevr.step_count_p95:.2f}；该差异只是 think-act-observe 可视化投影开销，不是独立 ReAct Agent，也不是在线墙钟。",
+        "PEVR 是生产主链；本 Replay 的 ReAct 槽位只作可视化。发布质量对照必须使用 p0-19.online.v2 独立 ReAct 循环。",
         "Qwen3.8 Smart 对照已延期：本步未启动、未测试、未完成，不阻塞 P0-19；延期项已写入 Backlog。",
     ]
     limitations = [
-        "P0-18 源执行模式为 offline_deterministic_oracle，三策略本次没有新增在线 Qwen3.6 Fast 模型调用；报告中的 Fast 是同源配置/身份指纹，不是 60 例在线 LLM 质量结论。",
+        "P0-18 源执行模式为 offline_deterministic_oracle，三策略本次没有新增在线 Qwen3.6 Fast 模型调用；报告中的 Fast 是同源配置/身份指纹，不是 60 例在线 LLM 质量结论。Replay 不得被引用为独立 ReAct 结果。",
         "Token 与 CPU/RSS/GPU 资源在源 Trace 中未观测，报告用 observed=false 和说明保留缺失事实，不能据此宣称零消耗或比较吞吐。",
         "P0-18 Trace 的 latency_ms/时间戳是确定性回放字段；P95 只表示源 Trace 的逐例延迟分布，不代表模型服务墙钟 P95。",
         "要获得在线三策略质量/Token/资源对照，后续必须新增独立 online_fast execution_mode、同一 60 例的受控 adapter、采样器和新验收门槛；不能改写本报告。",

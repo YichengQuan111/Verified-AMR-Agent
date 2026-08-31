@@ -25,6 +25,9 @@ max_schema_repair_attempts = 1
 max_output_tokens = 4096
 # true 时 API 启动前必须通过 /v1/models alias 门禁。
 validate_on_startup = true
+# llama.cpp 请求级 cache_prompt。开启后复用与上一请求相同的 Token 前缀 KV。
+# 共享 system 前缀必须放在各节点 Prompt 之前，跨节点才能命中这段缓存。
+prompt_cache_enabled = true
 
 [model_gateway.profiles.fast]
 alias = "qwen3.6-fast"

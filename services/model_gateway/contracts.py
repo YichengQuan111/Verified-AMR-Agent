@@ -34,6 +34,8 @@ class TokenUsage(GatewayContract):
     input_tokens: int | None = None
     output_tokens: int | None = None
     total_tokens: int | None = None
+    # llama.cpp 前缀 KV 命中数；OpenAI 兼容字段为 prompt_tokens_details.cached_tokens。
+    cached_input_tokens: int | None = None
 
 
 class ModelVersionRecord(GatewayContract):

@@ -28,7 +28,7 @@
     },
     "FairnessEvidence": {
       "additionalProperties": false,
-      "description": "证明三种策略没有更换数据、Prompt、工具、配置或 Fast 身份。",
+      "description": "证明三种策略共享数据集、工具、安全门禁和预算包络。\n\n在线独立 ReAct 使用专用控制 Prompt，因此 ``same_prompts`` 只记录事实，\n不再作为硬门禁。``react_uses_pevr_runner`` 必须为 false。",
       "properties": {
         "dataset_id": {
           "maxLength": 128,
@@ -113,6 +113,39 @@
         },
         "same_model": {
           "title": "Same Model",
+          "type": "boolean"
+        },
+        "same_shared_context_contract": {
+          "default": true,
+          "title": "Same Shared Context Contract",
+          "type": "boolean"
+        },
+        "same_initial_retrieval": {
+          "default": true,
+          "title": "Same Initial Retrieval",
+          "type": "boolean"
+        },
+        "same_safety_gates": {
+          "default": true,
+          "title": "Same Safety Gates",
+          "type": "boolean"
+        },
+        "same_budget_envelope": {
+          "default": true,
+          "title": "Same Budget Envelope",
+          "type": "boolean"
+        },
+        "strategy_prompt_versions": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "title": "Strategy Prompt Versions",
+          "type": "object"
+        },
+        "react_uses_pevr_runner": {
+          "const": false,
+          "default": false,
+          "title": "React Uses Pevr Runner",
           "type": "boolean"
         },
         "react_production_path_touched": {
@@ -891,7 +924,8 @@
       "enum": [
         "p0-19.v1",
         "p0-19.v2",
-        "p0-19.online.v1"
+        "p0-19.online.v1",
+        "p0-19.online.v2"
       ],
       "title": "Report Version",
       "type": "string"

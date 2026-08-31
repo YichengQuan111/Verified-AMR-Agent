@@ -14,10 +14,8 @@ from enum import Enum
 import json
 from pathlib import Path
 import time
-from typing import Any, Literal, Mapping
+from typing import Any, Mapping
 from uuid import uuid4
-
-from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from agent.planning import ChargingGoal
 from agent.runtime.checkpoint import InMemoryRuntimeStore
@@ -32,7 +30,6 @@ from domains.amr_warehouse import TransportOrder, WarehouseMap
 from services.amr_simulator import AMRSimulator
 from services.amr_simulator.contracts import ChargingStationSpec, SimulatorConfig
 from services.config import load_settings
-from services.model_gateway import ChatMessage
 from services.model_gateway.provider import ModelProvider
 
 from .contracts import (
@@ -83,42 +80,15 @@ DEFAULT_ONLINE_OUTPUT_DIR = PROJECT_ROOT / "tmp" / "p018_online_eval"
 
 
 class OnlineControlStrategy(str, Enum):
-    """在线评测允许的三种控制策略；生产入口仍只暴露 PEVRGraphRunner。"""
+    """在线评测允许的控制策略身份。
+
+    ``react`` 只作为独立 ReAct Harness 的身份前缀；本类不得再把一次
+    retry/stop 伪装成 ReAct，也不得在 FIXED/PEVR 路径调用伪 ReAct 控制器。
+    """
 
     FIXED_WORKFLOW = "fixed_workflow"
     REACT = "react"
     PEVR = "pevr"
-
-
-class ReActControllerDecision(BaseModel):
-    """ReAct 故障边界的最小结构化决定，不保存或请求模型思维链。"""
-
-    model_config = ConfigDict(extra="forbid", validate_assignment=True, validate_default=True)
-
-    action: Literal["retry", "stop"]
-    reason_code: Literal["retry_transient_idempotent", "stop_not_recoverable"]
-    observation_summary: str = Field(min_length=1, max_length=300)
-
-    @model_validator(mode="after")
-    def validate_action_reason(self) -> "ReActControllerDecision":
-        """动作与原因码必须成对，防止报告出现自相矛盾的控制证据。"""
-
-        expected = {
-            "retry": "retry_transient_idempotent",
-            "stop": "stop_not_recoverable",
-        }[self.action]
-        if self.reason_code != expected:
-            raise ValueError("ReAct action 与 reason_code 不一致")
-        return self
-
-
-REACT_CONTROLLER_PROMPT_ID = "amr.eval.p019.react_recovery"
-REACT_CONTROLLER_PROMPT_VERSION = "1.0.0"
-REACT_CONTROLLER_SYSTEM_PROMPT = """你是 AMR 评测层的有界 ReAct 恢复控制器。
-你只能根据给出的结构化故障观察，在 retry 和 stop 中二选一；不能调用工具、不能修改计划、
-不能绕过权限、审批、Validator 或副作用门禁。输入已由确定性程序确认可安全重试时，瞬态故障
-选择 retry；否则选择 stop。只返回符合 JSON Schema 的简短决定，不输出思维链或隐藏推理。
-"""
 
 
 def _now() -> datetime:
@@ -453,13 +423,14 @@ class OnlineFastHarness:
         *,
         auto_approve: bool = True,
     ) -> tuple[EvalOutcome, str | None, str | None, dict[str, Any], ZeroToleranceMetrics, list[str], int, int, int, list[dict[str, Any]]]:
-        """执行共享八阶段图，并只在评测边界切换三种故障控制策略。
+        """执行共享八阶段图；Fixed 关闭恢复，PEVR 保留生产恢复。
 
-        正常节点、Prompt、工具、Validator、HITL 和模型配置完全相同。Workflow 与
-        ReAct 通过公开构造参数关闭 P0-15 自动恢复；ReAct 只在异常抛出后做一次
-        受安全门禁约束的结构化 retry/stop 决策，不会修改生产图或计划。
+        ReAct 策略必须由 ``evals.p019.react_eval.ReActOnlineHarness`` 执行，
+        本方法不得再实例化伪 ReAct 控制器或在异常后做一次 retry/stop。
         """
 
+        if self.control_strategy is OnlineControlStrategy.REACT:
+            raise RuntimeError("P0-18 在线 Harness 不再执行 ReAct；请使用 ReActOnlineHarness")
         principal = self._principal(case, UserRole.OPERATOR)
         snapshot_provider = self._snapshot_provider(case)
         extra_count = self._extra_obstacle_count(case)
@@ -505,8 +476,6 @@ class OnlineFastHarness:
             trace_id=f"trace-p019-{self.control_strategy.value}-{case.case_id}"[:128],
         )
         resumes = 0
-        react_retries = 0
-        controller_events: list[dict[str, Any]] = []
         current_request = request
         while True:
             try:
@@ -520,7 +489,7 @@ class OnlineFastHarness:
                         pass
                     events = self._merge_trace_events(
                         self._checkpoint_events(checkpoints, run_id),
-                        [*controller_events, *self._interrupt_events(case, interrupted, extra_count)],
+                        self._interrupt_events(case, interrupted, extra_count),
                     )
                     return (
                         EvalOutcome.BLOCKED,
@@ -531,12 +500,11 @@ class OnlineFastHarness:
                             "online_mode": f"{self.control_strategy.value}_rejected",
                             "extra_obstacle_count": extra_count,
                             "agent_completed": 0,
-                            "react_controller_model_calls": self._controller_model_calls(controller_events),
                         },
                         ZeroToleranceMetrics(),
                         [],
                         0,
-                        react_retries,
+                        0,
                         0,
                         events,
                     )
@@ -550,19 +518,11 @@ class OnlineFastHarness:
                         run_id,
                         interrupted,
                         resumes=resumes,
-                        controller_events=controller_events,
-                        external_retry_count=react_retries,
                     )
                 grant = hitl.approve(interrupted.interrupt.approval_id, principal=principal)
                 resumes += 1
                 current_request = request.model_copy(update={"approval_grant": grant})
             except Exception as exc:
-                if self.control_strategy is OnlineControlStrategy.REACT and react_retries == 0:
-                    retry, controller_event = self._react_recovery_decision(exc)
-                    controller_events.append(controller_event)
-                    if retry:
-                        react_retries = 1
-                        continue
                 return self._pevr_failure(
                     case,
                     extra_count,
@@ -570,8 +530,6 @@ class OnlineFastHarness:
                     run_id,
                     exc,
                     resumes=resumes,
-                    controller_events=controller_events,
-                    external_retry_count=react_retries,
                 )
         try:
             return self._pevr_success(
@@ -579,8 +537,6 @@ class OnlineFastHarness:
                 extra_count,
                 result,
                 resumes,
-                controller_events=controller_events,
-                external_retry_count=react_retries,
             )
         except Exception as exc:
             # PEVR 已跑完时，序列化失败也不应把真实终态丢掉成 0 次模型调用。
@@ -591,116 +547,7 @@ class OnlineFastHarness:
                 run_id,
                 exc,
                 resumes=resumes,
-                controller_events=controller_events,
-                external_retry_count=react_retries,
             )
-
-    def _react_recovery_decision(self, exc: Exception) -> tuple[bool, dict[str, Any]]:
-        """先做确定性副作用门禁，再允许 Fast 给出一次 retry/stop 决定。"""
-
-        fault = PEVRGraphRunner.classify_failure(exc)
-        safe_to_retry = (
-            fault.retryable
-            and fault.idempotent
-            and (not fault.has_side_effects or fault.side_effect_not_found)
-        )
-        started = _now()
-        safety_metadata = {
-            "fault_category": fault.category.value,
-            "fault_code": fault.code,
-            "raw_code": fault.raw_code,
-            "retryable": fault.retryable,
-            "idempotent": fault.idempotent,
-            "has_side_effects": fault.has_side_effects,
-            "side_effect_not_found": fault.side_effect_not_found,
-            "safe_to_retry": safe_to_retry,
-        }
-        if not safe_to_retry:
-            # 不安全故障在模型调用前停止；ReAct 不能靠 Prompt 覆盖副作用事实。
-            return False, {
-                "sequence": 0,
-                "event_type": "node",
-                "node": "react_safety_gate",
-                "status": "denied",
-                "latency_ms": 0,
-                "started_at": started.isoformat(),
-                "finished_at": started.isoformat(),
-                "error": {
-                    "category": "safety",
-                    "code": "react_retry_not_safe",
-                    "message": "故障不满足可重试、幂等且副作用确定的联合门禁",
-                },
-                "metadata": safety_metadata,
-            }
-
-        observation = {
-            **safety_metadata,
-            "attempts_remaining": 1,
-            "message": fault.message[:500],
-        }
-        try:
-            generated = self.provider.generate_structured(
-                [
-                    ChatMessage(role="system", content=REACT_CONTROLLER_SYSTEM_PROMPT),
-                    ChatMessage(
-                        role="user",
-                        content=json.dumps(observation, ensure_ascii=False, sort_keys=True),
-                    ),
-                ],
-                ReActControllerDecision,
-                max_output_tokens=256,
-                timeout_seconds=min(60.0, self.verification_timeout_seconds),
-            )
-            finished = _now()
-            usage = generated.total_usage
-            decision = generated.value
-            return decision.action == "retry", {
-                "sequence": 0,
-                "event_type": "model",
-                "node": "react_controller",
-                "status": "completed",
-                "model_version": generated.call.version.served_alias,
-                "prompt_id": REACT_CONTROLLER_PROMPT_ID,
-                "prompt_version": REACT_CONTROLLER_PROMPT_VERSION,
-                "input_tokens": usage.input_tokens,
-                "output_tokens": usage.output_tokens,
-                "total_tokens": usage.total_tokens,
-                "latency_ms": max(0, int((finished - started).total_seconds() * 1000)),
-                "started_at": started.isoformat(),
-                "finished_at": finished.isoformat(),
-                "metadata": {
-                    **safety_metadata,
-                    "attempts": generated.attempts,
-                    "schema_repaired": generated.repaired,
-                    "action": decision.action,
-                    "reason_code": decision.reason_code,
-                    "observation_summary": decision.observation_summary,
-                    "raw_chain_of_thought_stored": False,
-                },
-            }
-        except Exception as controller_error:
-            finished = _now()
-            return False, {
-                "sequence": 0,
-                "event_type": "model",
-                "node": "react_controller",
-                "status": "failed",
-                "prompt_id": REACT_CONTROLLER_PROMPT_ID,
-                "prompt_version": REACT_CONTROLLER_PROMPT_VERSION,
-                "latency_ms": max(0, int((finished - started).total_seconds() * 1000)),
-                "started_at": started.isoformat(),
-                "finished_at": finished.isoformat(),
-                "error": {
-                    "category": "model",
-                    "code": getattr(controller_error, "code", None) or "react_controller_failed",
-                    "message": f"{type(controller_error).__name__}: {str(controller_error)[:500]}",
-                },
-                "metadata": {
-                    **safety_metadata,
-                    "action": "stop",
-                    "raw_chain_of_thought_stored": False,
-                },
-            }
 
     def _pevr_failure(
         self,
@@ -763,10 +610,9 @@ class OnlineFastHarness:
                 "extra_obstacle_count": extra_count,
                 "agent_completed": 0,
                 "plan_version": plan_version,
-                "recovery_terminal_correct": int(recovery_ok),
+                "recovery_terminal_correct": int(EvalOutcome.FAILED is case.expected_outcome),
+                "recovery_action_ok": int(recovery_ok),
                 "recovery_replan_success": int(replans > 0 and plan_version >= 2),
-                "react_controller_model_calls": self._controller_model_calls(controller_events or []),
-                "react_safe_retry_count": external_retry_count,
             },
             ZeroToleranceMetrics(),
             [],
@@ -848,10 +694,9 @@ class OnlineFastHarness:
             "simulation_status": report.metrics.simulation_status,
             "completed_order_count": int(report.metrics.completed_order_count),
             "plan_version": plan_version,
-            "recovery_terminal_correct": int(recovery_ok),
+            "recovery_terminal_correct": int(observed is case.expected_outcome),
+            "recovery_action_ok": int(recovery_ok),
             "recovery_replan_success": int(replans > 0 and plan_version >= 2),
-            "react_controller_model_calls": self._controller_model_calls(controller_events or []),
-            "react_safe_retry_count": external_retry_count,
             "trace_complete": 1,
         }
         return observed, code, reason, metrics, zero, unique_effects, replans, retries, resumes, events
@@ -971,14 +816,6 @@ class OnlineFastHarness:
             attempts = metadata.get("attempts") if isinstance(metadata, Mapping) else None
             calls += int(attempts) if isinstance(attempts, int) and attempts > 0 else 1
         return calls
-
-    @classmethod
-    def _controller_model_calls(cls, events: list[dict[str, Any]]) -> int:
-        """单独报告 ReAct 控制器调用，便于从共享 PEVR 节点成本中拆分。"""
-
-        return cls._model_calls_from_events(
-            [event for event in events if event.get("node") == "react_controller"]
-        )
 
     def _model_calls_from_checkpoint(self, store: InMemoryRuntimeStore, run_id: str) -> int:
         """兼容旧调用点；节点名不再作为模型调用的脆弱代理。"""
@@ -1317,9 +1154,6 @@ __all__ = [
     "DEFAULT_ONLINE_OUTPUT_DIR",
     "OnlineControlStrategy",
     "OnlineFastHarness",
-    "REACT_CONTROLLER_PROMPT_ID",
-    "REACT_CONTROLLER_PROMPT_VERSION",
-    "ReActControllerDecision",
     "_as_str",
     "run_online_harness",
 ]

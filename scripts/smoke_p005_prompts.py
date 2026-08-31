@@ -33,6 +33,7 @@ from agent.context import (
     NodeExecutionResult,
     NodeRoute,
     ObservationVerification,
+    P005_PROMPT_VERSION,
     PlanTasksOutput,
     PromptNodeName,
     ReplanOutput,
@@ -375,7 +376,7 @@ def main() -> int:
     recording_provider = RecordingProvider(provider)
     print(
         f"Validated profile={version.profile} alias={version.served_alias} "
-        f"prompt_version=1.1.0"
+        f"prompt_version={P005_PROMPT_VERSION}"
     )
 
     success = 0
@@ -388,7 +389,7 @@ def main() -> int:
                 f"route={result.route.value} reason_code={result.reason_code} "
                 f"reason={result.reason}"
             )
-            assert result.prompt_version == "1.1.0"
+            assert result.prompt_version == P005_PROMPT_VERSION
             assert result.model_alias == version.served_alias
             assert result.output is not None
             semantic_check(result.output)
