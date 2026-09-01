@@ -13,6 +13,8 @@ import argparse
 import json
 from pathlib import Path
 
+from evals.perf.ttft_provider import eval_ttft_requested
+
 from .dataset import DEFAULT_CONFIG_PATH, DEFAULT_DATASET_PATH, load_config
 from .reporting import write_report
 from .runner import DEFAULT_OUTPUT_DIR, run_harness
@@ -26,6 +28,16 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG_PATH)
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
     parser.add_argument("--verification-timeout", type=float, default=120.0)
+    parser.add_argument(
+        "--measure-ttft",
+        action="store_true",
+        help="仅在线模式：用评测专用 stream=true 探针记录 TTFT；默认关闭，生产网关仍非流式",
+    )
+    parser.add_argument(
+        "--llm-only",
+        action="store_true",
+        help="仅在线模式：只跑固定 36 个 LLM 例；不是正式 P0-18 60 例发布报告",
+    )
     return parser
 
 
@@ -42,9 +54,13 @@ def main(argv: list[str] | None = None) -> int:
             config_path=args.config,
             verification_timeout_seconds=args.verification_timeout,
             output_dir=args.output_dir,
+            measure_ttft=eval_ttft_requested(measure_ttft=bool(args.measure_ttft)),
+            llm_only=bool(args.llm_only),
         )
         json_name, markdown_name = "p018_online_eval.json", "p018_online_eval.md"
     else:
+        if args.measure_ttft or args.llm_only:
+            print("[p018] --measure-ttft/--llm-only 只作用于在线闭环，离线 oracle 已忽略", flush=True)
         report = run_harness(
             dataset_path=args.dataset,
             config_path=args.config,
@@ -78,6 +94,9 @@ def main(argv: list[str] | None = None) -> int:
     if "recovery_rate" in recovery:
         payload["recovery_rate"] = recovery.get("recovery_rate")
         payload["recovery_terminal_correct_count"] = recovery.get("recovery_terminal_correct_count")
+    if str(config.get("execution_mode")) == "online_fast_closed_loop":
+        payload["measure_ttft"] = eval_ttft_requested(measure_ttft=bool(args.measure_ttft))
+        payload["llm_only"] = bool(args.llm_only)
     print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
     return 0 if report.status == "passed" else 2
 

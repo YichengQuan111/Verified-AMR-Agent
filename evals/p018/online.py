@@ -30,7 +30,8 @@ from domains.amr_warehouse import TransportOrder, WarehouseMap
 from services.amr_simulator import AMRSimulator
 from services.amr_simulator.contracts import ChargingStationSpec, SimulatorConfig
 from services.config import load_settings
-from services.model_gateway.provider import ModelProvider
+from evals.perf.llm36 import EXPECTED_LLM_CASES, LLM_CASE_IDS, filter_llm_cases_by_id
+from evals.perf.ttft_provider import select_eval_provider
 
 from .contracts import (
     EvalCase,
@@ -44,25 +45,6 @@ from .contracts import (
 )
 from .dataset import DEFAULT_CONFIG_PATH, DEFAULT_DATASET_PATH, PROJECT_ROOT, load_config, load_dataset
 from .fault_inject import FaultInjectingRegistry, inject_spec_for_case
-from .hard_map import (
-    EXTRA_OBSTACLES_PER_CASE,
-    HARD_ENVIRONMENT_REF,
-    HARD_MAP_PATH,
-    extra_obstacles_for_seed,
-    snapshot_provider_for_case,
-)
-
-from .contracts import (
-    EvalCase,
-    EvalCaseStatus,
-    EvalCategory,
-    EvalDataset,
-    EvalOutcome,
-    EvalReport,
-    EvalReportCase,
-    ZeroToleranceMetrics,
-)
-from .dataset import DEFAULT_CONFIG_PATH, DEFAULT_DATASET_PATH, PROJECT_ROOT, load_config, load_dataset
 from .hard_map import (
     EXTRA_OBSTACLES_PER_CASE,
     HARD_ENVIRONMENT_REF,
@@ -127,6 +109,8 @@ class OnlineFastHarness:
         config_path: Path,
         verification_timeout_seconds: float = 120.0,
         control_strategy: OnlineControlStrategy | str = OnlineControlStrategy.PEVR,
+        measure_ttft: bool = False,
+        llm_only: bool = False,
     ) -> None:
         if str(config.get("execution_mode")) != "online_fast_closed_loop":
             raise ValueError("OnlineFastHarness 只接受 online_fast_closed_loop")
@@ -139,7 +123,25 @@ class OnlineFastHarness:
         self.verification_timeout_seconds = verification_timeout_seconds
         self.control_strategy = OnlineControlStrategy(control_strategy)
         self.settings = load_settings()
-        self.provider = ModelProvider(self.settings.model_gateway)
+        # 只认构造参数，不读进程环境。避免 LLM_EVAL_TTFT 泄漏进 P0-19 默认路径。
+        self.measure_ttft = bool(measure_ttft)
+        self.provider = select_eval_provider(
+            self.settings.model_gateway,
+            measure_ttft=self.measure_ttft,
+        )
+        self.llm_only = bool(llm_only)
+        if self.llm_only:
+            # 数据集指纹仍按完整 60 例计算；执行列表换成固定 36 个 LLM 例。
+            self._cases_to_run = filter_llm_cases_by_id(list(self.dataset.cases))
+            found = {case.case_id for case in self._cases_to_run}
+            missing = [case_id for case_id in LLM_CASE_IDS if case_id not in found]
+            if missing or len(self._cases_to_run) != EXPECTED_LLM_CASES:
+                raise ValueError(
+                    f"llm-only 需要 {EXPECTED_LLM_CASES} 个固定 LLM 例，实际 "
+                    f"{len(self._cases_to_run)}，缺失 {missing}"
+                )
+        else:
+            self._cases_to_run = list(self.dataset.cases)
         self.authenticator = JWTAuthenticator(
             self.settings.security.jwt_secret.get_secret_value(),
             issuer=self.settings.security.issuer,
@@ -165,10 +167,13 @@ class OnlineFastHarness:
         """先确认 Fast 在线，再逐例执行并按观察重算指标。"""
 
         version = self.provider.startup()
+        case_total = len(self._cases_to_run)
         _print(
             f"[p018-online] Fast ready alias={version.served_alias} "
-            f"cases={len(self.dataset.cases)} map={HARD_MAP_PATH.name} "
+            f"cases={case_total} map={HARD_MAP_PATH.name} "
             f"strategy={self.control_strategy.value}"
+            + (" ttft_probe=on" if self.measure_ttft else "")
+            + (" scope=llm36" if self.llm_only else "")
         )
         progress_dir = Path(output_dir) if output_dir is not None else DEFAULT_ONLINE_OUTPUT_DIR
         progress_dir.mkdir(parents=True, exist_ok=True)
@@ -176,18 +181,30 @@ class OnlineFastHarness:
         # 每次完整评测覆盖进度文件，避免和上次半截结果混在一起。
         progress_path.write_text("", encoding="utf-8")
         results = []
-        for index, case in enumerate(self.dataset.cases, start=1):
-            _print(f"[p018-online] ({index}/60) start {case.case_id} {case.scenario}")
-            result = self.run_case(case)
+        for index, case in enumerate(self._cases_to_run, start=1):
+            binder = getattr(self.provider, "set_case_context", None)
+            if callable(binder):
+                binder(case.case_id)
+            _print(f"[p018-online] ({index}/{case_total}) start {case.case_id} {case.scenario}")
+            try:
+                result = self.run_case(case)
+            finally:
+                if callable(binder):
+                    binder(None)
             results.append(result)
             with progress_path.open("a", encoding="utf-8") as handle:
                 handle.write(json.dumps(result.model_dump(mode="json"), ensure_ascii=False) + "\n")
             _print(
-                f"[p018-online] ({index}/60) done {case.case_id} "
+                f"[p018-online] ({index}/{case_total}) done {case.case_id} "
                 f"observed={_as_str(result.observed_outcome)} passed={result.evaluation_passed} "
                 f"model_calls={result.metrics.get('model_call_count', 0)}"
             )
-        return self._build_report(results)
+        report = self._build_report(results)
+        writer = getattr(self.provider, "write_ttft_artifacts", None)
+        if callable(writer):
+            ttft_path = writer(progress_dir)
+            _print(f"[p018-online] TTFT artifacts written {ttft_path}")
+        return report
 
     def run_case(self, case: EvalCase) -> EvalReportCase:
         """按类别分流；任何异常都变成可定位失败，不中断后续 case。"""
@@ -1103,28 +1120,40 @@ class OnlineFastHarness:
         ]
         # 在线质量评测：零容忍非 0 才算发布级失败；完成率允许低于 100%。
         status = "passed" if metrics.zero_tolerance.total() == 0 else "failed"
+        reproducibility = dict(self.reproducibility)
+        if self.llm_only:
+            reproducibility["experiment_scope"] = "llm36"
+            reproducibility["official_p018_publish"] = False
+            reproducibility["llm_case_ids"] = list(LLM_CASE_IDS)
+        if self.measure_ttft:
+            reproducibility["measure_ttft"] = True
         stable_body = {
             "dataset_id": self.dataset.dataset_id,
             "dataset_version": self.dataset.version,
             "execution_mode": "online_fast_closed_loop",
+            "experiment_scope": "llm36" if self.llm_only else "full_60",
             "metrics": metrics.model_dump(mode="json"),
             "failures": failures,
             "cases": [item.model_dump(mode="json") for item in results],
         }
         report_digest = canonical_digest(stable_body)
-        return EvalReport(
-            report_id=f"p018-online-{report_digest[:16]}",
-            dataset_id=self.dataset.dataset_id,
-            dataset_version=self.dataset.version,
-            status=status,
-            generated_at=_now().isoformat(),
-            reproducibility=self.reproducibility,
-            metrics=metrics,
-            failures=failures,
-            observed_negative_cases=negative_cases,
-            cases=results,
-            report_digest=report_digest,
-        )
+        report_kwargs = {
+            "report_id": f"p018-online-{report_digest[:16]}",
+            "dataset_id": self.dataset.dataset_id,
+            "dataset_version": self.dataset.version,
+            "status": status,
+            "generated_at": _now().isoformat(),
+            "reproducibility": reproducibility,
+            "metrics": metrics,
+            "failures": failures,
+            "observed_negative_cases": negative_cases,
+            "cases": results,
+            "report_digest": report_digest,
+        }
+        # 正式 60 例走完整校验；llm36 实验不足 60 例，不能塞进正式 EvalReport 配额。
+        if len(results) == 60:
+            return EvalReport(**report_kwargs)
+        return EvalReport.model_construct(**report_kwargs)
 
 
 def run_online_harness(
@@ -1134,8 +1163,10 @@ def run_online_harness(
     verification_timeout_seconds: float = 120.0,
     output_dir: Path | None = None,
     control_strategy: OnlineControlStrategy | str = OnlineControlStrategy.PEVR,
+    measure_ttft: bool = False,
+    llm_only: bool = False,
 ) -> EvalReport:
-    """加载在线配置并执行 60 例真实 Fast 闭环。"""
+    """加载在线配置并执行真实 Fast 闭环。``llm_only`` 只跑固定 36 个 LLM 例。"""
 
     dataset = load_dataset(dataset_path)
     config = load_config(config_path)
@@ -1146,6 +1177,8 @@ def run_online_harness(
         config_path=Path(config_path),
         verification_timeout_seconds=verification_timeout_seconds,
         control_strategy=control_strategy,
+        measure_ttft=measure_ttft,
+        llm_only=llm_only,
     ).run(output_dir=output_dir)
 
 

@@ -481,6 +481,9 @@ class ModelProvider:
             "temperature": self.settings.active_profile.temperature,
             "top_p": self.settings.active_profile.top_p,
             "max_tokens": effective_output_tokens,
+            # 生产契约固定非流式。客户端可观测的真实 TTFT 只能在
+            # ``evals.perf`` 的 stream=true Benchmark 路径测量，禁止为了
+            # 指标把业务 generate_* 改成流式。
             "stream": False,
             # extra_body 仍是 Provider 内部白名单：思考开关、top_k 与前缀 KV 缓存。
             # 调用方不能覆盖这段对象，也不能追加 tools/文件/任意 llama.cpp 键。

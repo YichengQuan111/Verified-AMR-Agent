@@ -1,9 +1,9 @@
 # AMR Agent 项目交接上下文
 
-最后更新：2026-08-31
+最后更新：2026-09-01
 当前实现里程碑记录：P0-00～P0-20 代码已落地。P0-19 在线对照为 **`p0-19.online.v2` 独立 ReAct**：报告 `p019-online-5bf27026e1607cfe`，digest `5bf27026e1607cfe…d82f456`，Fixed/ReAct/PEVR 全例符合 **52/60、46/60、59/60**，异常终态 **3/10、6/10、9/10**，七项零容忍均为 0，`react_uses_pevr_runner=false`。旧 `p0-19.online.v1` 一次 retry 已作废，不能 `--resume`。离线独立执行仍作恢复额度回归；其中 react 槽位是 `max_retries=1` 遗留夹具。Smart 继续硬禁用。2026-08-21 原审计文档仍是 FAIL 快照，H06 正式演示视频仍未补。
 RAG 评测器现已在真实 12 例 holdout 上补充章节级 Precision@K=`0.236364`、nDCG@K=`1.0`；Recall@K/MRR/Section Recall/Citation/Answerability 仍为 1，ACL leak=0。
-当前下一步：2026-08-31 生产 PEVR 有/无 `cache_prompt` 对照已写入 README：仅 LLM 36 例，TTFT/prefill p50 加速约 **1.44×**，Token 命中率 **43.2% vs 0%**，案例端到端 p50 **1.10×**。证据 `tmp/p018_pevr_cache_compare_20260831/`（含 `llm_only_cache_metrics.json`）。不要覆盖 2026-08-30 的 `tmp/p018_pevr_cache_compare/`，也不要把 59/60 写成新的正式 P0-18 发布分数。P0-05 Prompt 现为 `1.2.0`，ReAct 为 `2.1.0`。P0-19 v2 三策略在线 180 仍是前缀缓存前的成绩，未重跑。Fast 仍在运行，未停止。不要把 Docker `:8000` 当作宿主调试端口。不要把离线 react 槽位写成独立 ReAct。Smart 对照仍须用户明确启用。
+当前下一步：2026-09-01 已完成 **36 LLM 例 PEVR 有/无 `cache_prompt` + 流式 TTFT** 对照（`tmp/p018_pevr_llm36_ttft_cache_20260901/`），**不是**正式 P0-18 60 例发布分数。TTFT 来自评测探针首个非空 SSE delta，未用 Prefill / `progress=1.00` 回填。生产 `ModelProvider` 仍是 `stream=false`。8/31 非流式 Prefill 1.44× / 墙钟 1.10× 仍可引用，不要用本次流式 Prefill 1.57× 去覆盖那张表。不要覆盖 8/30、8/31 或 `tmp/p018_pevr_llm36_20260901/`。P0-05 Prompt `1.2.0`，ReAct `2.1.0`。P0-19 v2 三策略在线 180 仍是前缀缓存前的成绩。Fast **未停止**。不要改生产非流式契约。Smart 对照仍须用户明确启用。
 
 
 ## 1. 文档用途与维护要求
@@ -56,6 +56,8 @@ RAG 评测器现已在真实 12 例 holdout 上补充章节级 Precision@K=`0.23
 - 2026-08-28 P0-19 v2 在线收口：Compose `amr-api`/`amr-postgres`/`amr-qdrant` healthy。Fast 由 `scripts/start_local.ps1 -StartFast` 拉起：llama-server PID=33468 监听 `127.0.0.1:18080`，鉴权代理 `127.0.0.1:8080`，alias `qwen3.6-fast`，IQ4_NL，ctx=16384，GGUF SHA-256=`B228C988…F337E6`，manifest SHA=`488B5420…AED0686B4`。Smart 未启动。评测进程已退出；180 条已覆盖 `tmp/p019_online_strategy_compare`。
 - 2026-08-30 有/无 `cache_prompt` 实测结束时：Compose `amr-api`/`amr-postgres`/`amr-qdrant` 仍 healthy（容器已运行约 43 分钟）。Fast 由本会话 `scripts/start_local.ps1 -StartFast` 拉起且 **未停止**：llama-server PID=31596 监听 `127.0.0.1:18080`，鉴权代理 PID=21720 监听 `127.0.0.1:8080`。Smart 未启动。对照进程已退出。
 - 2026-08-31 有缓存 PEVR 60 例开始前：Compose 三容器仍 healthy（已运行约 15 小时）。旧 Fast 代理 PID=21720 仍占 `127.0.0.1:8080`，但 `18080` 上 llama-server 已不在，带密钥的 `/health` 返回 502。已精确停止代理 21720 与启动器 pwsh 30480，再执行 `.\scripts\start_local.ps1 -StartFast`。新 Fast：**llama-server PID=20928** 监听 `127.0.0.1:18080`，鉴权代理 PID=33452 监听 `127.0.0.1:8080`，alias `qwen3.6-fast`，IQ4_NL，ctx=16384，GGUF SHA-256=`B228C988…F337E6`。Smart 未启动。
+- 2026-09-01 36 LLM PEVR 重跑结束时：Fast **未停止**：llama-server PID=28976 监听 `127.0.0.1:18080`，鉴权代理 PID=20336 监听 `127.0.0.1:8080`。Smart 未启动。评测进程已退出。
+- 2026-09-01 TTFT 缓存对照开始前：`18080` 已无 llama-server，旧代理 PID=20336 仍占 `8080`（僵尸代理）。已精确停止 20336 与启动器 pwsh 27056，备份 `tmp/llama-server.err.log` 为 `tmp/llama-server.err.log.pre_20260901_ttft_compare.bak`，再执行 `.\scripts\start_local.ps1 -StartFast`。新 Fast：**llama-server PID=516** 监听 `127.0.0.1:18080`，鉴权代理 PID=23044 监听 `127.0.0.1:8080`，alias `qwen3.6-fast`，IQ4_NL，ctx=16384，GGUF SHA-256=`B228C988…F337E6`。对照结束后 Fast **未停止**。Smart 未启动。Compose 三容器仍 healthy。
 - Git 仍在 `main`，基线提交为 `e6a4f07`；工作树含前缀缓存实现与对照脚本。本次没有 stage、commit、reset 或删除用户变更。
 
 ## 4. 已完成能力与关键决策
@@ -2332,4 +2334,84 @@ DAG 使用 `agent.planning.dag.topological_sort()` 中的 Kahn 算法：计算�
 - 外部服务当前状态：Fast 仍在 PID 20928/33452，未停止。
 - 已知限制/风险：Trace 记 133 次调用、日志完整计时 132 次，差 1 次未进入 TTFT 样本。端到端含仿真，不能当成纯模型延迟。
 - 下一步直接需要的信息：对外只引用 README 这张 LLM 表，不要再用全量 60 例 1.086 当 cache 主结论。
+- **2026-09-01 更正**：该条写入的 TTFT 数字（有缓存 p50=3233.0ms、无缓存 4648.9ms）来自 `progress=1.00`，正式结论不得再引用。Prefill/命中率/案例 E2E 数字仍有效。见下一条。
+
+### 2026-09-01 · 修正 TTFT 口径并落地可复现 Benchmark
+
+- 完成：新增 `evals.perf` 作为 TTFT/Prefill/E2E 的正式入口。TTFT = 客户端单调时钟下请求开始到第一个非空生成 `delta.content`；Prefill = llama.cpp 最终 `prompt eval time`；E2E = 请求开始到流结束。生产 `ModelProvider` 仍为 `"stream": False`。安全代理仅在 JSON `stream: true` 时 SSE 透传。旧 `progress=1.00` / 缺 progress 回填 Prefill / 缺 progress 即缓存命中 三条逻辑已删除且有单测反例。本步有核心代码中文注释。
+- 未完成：当时未重跑 36 例 PEVR 有/无缓存的**流式** TTFT 对照。同日稍后已重跑有缓存 36 LLM 例（完整 60 例身份），TTFT 仍因生产 `stream=false` 缺失；见下一条。当时 `tmp/llama-server.err.log` 已被 9/1 重启覆盖，不再是 8/31 的 132 次调用原文。
+- 公共契约变化：
+  - 新增 CLI：`python -m evals.perf benchmark|parse-log|restate-legacy`
+  - 代理行为：`stream:true` 改为边收边转；`stream:false` 仍整包缓冲
+  - 无新 Pydantic Schema、数据库字段或 Alembic revision
+- 关键决策：真实 TTFT 只能来自 Benchmark 流式路径；不能为测指标改生产非流式。TTFT 缺失必须保持 `null`。Prefill 1.44× 与案例 E2E 1.10× 不因 TTFT 作废而推翻。串行 + 日志文件偏移关联请求，错配则 Prefill 缺失而不是猜 task。
+- 实际验证：
+  - `E:\Anaconda\envs\torch128\python.exe -m pytest tests\unit\test_ttft_metrics.py tests\unit\test_pevr_llm_latency.py tests\unit\test_model_secure_proxy.py tests\unit\test_model_provider.py tests\unit\test_prompt_cache_compare.py tests\unit\test_pevr_prompt_cache_compare.py tests\unit\test_settings.py -q` → **52 passed**，1 个既有 jieba 警告。
+  - `.\scripts\run_smoke.ps1` → 退出码 0；pytest **404 passed, 2 warnings**；CTest **39/39**。
+  - `python -m evals.perf restate-legacy` 写出 `tmp/p018_pevr_cache_compare_20260831/llm_only_cache_metrics.ttft_withdrawn.json`，`ttft_status=invalid_do_not_cite`，Prefill 加速 1.442 保留。
+  - 在线小样本（已重启 Fast：llama-server + 8080 代理，`check_model_gateway.py --profile fast` 成功）：
+    - `python -m evals.perf benchmark --repeats 2 --max-tokens 8 --output tmp\ttft_live_smoke.json`：有效 2、缺失 TTFT 0、失败 0；warmup/breaker 各排除 1。两次测量 `TTFT<=E2E`（665.2≤701.7、108.3≤139.5）。第二次命中 428/432 cached。`filled_from_prefill=false`。
+    - `python -m evals.perf benchmark --compare-cache --repeats 2 --max-tokens 8 --output tmp\ttft_cache_compare_live.json`：cache_off 命中率 0、TTFT p50=633.3ms、Prefill p50=573.2ms；cache_on TTFT p50=143.5ms、Prefill p50=83.3ms。两侧均无 TTFT≤E2E 违约。此对照 Prompt 仅约 432 Token，**不能**替代 8/31 的 PEVR Prefill 1.44×。
+- 未运行：当时未跑 36 例 PEVR 流式 TTFT 全量对照、P0-19 在线 180、Smart。同日稍后的有缓存 36 LLM 重跑见下一条。
+- 外部服务当前状态：Compose 三容器 healthy。Fast **未停止**（本步为验证重启过：先停掉 18080 已死、仍占 8080 的僵尸代理 PID=8256，再 `.\scripts\start_local.ps1 -StartFast`）。Smart 未启动。
+- 已知限制/风险：8/31 的 `tmp/llama-server.err.log` 已被覆盖，无法从原文重算 132 次 Prefill；只能保留当时 JSON 里的 Prefill/命中率/案例 E2E。共享前缀短 Prompt 的 TTFT 加速比会远高于长 PEVR 主链，禁止把 4× 写成新的正式 cache 结论。
+- 下一步直接需要的信息：需要释放 GPU 时再停 Fast。若要 PEVR 长度上的真实 TTFT 加速比，必须对流式 Benchmark 使用接近生产的长 system Prompt，或给评测 runner 增加可选 stream 探针且默认仍走非流式生产路径。不要覆盖 8/30、8/31 对照目录。
+
+### 2026-09-01 · 重跑有缓存 36 LLM 例 PEVR（完整 60 例身份）
+
+- 完成：按用户指令重跑 LLM PEVR。Harness 不能缩小到 36 例，实际跑完整 P0-18 在线 60 例，事后筛选 `model_call_count>0` 的 36 例。命令：`E:\Anaconda\envs\torch128\python.exe -u -m evals.p018.run_eval --config evals\p018\online_config.json --output-dir tmp\p018_pevr_llm36_20260901 --verification-timeout 120`，环境 `LLM_PROFILE=fast`、`LLM_PROMPT_CACHE_ENABLED=true`，未设 `LLM_MODEL`。退出码 0，进程墙钟 **2203528ms**（约 36.7 分钟）。新增 `evals/perf/llm36.py` 与 CLI `python -m evals.perf summarize-pevr-llm`；llama.cpp 当前日志不打 `n_prompt`，命中率用 `release n_tokens − eval_tokens`。本步有核心代码中文注释。
+- 未完成：没有跑无缓存 60 例，没有流式 TTFT（生产仍 `stream=false`）。没有重跑 P0-19 三策略在线 180。没有停止 Fast。
+- 公共契约变化：
+  - 新增 CLI：`python -m evals.perf summarize-pevr-llm --report … --log-offset N`
+  - 无新 Pydantic Schema、数据库字段或 Alembic revision
+- 关键决策：新证据写入 `tmp/p018_pevr_llm36_20260901/`，**不覆盖** 8/30、8/31 对照目录。本次 59/60 不是新的正式 P0-18 发布分数。TTFT 保持 `null` / `non_streaming_response`。8/31 有/无缓存 Prefill 1.44× 与墙钟 1.10× 仍以当日配对为准，不能用本次单侧重跑改写加速比。
+- 实际验证：
+  - 报告 `p018-online-de5a1394eb9709f9`，digest `de5a1394eb9709f9…699c4214`，JSON SHA-256=`4DAEAEC24BF684A47B7F3A2EE80A8A7889431D17CD322335EC56FE062F98CD8C`（1153127 字节），`status=passed`（零容忍全 0）。
+  - 全量：pass=**59/60**，`model_call_count=133`，墙钟 sum=2198370.5，mean=36639.5，p50=42620.8，p95=69030.6，max=105963.6。任务完成 43/44（0.977273），恢复终态正确 10/10。
+  - 36 LLM 例：35/36 通过，调用 133 次，墙钟 mean=60187.0，p50=64678.4，p95=69207.5，max=105963.6（最慢为冷启动首例 `p018-normal-001`，4 次调用，通过）。
+  - 唯一失败：`p018-exception-004`（`workstation_occupied`），`observed=failed`，`model_calls=3`，`TOOL_BUDGET_EXHAUSTED`，不是生成超时。
+  - Prefill（日志偏移 9398 字节之后，133/133 对齐）：mean=3112.9ms，p50=3404.6ms，p95=4552.4ms；命中率 **0.434**（cached 332329 / prompt 765731）；TTFT=`null`。汇总 SHA-256=`6C4C19E7F6301A150935F9917AB81BF49954D21364A5E4F59A976D6A1FD370A8`。
+  - 相关单测：`pytest tests\unit\test_pevr_llm_latency.py tests\unit\test_ttft_metrics.py -q` → **25 passed**。未跑完整 smoke（本步未改生产路径）。
+- 未运行：无缓存 60 例、流式 TTFT 全量、Fixed、独立 ReAct、P0-19 在线 180、Smart、`.\scripts\run_smoke.ps1`。
+- 外部服务当前状态：Fast **未停止**：llama-server PID=28976 `127.0.0.1:18080`，鉴权代理 PID=20336 `127.0.0.1:8080`。Smart 未启动。
+- 已知限制/风险：生产非流式测不到客户端 TTFT。本次 Prefill p50（3404.6ms）与 8/31 有缓存（3349.2ms）、命中率（43.4% vs 43.2%）接近，可作复现，不能单独当加速比。`p018-normal-001` 墙钟 106s 含 Embedding/jieba 冷启动，拉高了 max。
+- 下一步直接需要的信息：用户明确下令后再跑 `LLM_PROMPT_CACHE_ENABLED=false` 对照，输出目录用新的 `cache_off/`，阶段前发 breaker。需要真实 TTFT 时走 `evals.perf benchmark` 长 Prompt，或在线 `--measure-ttft`（见下一条），不要改 `ModelProvider`。需要释放 GPU 时再停 Fast。
+
+### 2026-09-01 · 评测专用 PEVR TTFT 路径（未开跑）
+
+- 完成：新增 `evals/perf/ttft_provider.py` 的 `TtftEvalProvider`，仅覆盖 `_request_completion` 为 `stream=true`，记录客户端首个非空生成 delta，再把拼接文本交回生产 `generate_structured` 的 Schema/一次修复循环。默认关闭。打开方式：`evals.p018.run_eval --measure-ttft`（该 CLI 也认 `LLM_EVAL_TTFT=true`）、或 `python -m evals.perf pevr-ttft --run`。Harness 构造参数不读环境，因此 P0-19 默认不会被环境变量带偏。无 `--run` 时 CLI 只打印命令。产物为 `pevr_ttft_metrics.json` / `pevr_ttft_samples.jsonl`。生产 `ModelProvider` 的 `"stream": False` 未改。本步有核心代码中文注释。
+- 未完成：**没有**启动完整 60 例 / 36 LLM TTFT 实测。没有跑无缓存对照、P0-19 180、Smart。
+- 公共契约变化：
+  - 新增 CLI：`python -m evals.p018.run_eval --measure-ttft`（仅在线模式生效）
+  - 新增 CLI：`python -m evals.perf pevr-ttft`（默认不跑）与 `scripts/run_pevr_ttft_eval.py`
+  - `scripts/run_p018_online_eval.ps1` 增加可选 `-MeasureTtft`，默认关闭
+  - 无新 Pydantic Schema、数据库字段或 Alembic revision
+- 关键决策：TTFT 探针是评测专用 Provider，不是生产网关开关。P0-19 构造 `OnlineFastHarness` 时默认 `measure_ttft=false`，行为与改前相同。请求 ID 只放 HTTP 头。
+- 实际验证：`E:\Anaconda\envs\torch128\python.exe -m pytest tests\unit\test_pevr_ttft_path.py tests\unit\test_pevr_llm_latency.py tests\unit\test_ttft_metrics.py tests\unit\test_model_provider.py tests\unit\test_p018_online.py -q` → **66 passed**。未跑完整 smoke，未开跑在线 60 例。
+- 未运行：`--measure-ttft` 在线 60 例、无缓存 60 例、流式长 Prompt 对照、P0-19、Smart、`.\scripts\run_smoke.ps1`。
+- 外部服务当前状态：本步未重启或停止 Fast。
+- 已知限制/风险：流式与非流式在 llama.cpp 上可能有细微解码差异，TTFT 轮的通过率不能自动当成正式 P0-18 发布分数。不要把 `--measure-ttft` 设成仓库默认。
+- 下一步直接需要的信息：用户明确下令后再跑 `--measure-ttft`，输出目录用新的 `tmp/p018_pevr_ttft_YYYYMMDD/`，不要覆盖 8/30、8/31 或 `tmp/p018_pevr_llm36_20260901/`。
+
+### 2026-09-01 · 36 LLM 例 PEVR 开关缓存 + 流式 TTFT 对照
+
+- 完成：按用户指令只跑固定 36 个 LLM case_id 的生产 PEVR 闭环，关/开 `cache_prompt` 各一轮，全程 `--measure-ttft`。顺序：重启 Fast → breaker → `cache_off` → breaker → `cache_on`。命令：`E:\Anaconda\envs\torch128\python.exe -u -m evals.perf compare-cache --output-root tmp\p018_pevr_llm36_ttft_cache_20260901`。子进程为 `python -u -m evals.p018.run_eval --config evals\p018\online_config.json --verification-timeout 120 --measure-ttft --llm-only`，环境 `LLM_PROFILE=fast`、`LLM_PROMPT_CACHE_ENABLED=true|false`，未设 `LLM_MODEL` / `LLM_EVAL_TTFT`。对照进程退出码 0，墙钟 **4645280ms**（约 77.4 分钟）。新增 `evals/perf/cache_compare.py`、`--llm-only`、固定 `LLM_CASE_IDS`。生产 `"stream": False` 未改。本步有核心代码中文注释。
+- 未完成：没有跑完整 60 例 TTFT；没有重跑 P0-19 180；没有停止 Fast。
+- 公共契约变化：
+  - 新增 CLI：`python -m evals.p018.run_eval --llm-only`（仅在线；报告 `experiment_scope=llm36`，`official_p018_publish=false`）
+  - 新增 CLI：`python -m evals.perf compare-cache`
+  - 正式 `EvalReport.cases` 仍是 `min_length=60`；36 例实验用 `model_construct` 落盘，不得当成正式 P0-18 配额
+  - 无新 Pydantic Schema、数据库字段或 Alembic revision
+- 关键决策：用户明确只要 36 LLM 例，因此执行列表按固定 ID 筛选，数据集指纹仍按完整 60 例计算。TTFT 只认客户端首个非空生成 delta；`filled_from_prefill=false`，`pseudo_ttft_from_progress_100=false`，`TTFT>E2E` 违例为空。案例墙钟含 C++/仿真，与单次模型 E2E 分开报。
+- 实际验证：
+  - 相关单测：`pytest tests\unit\test_pevr_ttft_path.py tests\unit\test_ttft_metrics.py tests\unit\test_pevr_llm_latency.py -q` → **35 passed**。
+  - 汇总 `tmp/p018_pevr_llm36_ttft_cache_20260901/llm36_ttft_cache_compare.json`，SHA-256=`3D683EED…2B00CE`。`ttft_speedup_uses_prefill=false`。
+  - `cache_off`：报告 `p018-online-f40630ba0a67ca03`，digest `f40630ba0a67ca03…eda7309`，exit=0，35/36，133 次 Harness 调用，流式 TTFT 有效样本 **132**（`p018-exception-004` 计 3 次调用、只录到 2 条流式样本）。TTFT p50=**5099.6ms**，Prefill p50=**4997.1ms**，单次模型 E2E p50=**20165.3ms**，案例墙钟 p50=**72563.3ms**，命中率 **0.0**。阶段约 42.6 分钟。
+  - `cache_on`：报告 `p018-online-65b34b345f7017ad`，digest `65b34b345f7017ad…d935ec94`，exit=0，35/36，133 次调用，TTFT n=132。TTFT p50=**3299.4ms**，Prefill p50=**3176.4ms**，单次模型 E2E p50=**14139.0ms**，案例墙钟 p50=**62362.1ms**，命中率 **0.4455**（cached 339044 / prompt 761043）。阶段约 34.8 分钟。
+  - 加速比（无/有）：TTFT **1.546×**，Prefill **1.573×**，单次模型 E2E **1.426×**，案例墙钟 **1.164×**。两侧唯一失败均为 `p018-exception-004` `TOOL_BUDGET_EXHAUSTED` / `recovery_fallback`。零容忍全 0。
+  - 两侧 TTFT p50 均略高于 Prefill p50（约 100–120ms），符合“客户端首 token = Prefill + 代理/网络/首 decode”，与旧口径 TTFT < Prefill 的 `progress=1.00` 伪指标相反。
+- 未运行：完整 60 例 `--measure-ttft`、P0-19 180、Fixed/独立 ReAct、Smart、`.\scripts\run_smoke.ps1`。
+- 外部服务当前状态：Fast **未停止**：llama-server PID=516 `127.0.0.1:18080`，鉴权代理 PID=23044 `127.0.0.1:8080`。Smart 未启动。Compose `amr-api`/`amr-postgres`/`amr-qdrant` healthy。
+- 已知限制/风险：本对照是流式评测路径，通过率不能自动写成正式 P0-18 发布分数。Prefill 来自流式 `timings.prompt_ms`，不要用 1.573× 覆盖 8/31 非流式日志 Prefill 1.44×。`EvalReport` 正式配额仍是 60。需要释放 GPU 时再停 Fast。
+- 下一步直接需要的信息：不要覆盖 `tmp/p018_pevr_llm36_ttft_cache_20260901/`、8/30、8/31、`tmp/p018_pevr_llm36_20260901/`。若要正式 60 例身份的 TTFT，须另开新目录跑完整 60，且标明 `official_p018_publish`。生产网关保持非流式。
 

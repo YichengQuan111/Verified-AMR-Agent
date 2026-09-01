@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hmac
+import json
 import os
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
@@ -10,10 +11,29 @@ from typing import AsyncIterator
 import httpx
 import uvicorn
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 
 
 MAX_REQUEST_BYTES = 4 * 1024 * 1024
+
+
+def request_wants_sse_stream(body: bytes) -> bool:
+    """仅当 JSON 显式 ``stream: true`` 时走 SSE 透传。
+
+    生产 ``ModelProvider`` 使用 ``stream: false``，仍走整包缓冲，行为不变。
+    Benchmark 必须看到首个 SSE 字节才能测 TTFT；若继续缓冲到响应结束，
+    测到的会是 E2E 而不是 TTFT。
+    """
+
+    if not body:
+        return False
+    try:
+        payload = json.loads(body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return False
+    return isinstance(payload, dict) and payload.get("stream") is True
+
+
 HOP_BY_HOP_HEADERS = {
     "connection",
     "keep-alive",
@@ -107,6 +127,50 @@ def create_proxy_app(
         # 后端也启用同一随机 key；即使本机进程误连 18080，completion 仍会拒绝。
         forwarded_headers["authorization"] = f"Bearer {api_key}"
         client: httpx.AsyncClient = request.app.state.client
+        filtered_header_names = HOP_BY_HOP_HEADERS | {
+            "content-length",
+            "content-encoding",
+            "access-control-allow-origin",
+        }
+
+        if request_wants_sse_stream(body):
+            # 流式必须在收到上游响应头后立刻开始向客户端让出字节，
+            # 否则 TTFT 会被代理缓冲成接近 E2E。
+            upstream = await client.send(
+                client.build_request(
+                    method=request.method,
+                    url=f"{normalised_backend}/{path}",
+                    params=request.query_params,
+                    headers=forwarded_headers,
+                    content=body,
+                ),
+                stream=True,
+            )
+            response_headers = {
+                name: value
+                for name, value in upstream.headers.items()
+                if name.lower() not in filtered_header_names | {"content-type"}
+            }
+            response_headers["X-Content-Type-Options"] = "nosniff"
+
+            async def _iter_upstream() -> AsyncIterator[bytes]:
+                try:
+                    async for chunk in upstream.aiter_bytes():
+                        if chunk:
+                            yield chunk
+                except httpx.RemoteProtocolError:
+                    # 上游在 chunked 收尾时偶发提前关连接；已转发的 SSE 字节仍有效。
+                    return
+                finally:
+                    await upstream.aclose()
+
+            return StreamingResponse(
+                _iter_upstream(),
+                status_code=upstream.status_code,
+                headers=response_headers,
+                media_type=upstream.headers.get("content-type"),
+            )
+
         upstream = await client.request(
             method=request.method,
             url=f"{normalised_backend}/{path}",
@@ -117,9 +181,7 @@ def create_proxy_app(
         response_headers = {
             name: value
             for name, value in upstream.headers.items()
-            if name.lower()
-            not in HOP_BY_HOP_HEADERS
-            | {"content-length", "content-encoding", "access-control-allow-origin"}
+            if name.lower() not in filtered_header_names
         }
         response_headers["X-Content-Type-Options"] = "nosniff"
         return Response(
@@ -152,4 +214,4 @@ if __name__ == "__main__":
     raise SystemExit(main())
 
 
-__all__ = ["MAX_REQUEST_BYTES", "create_proxy_app", "main"]
+__all__ = ["MAX_REQUEST_BYTES", "create_proxy_app", "main", "request_wants_sse_stream"]

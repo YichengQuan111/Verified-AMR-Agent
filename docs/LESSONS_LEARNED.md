@@ -923,8 +923,44 @@
 ## 2026-08-31 · 非流式日志里 `prompt eval time` 印在请求结束；TTFT 不能用 launch 到该行的间隔
 
 - 现象：若把 `launch_slot` 到 `prompt eval time` 日志行的时间差当成 TTFT，会得到约 16s，和整次 `total time` 几乎一样。
-- 原因：llama.cpp 在生成结束后才打印 `prompt eval time`/`eval time`/`total time`。真正的 prefill 结束时刻是 `prompt processing, progress = 1.00`，或该字段本身的毫秒值。
-- 最终解决：TTFT 用 launch→progress=1.00；无 progress 行（前缀命中）时用 `prompt eval time` 的毫秒值。命中率用 `1 - prompt_eval_tokens/prompt_tokens`。
-- 后续避免：不要把模型 total time 或案例墙钟标成 TTFT。对外表必须同时写命中率，关缓存应为 0。
+- 原因：llama.cpp 在生成结束后才打印 `prompt eval time`/`eval time`/`total time`。当时误以为 `progress=1.00` 才是 Prefill 结束。
+- 当时解决（**已作废**）：TTFT 用 launch→progress=1.00；无 progress 行时用 `prompt eval time` 回填。
+- 后续避免：见 2026-09-01 条目。不要再引用 8/31 JSON 里的 TTFT 数字；Prefill 与命中率仍可用。
+
+## 2026-09-01 · rounded `progress=1.00` 不能作为 Prefill/TTFT 完成信号
+
+- 现象：旧统计把 `prompt processing, progress = 1.00` 当作 TTFT 终点，得到的 TTFT 中位数比 Prefill 中位数还低（约提前 110–264 ms）。没有 progress 时又把 `TTFT = prompt eval time`，并误判为 prefix KV 命中。
+- 原因：progress 只保留两位小数，且该日志在下一批 Prompt token **之前**打印。当前 llama.cpp 还可能把最后约 4 个 Prompt token 单独处理，因此 `(N-4)/N` 已可能显示成 `1.00`，Prefill 实际尚未结束。progress 默认约 3 秒才打一条，短 Prefill 没有 progress 不等于缓存命中。生产 `ModelProvider` 使用 `stream=false`，非流式响应也测不到客户端首 token。
+- 最终解决：真实 TTFT 定义为客户端 `perf_counter` 下“发出请求 → 第一个非空生成 `delta.content`”。只在 `evals.perf` Benchmark 使用 `stream=true`；生产网关保持非流式。Prefill 只用最终 `prompt eval time`。缺失 TTFT 时输出 `null` 和原因，禁止用 Prefill 回填。安全代理对 `stream=true` 做 SSE 透传，否则测到的是 E2E。请求与日志用串行 + 文件偏移关联，错配则 Prefill 缺失。
+- 后续避免：不要把 progress、缺少 progress、或非流式整包 JSON 的到达时间写成 TTFT。旧 `llm_only_cache_metrics.json` 的 TTFT 列必须标作废；Prefill 1.44× 与案例 E2E 1.10× 仍可引用。
+
+## 2026-09-01 · 当前 llama.cpp 日志不打 `n_prompt`，不能据此放弃命中率
+
+- 现象：9/1 重跑 PEVR 时 `tmp/llama-server.err.log` 的 `launch_slot_` 行没有 `n_prompt`/`n_past`，若只认这两个字段，133 次调用的命中率会全部变成未知。
+- 原因：当前 Fast 启动参数下 verbosity=3 仍不打印 `n_prompt`。缓存命中时 `prompt eval time` 只统计未命中 KV 的 token，`total time` 的 token 数也是 prefill+decode，不含已缓存前缀。
+- 最终解决：用同一次 task 的 `stop processing: n_tokens` 减去 `eval time` 的生成 token，得到 Prompt 长度，再减 `prompt eval` token 得到缓存命中。没有 progress 仍然不得判为命中。
+- 后续避免：不要因为日志缺 `n_prompt` 就把命中率写成 0 或缺失后用 progress 代替。核对时应用模型调用次数对齐 `prompt eval time` 条数（本次 133/133）。
+
+## 2026-09-01 · 测 PEVR TTFT 必须换评测 Provider，不能改生产 `stream=false`
+
+- 现象：生产 `ModelProvider` 整包返回，客户端收不到首 token；若为了指标把 `"stream": False` 改掉，业务路径和评测路径会缠在一起。
+- 原因：真实 TTFT 只能来自 SSE 第一个非空 `delta.content`。PEVR 节点走 `generate_structured`，还要保留 Schema 校验和一次修复。
+- 最终解决：新增仅评测使用的 `TtftEvalProvider`，覆盖 `_request_completion` 发 `stream=true`，默认关闭，需 `--measure-ttft` 才替换。生产网关不变。
+- 后续避免：不要把 TTFT 探针设成仓库默认，也不要在生产 `provider.py` 里加流式开关。无 `--run` 的 `pevr-ttft` CLI 不得自行开跑 60 例。
+
+## 2026-09-01 · 正式 EvalReport 仍是 60 例；llm36 实验不能改 Schema 配额
+
+- 现象：只跑 36 个 LLM 例时，`EvalReport.cases` 的 `min_length=60` 会让正常构造失败。
+- 原因：P0-18 正式身份就是完整 60 例；缩短配额会让离线/在线发布报告失去机器校验。
+- 最终解决：实验路径用 `EvalReport.model_construct` 落盘，并写 `experiment_scope=llm36`、`official_p018_publish=false`。数据集指纹仍按 60 例计算。
+- 后续避免：不要为了实验把 `min_length` 改成 36。引用本次数字时必须标明不是正式 P0-18 发布分数。
+
+## 2026-09-01 · 流式 TTFT 略高于 Prefill 才正常；Harness 调用次数可以比 TTFT 样本多 1
+
+- 现象：两侧 TTFT p50 都比 Prefill p50 高约 100–120ms；Harness `model_call_count=133`，流式样本 132。
+- 原因：TTFT 含鉴权代理与到首个生成 delta 的网络；Prefill 只是服务端 `prompt eval time`。少的 1 条来自失败例 `p018-exception-004`（`TOOL_BUDGET_EXHAUSTED`）计了 3 次调用、只录到 2 条流式完成。
+- 最终解决：百分位只用 132 条有效流式样本；缺失不得用 Prefill 回填。把 TTFT>Prefill 的小差距当成预期，而不是旧 `progress=1.00` 那种 TTFT<Prefill。
+- 后续避免：不要因为 133≠132 就用日志 Prefill 补那一条。不要把案例墙钟 1.16× 写成 TTFT 1.55×。
+
 
 

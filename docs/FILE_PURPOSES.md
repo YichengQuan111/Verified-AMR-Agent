@@ -1291,6 +1291,69 @@ Fast 运行。新增/修改的核心 Python 已补中文模块说明、docstring
 | 生成物 | `tmp/p018_pevr_cache_compare_20260831/` | 2026-08-31 生产 PEVR 有/无 `cache_prompt` 对照：`cache_on` 报告 `p018-online-8d791bd33c57957b`，`cache_off` 报告 `p018-online-1d5bc152914699d0`，汇总 SHA-256=`01D9C737…D5B59BB`。`llm_only_cache_metrics.json` 从 llama.cpp 日志重算仅 LLM 案例的 TTFT/prefill/命中率/端到端。本步无核心代码注释需求。 | 不得覆盖 8/30 对照目录，也不得当作新的正式 P0-18 发布报告。 |
 | 修改 | `README.md`、`docs/HANDOFF_CONTEXT.md`、`docs/LESSONS_LEARNED.md` | README 增加仅 LLM 案例的 TTFT/prefill/命中率/端到端表；交接与教训同步口径。 | GitHub 首页实验阅读者。 |
 
+## 2026-09-01：修正 TTFT 口径并落地可复现 Benchmark
+
+本步核心 Python 补充了中文模块/函数注释，说明为何 `progress=1.00` 不能当首 token、以及生产非流式与 Benchmark 流式的边界。C++ / 数据库 / Alembic 未改。
+
+| 变更 | 文件 | 作用 | 下游影响 |
+|---|---|---|---|
+| 新建 | `evals/perf/`（`contracts.py` `stream_events.py` `llama_log.py` `stats.py` `client.py` `benchmark.py` `legacy.py` `llm36.py` `cli.py` `__init__.py` `__main__.py`） | 正式 TTFT/Prefill/E2E 契约、流式首 token 解析、llama.cpp Prefill 解析、串行 Benchmark、旧数据作废、以及 36 LLM 案例事后汇总。公共评测包，不进入生产 `ModelProvider`。 | 后续缓存对照与延迟报告必须走此入口。 |
+| 新建 | `scripts/run_ttft_benchmark.py`、`scripts/parse_llama_timing.py` | 薄封装，分别进入 `evals.perf benchmark` / `parse-log`。 | 人工或 Agent 复现实验。 |
+| 新建 | `docs/LLM_LATENCY_METRICS.md` | 指标定义、禁止项、样本关联、旧 TTFT 作废说明。 | 对外引用延迟数字前先读此文。 |
+| 新建 | `tests/unit/test_ttft_metrics.py`、`tests/unit/test_pevr_llm_latency.py` | 覆盖首 token、role/空 delta、无文本、超时、非流式不回填、progress=1.00 提前、缺 progress 非命中、breaker 排除、错配、百分位、生产 `stream=False`、代理 SSE 透传。 | 防止旧误判回流。 |
+| 修改 | `services/model_gateway/secure_proxy.py` | JSON `stream: true` 时 SSE 透传，否则仍整包缓冲。生产非流式行为不变。 | Benchmark 经 8080 才能看到真实首 token。 |
+| 修改 | `services/model_gateway/provider.py` | 仅注释：生产保持 `stream=False`，TTFT 走 `evals.perf`。请求体未改。 | 业务调用契约不变。 |
+| 修改 | `README.md`、`evals/README.md`、`docs/HANDOFF_CONTEXT.md`、`docs/LESSONS_LEARNED.md` | 作废 8/31 TTFT 列，保留 Prefill 1.44× 与案例 E2E 1.10×；登记 Benchmark 入口。 | 首页与评测读者。 |
+| 生成物 | `tmp/p018_pevr_cache_compare_20260831/llm_only_cache_metrics.json` | **不覆盖**。其中 TTFT 字段标为不可引用；Prefill/命中率/案例 E2E 仍有效。 | 用 `restate-legacy` 另写 `llm_only_cache_metrics.ttft_withdrawn.json`。 |
+| 生成物 | `tmp/p018_pevr_cache_compare_20260831/llm_only_cache_metrics.ttft_withdrawn.json`、`tmp/ttft_live_smoke.json`、`tmp/ttft_cache_compare_live.json` | 作废声明与 2026-09-01 流式小样本证据，不是源码。 | 不得把短 Prompt 的 4× TTFT 加速写成正式 PEVR 结论。 |
+
+## 2026-09-01：重跑有缓存 36 LLM 例 PEVR
+
+本步核心 Python 补充了中文模块/函数注释，说明为何必须跑完整 60 例再筛选 LLM 子集，以及 TTFT 在生产非流式路径上保持缺失。C++ / 数据库 / Alembic 未改。
+
+| 变更 | 文件 | 作用 | 下游影响 |
+|---|---|---|---|
+| 新建 | `evals/perf/llm36.py` | 从 P0-18 在线报告筛选 `model_call_count>0` 的 36 例，汇总案例墙钟，并从 llama.cpp 日志增量提取 Prefill/命中率；TTFT 恒为 `null`。 | `python -m evals.perf summarize-pevr-llm`。 |
+| 修改 | `evals/perf/cli.py` | 增加 `summarize-pevr-llm` 子命令，支持 `--log-offset`。 | 复现 36 LLM 指标，不改生产路径。 |
+| 修改 | `evals/perf/llama_log.py` | 解析 `stop processing: n_tokens`；当前 llama.cpp 不打 `n_prompt` 时用 `n_tokens − eval_tokens` 估 Prompt 长度。仍禁止用缺 progress 当命中。 | Prefill 命中率复现。 |
+| 修改 | `tests/unit/test_pevr_llm_latency.py` | 覆盖 36 例筛选、TTFT 不回填、release 行命中推断。 | 防止再把 sidecar 算进 LLM 墙钟。 |
+| 修改 | `docs/HANDOFF_CONTEXT.md`、`docs/FILE_PURPOSES.md`、`docs/LESSONS_LEARNED.md`、`docs/LLM_LATENCY_METRICS.md`、`evals/README.md`、`README.md` | 登记本次实测与口径。 | 后续 Agent 不得覆盖 8/30、8/31 目录。 |
+| 生成物 | `tmp/p018_pevr_llm36_20260901/`（`p018_online_eval.json` / `.md` / `p018_online_progress.jsonl` / `llm36_metrics.json` / `run_meta.json`） | 2026-09-01 有缓存重跑证据。报告 `p018-online-de5a1394eb9709f9`。不是新的正式 P0-18 发布报告。 | 不得覆盖 8/30 或 8/31 对照目录。 |
+
+## 2026-09-01：评测专用 PEVR TTFT 路径
+
+本步核心 Python 补充了中文模块/函数注释，说明为何 TTFT 探针不能改生产 `stream=false`，以及默认关闭、需显式 `--measure-ttft` 才替换 Provider。C++ / 数据库 / Alembic 未改。本步无在线实测。
+
+| 变更 | 文件 | 作用 | 下游影响 |
+|---|---|---|---|
+| 新建 | `evals/perf/ttft_provider.py` | `TtftEvalProvider` 覆盖 `_request_completion` 为流式并记录 TTFT；`select_eval_provider` 默认仍返回生产 `ModelProvider`。 | 仅在线 Harness 在开关打开时使用。 |
+| 修改 | `evals/perf/client.py` | `complete_stream` 可转发 `response_format`，以便探针复现结构化节点请求。 | PEVR JSON Schema 生成。 |
+| 修改 | `evals/perf/contracts.py` | `LatencySample.from_dict` 从落盘 JSON 还原样本。 | `summarize-pevr-llm` 读取探针产物。 |
+| 修改 | `evals/perf/llm36.py` `evals/perf/cli.py` | 无探针时 TTFT 仍为 null；有 `pevr_ttft_metrics.json` 时才填流式百分位。新增 `pevr-ttft` 子命令，无 `--run` 不启动评测。 | 后续 36 LLM TTFT 汇总。 |
+| 修改 | `evals/p018/online.py` `evals/p018/run_eval.py` | 默认非流式；`--measure-ttft` 才换探针，并按 case 绑定 `case_id`、写出 TTFT 产物。 | P0-19 默认行为不变。 |
+| 修改 | `scripts/run_p018_online_eval.ps1` | 可选 `-MeasureTtft`，默认关闭。 | 人工开跑 TTFT 轮。 |
+| 新建 | `scripts/run_pevr_ttft_eval.py` | 进入 `evals.perf pevr-ttft`；无 `--run` 只打印命令。 | 避免误启动 60 例。 |
+| 新建 | `tests/unit/test_pevr_ttft_path.py` | 默认关闭、CLI 不跑、探针记录首 token、超时不回填、不走 SDK `stream=false`。 | 防止探针泄漏进生产路径。 |
+| 修改 | `tests/unit/test_pevr_llm_latency.py` `tests/unit/test_ttft_metrics.py` | 探针样本可进入 36 例汇总；`response_format` 随流式请求转发。 | 回归。 |
+| 修改 | `docs/HANDOFF_CONTEXT.md`、`docs/FILE_PURPOSES.md`、`docs/LESSONS_LEARNED.md`、`docs/LLM_LATENCY_METRICS.md`、`evals/README.md` | 登记路径与“尚未开跑”。 | 后续 Agent 不得把本次当成已测 TTFT。 |
+
+## 2026-09-01：36 LLM 例 PEVR 开关缓存 + 流式 TTFT 对照
+
+本步核心 Python 补充了中文模块/函数注释，说明为何实验可以按固定 36 个 LLM case_id 筛选、正式 `EvalReport` 仍要求 60 例、以及 TTFT 只能来自评测探针。C++ / 数据库 / Alembic 未改。
+
+| 变更 | 文件 | 作用 | 下游影响 |
+|---|---|---|---|
+| 修改 | `evals/perf/llm36.py` | 冻结 36 个 LLM `case_id`，提供 `filter_llm_cases_by_id`；正式身份仍是 60 例。 | `--llm-only` 与 `compare-cache`。 |
+| 修改 | `evals/p018/online.py` | `llm_only` 只执行 36 例；数据集指纹仍按 60；36 例报告用 `model_construct`，标明 `experiment_scope=llm36`。 | 不得当成正式 P0-18 发布报告。 |
+| 修改 | `evals/p018/run_eval.py` | 新增 `--llm-only`；默认关闭。 | 在线实验入口。 |
+| 新建 | `evals/perf/cache_compare.py` | breaker → cache_off → breaker → cache_on；断言 TTFT 未用 Prefill/`progress=1.00` 回填。 | `python -m evals.perf compare-cache`。 |
+| 修改 | `evals/perf/cli.py` | 增加 `compare-cache` 子命令。 | 复现本次对照。 |
+| 修改 | `tests/unit/test_pevr_ttft_path.py` | 覆盖 36 ID 筛选、`--llm-only` 默认关、拒绝 Prefill/progress 回填。 | 防止口径回退。 |
+| 修改 | `docs/HANDOFF_CONTEXT.md`、`docs/FILE_PURPOSES.md`、`docs/LESSONS_LEARNED.md`、`docs/LLM_LATENCY_METRICS.md`、`evals/README.md`、`README.md` | 登记实测数字与不得覆盖的目录。 | 后续引用 TTFT 以本对照为准。 |
+| 生成物 | `tmp/p018_pevr_llm36_ttft_cache_20260901/` | 2026-09-01 流式 TTFT 有/无缓存对照。汇总 SHA-256=`3D683EED…2B00CE`。不是正式 P0-18 发布报告。 | 不得覆盖 8/30、8/31、`tmp/p018_pevr_llm36_20260901/`。 |
+| 生成物 | `tmp/llama-server.err.log.pre_20260901_ttft_compare.bak` | 重启 Fast 前备份的旧 llama 日志（启动器会截断 `llama-server.err.log`）。 | 保留 8/31、9/1 非流式重跑日志。 |
+
+
 
 
 
