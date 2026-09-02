@@ -158,7 +158,6 @@ generate_structured(messages, PydanticModel)
 以下文件仍属于此前手动完成的 P0-00 / P0-02 或数据库准备，本次没有改动其内容：
 
 - `compose.yaml`
-- `Start_End_Database.txt`
 - `docs/AMR_Agent_P0技术路线与实施ToDo.docx`
 - `docs/scope.md`
 - `docs/scope_changes.md`

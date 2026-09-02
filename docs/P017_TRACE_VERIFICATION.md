@@ -69,14 +69,14 @@ Markdown 明确写出结论来自固定入口退出码和逐 case 解析结果�
 
 ## 验证命令
 
-    & 'E:\Anaconda\envs\torch128\python.exe' -m pytest tests\unit\test_p017_trace.py tests\unit\test_p017_validation.py -q -p no:cacheprovider
-    & 'E:\Anaconda\envs\torch128\python.exe' -m pytest tests\unit\test_p012_tools.py tests\unit\test_p013_pevr.py tests\unit\test_p014_checkpoint.py -q -p no:cacheprovider
-    & 'E:\Anaconda\envs\torch128\python.exe' scripts\export_schemas.py
+    python -m pytest tests\unit\test_p017_trace.py tests\unit\test_p017_validation.py -q -p no:cacheprovider
+    python -m pytest tests\unit\test_p012_tools.py tests\unit\test_p013_pevr.py tests\unit\test_p014_checkpoint.py -q -p no:cacheprovider
+    python scripts\export_schemas.py
     & '.\scripts\run_smoke.ps1'
 
 真实仿真入口可独立执行：
 
-    & 'E:\Anaconda\envs\torch128\python.exe' -m services.validation.simulation_entry
+    python -m services.validation.simulation_entry
 
 该入口在 P0-17 验收中实际返回退出码 0，结果 status=completed、
 validation_result.status=valid、error_count=0；完整 stdout 是运行证据，不登记为源码文件。

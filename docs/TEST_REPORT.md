@@ -1,7 +1,7 @@
 # P0-20 最终测试与验收报告
 
 基准日期：2026-08-21  
-项目根目录：`C:\Users\QYC\Documents\AMR_Agent`
+项目根目录：仓库根目录（本机绝对路径见 [`LOCAL_ENV.md`](LOCAL_ENV.md)）
 
 本报告只记录实际执行过的命令和观察结果。自动生成的 JSON/Markdown/JSONL 放在 `tmp/`，不登记为源码职责。
 
@@ -35,22 +35,22 @@
 - P0-18：独立 `evaluate_oracle()`，未知键 fail closed。本步 `.\scripts\run_p018_eval.ps1 -OutputDir .\tmp\p020_release_p018` 为 60/60、`report_id=p018-85eaad378d39c29d`。
 - P0-19：离线 `offline_independent_oracle` 本步 Plan-and-Execute 52/60、遗留 react 槽位 53/60、PEVR 60/60，`report_id=p019-cf6986ed9cc65f8e`。在线独立 ReAct 对照是 `p0-19.online.v2` 报告 `p019-online-5bf27026e1607cfe`：ReAct/Plan-and-Execute/PEVR 全例符合 46/60、52/60、59/60，异常终态 6/10、3/10、9/10，七项零容忍均为 0。旧 `p019-online-45906c9d5366a0e9` 因复用 PEVR 图且只做一次 retry，已作废。
 - 真实 RAG holdout：Recall@K=1、MRR=1、Precision@K=0.236364、nDCG@K=1、citation=1、answerability=1、ACL=0；坏阈值退出码 2。Precision/nDCG 使用唯一文档+章节二元 oracle，不可答例不参与排序指标。
-- 演示视频：仓库内可播放媒体文件仍为 0。
+- 演示 GIF：`docs/media/demo_v0.gif`，已嵌入根目录 `README.md`。
 
 ## 4. 代码/契约回归
 
 实际命令与结果：
 
-- `E:\Anaconda\envs\torch128\python.exe -m pytest tests\unit\test_p020_deployment.py -q -p no:cacheprovider`：3 passed。
+- `python -m pytest tests\unit\test_p020_deployment.py -q -p no:cacheprovider`：3 passed。
 - `.\scripts\run_smoke.ps1`：依赖/工具链/迁移/数据库/Qdrant 检查通过；pytest **272 passed**、2 warnings；CTest **38/38**。
-- `E:\Anaconda\envs\torch128\python.exe -m pytest tests\integration -q -p no:cacheprovider`：18 passed、1 个同源弃用警告。
+- `python -m pytest tests\integration -q -p no:cacheprovider`：18 passed、1 个同源弃用警告。
 - `docker compose -f .\compose.yaml config`：通过；最终三服务均为 healthy。
 - `Invoke-RestMethod http://127.0.0.1:8000/openapi.json`：通过；运行时标题 `AMR Agent API`，公开 12 个已实现路径，与 [`API.md`](API.md) 一致。
-- `E:\Anaconda\envs\torch128\python.exe .\scripts\smoke_llm_structured.py`：20/20；`smoke_p005_prompts.py --profile fast`：5/5。两者是在线节点/结构化冒烟，不替代 P0-13 全链路。
+- `python .\scripts\smoke_llm_structured.py`：20/20；`smoke_p005_prompts.py --profile fast`：5/5。两者是在线节点/结构化冒烟，不替代 P0-13 全链路。
 
 ## 5. 仍存在的限制
 
 - Compose API 默认关闭启动期模型门禁，原因是宿主 Fast 绑定 Windows `127.0.0.1:8080`；真实模型链路必须运行宿主机 `check_model_gateway.py --profile fast`。
 - 宿主 Fast 由 `start_fast_secure.ps1` 提供；长上下文吞吐仍受本机 GPU 影响，预算耗尽会 fail closed。
 - P0-18/P0-19 的离线口径、Smart 禁用、P0 范围边界必须原样保留。
-- 正式演示视频尚未交付；未在本步 HITL dispatch 窗口做真实 OS 强杀；七类异常未再注入真实 C++ 主链。因此 Release Verdict 仍不能写成 PASS。
+- 未在本步 HITL dispatch 窗口做真实 OS 强杀；七类异常未再注入真实 C++ 主链。因此 Release Verdict 仍不能写成 PASS。

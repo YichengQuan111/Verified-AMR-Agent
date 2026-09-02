@@ -1,9 +1,9 @@
 # AMR Agent 项目交接上下文
 
-最后更新：2026-09-01
-当前实现里程碑记录：P0-00～P0-20 代码已落地。P0-19 在线对照为 **`p0-19.online.v2` 独立 ReAct**：报告 `p019-online-5bf27026e1607cfe`，digest `5bf27026e1607cfe…d82f456`，ReAct/Plan-and-Execute/PEVR 全例符合 **46/60、52/60、59/60**，异常终态 **6/10、3/10、9/10**，七项零容忍均为 0，`react_uses_pevr_runner=false`。策略 id 已由 `fixed_workflow` 改名为 `plan_execute`（枚举保留只读别名，旧制品仍可读）；该报告产出于改名前，重跑会得到新的 report_id/digest。下文历史步骤日志中的 `Fixed`/`固定 Workflow` 指的就是同一条 Plan-and-Execute 臂，按原文保留。旧 `p0-19.online.v1` 一次 retry 已作废，不能 `--resume`。离线独立执行仍作恢复额度回归；其中 react 槽位是 `max_retries=1` 遗留夹具。Smart 继续硬禁用。2026-08-21 原审计文档仍是 FAIL 快照，H06 正式演示视频仍未补。
+最后更新：2026-09-02
+当前实现里程碑记录：P0-00～P0-20 代码已落地。P0-19 在线对照为 **`p0-19.online.v2` 独立 ReAct**：报告 `p019-online-5bf27026e1607cfe`，digest `5bf27026e1607cfe…d82f456`，ReAct/Plan-and-Execute/PEVR 全例符合 **46/60、52/60、59/60**，异常终态 **6/10、3/10、9/10**，七项零容忍均为 0，`react_uses_pevr_runner=false`。策略 id 已由 `fixed_workflow` 改名为 `plan_execute`（枚举保留只读别名，旧制品仍可读）；该报告产出于改名前，重跑会得到新的 report_id/digest。下文历史步骤日志中的 `Fixed`/`固定 Workflow` 指的就是同一条 Plan-and-Execute 臂，按原文保留。旧 `p0-19.online.v1` 一次 retry 已作废，不能 `--resume`。离线独立执行仍作恢复额度回归；其中 react 槽位是 `max_retries=1` 遗留夹具。Smart 继续硬禁用。2026-08-21 原审计文档仍是 FAIL 快照。2026-09-02 起对外演示只提供 GIF（`docs/media/demo_v0.gif`），不再录制正式演示视频；`AUDIT-H06` 按产品决定关闭。
 RAG 评测器现已在真实 12 例 holdout 上补充章节级 Precision@K=`0.236364`、nDCG@K=`1.0`；Recall@K/MRR/Section Recall/Citation/Answerability 仍为 1，ACL leak=0。
-当前下一步：2026-09-01 已完成 **36 LLM 例 PEVR 有/无 `cache_prompt` + 流式 TTFT** 对照（`tmp/p018_pevr_llm36_ttft_cache_20260901/`），**不是**正式 P0-18 60 例发布分数。TTFT 来自评测探针首个非空 SSE delta，未用 Prefill / `progress=1.00` 回填。生产 `ModelProvider` 仍是 `stream=false`。8/31 非流式 Prefill 1.44× / 墙钟 1.10× 仍可引用，不要用本次流式 Prefill 1.57× 去覆盖那张表。不要覆盖 8/30、8/31 或 `tmp/p018_pevr_llm36_20260901/`。P0-05 Prompt `1.2.0`，ReAct `2.1.0`。P0-19 v2 三策略在线 180 仍是前缀缓存前的成绩。Fast **未停止**。不要改生产非流式契约。Smart 对照仍须用户明确启用。
+当前下一步：2026-09-01 已完成 **36 LLM 例 PEVR 有/无 `cache_prompt` + 流式 TTFT** 对照（`tmp/p018_pevr_llm36_ttft_cache_20260901/`），**不是**正式 P0-18 60 例发布分数。TTFT 来自评测探针首个非空 SSE delta，未用 Prefill / `progress=1.00` 回填。生产 `ModelProvider` 仍是 `stream=false`。8/31 非流式 Prefill 1.44× / 墙钟 1.10× 仍可引用，不要用本次流式 Prefill 1.57× 去覆盖那张表。不要覆盖 8/30、8/31 或 `tmp/p018_pevr_llm36_20260901/`。P0-05 Prompt `1.2.0`，ReAct `2.1.0`。P0-19 v2 三策略在线 180 仍是前缀缓存前的成绩。Fast **未停止**。不要改生产非流式契约。Smart 对照仍须用户明确启用。不要再要求补录演示视频。
 
 
 ## 1. 文档用途与维护要求
@@ -27,20 +27,14 @@ RAG 评测器现已在真实 12 例 holdout 上补充章节级 Precision@K=`0.23
 
 ### 3.1 固定路径
 
-| 项目 | 路径或地址 |
+本机 Python、MSVC/CMake/Ninja、llama.cpp、Embedding 等绝对路径集中在 [`docs/LOCAL_ENV.md`](LOCAL_ENV.md)，不在公开说明文档中重复。发布 Fast 入口是 `scripts/start_local.ps1 -StartFast`。
+
+| 项目 | 地址 |
 |---|---|
-| 项目根目录 | `C:\Users\QYC\Documents\AMR_Agent` |
-| Python | `E:\Anaconda\envs\torch128\python.exe`（Python 3.12.13） |
-| CMake | `E:\BuildingTools\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe` |
-| Ninja | `E:\BuildingTools\Common7\IDE\CommonExtensions\Microsoft\CMake\Ninja\ninja.exe` |
-| MSVC 初始化 | `E:\BuildingTools\Common7\Tools\VsDevCmd.bat` |
-| Fast 模型脚本 | `E:\Llama.cpp\start-qwen3.6-agent.cmd` |
-| Smart 模型脚本 | `E:\Llama.cpp\start-qwen3.8-agent.cmd`（暂时禁用，不得启动） |
 | 模型 API | `http://127.0.0.1:8080/v1` |
 | FastAPI | `http://127.0.0.1:8000` |
 | PostgreSQL | `localhost:5432` / database `amr_agent` |
 | Qdrant | `http://localhost:6333` |
-| Embedding 模型 | `E:\Llama.cpp\Embedding`（Qwen3-Embedding-0.6B） |
 
 ### 3.2 当前外部状态
 
@@ -198,9 +192,9 @@ RAG 评测器现已在真实 12 例 holdout 上补充章节级 Precision@K=`0.23
 公共 JSON Schema 新增：`KnowledgeChunk.schema.json`、`RetrievalResult.schema.json`、`RetrievalResponse.schema.json`。运行入口：
 
 ```powershell
-E:\Anaconda\envs\torch128\python.exe scripts\index_warehouse_knowledge.py
-E:\Anaconda\envs\torch128\python.exe scripts\query_warehouse_knowledge.py "问题" --role viewer
-E:\Anaconda\envs\torch128\python.exe -m evals.rag.run_eval --output tmp\p007_rag_eval.json
+python scripts\index_warehouse_knowledge.py
+python scripts\query_warehouse_knowledge.py "问题" --role viewer
+python -m evals.rag.run_eval --output tmp\p007_rag_eval.json
 ```
 
 ### 4.9 P0-08：C++ Hungarian 任务分配
@@ -275,7 +269,7 @@ P0-08 最终结果：
 公共 Schema 导出命令：
 
 ```powershell
-E:\Anaconda\envs\torch128\python.exe scripts\export_schemas.py
+python scripts\export_schemas.py
 ```
 
 结果：命令退出码为 0，P0-04 八个、P0-05 四个、P0-07 三个公共 Schema，共 15 个文件成功生成；测试校验提交 JSON 与当前 `model_json_schema()` 完全一致。
@@ -2414,4 +2408,16 @@ DAG 使用 `agent.planning.dag.topological_sort()` 中的 Kahn 算法：计算�
 - 外部服务当前状态：Fast **未停止**：llama-server PID=516 `127.0.0.1:18080`，鉴权代理 PID=23044 `127.0.0.1:8080`。Smart 未启动。Compose `amr-api`/`amr-postgres`/`amr-qdrant` healthy。
 - 已知限制/风险：本对照是流式评测路径，通过率不能自动写成正式 P0-18 发布分数。Prefill 来自流式 `timings.prompt_ms`，不要用 1.573× 覆盖 8/31 非流式日志 Prefill 1.44×。`EvalReport` 正式配额仍是 60。需要释放 GPU 时再停 Fast。
 - 下一步直接需要的信息：不要覆盖 `tmp/p018_pevr_llm36_ttft_cache_20260901/`、8/30、8/31、`tmp/p018_pevr_llm36_20260901/`。若要正式 60 例身份的 TTFT，须另开新目录跑完整 60，且标明 `official_p018_publish`。生产网关保持非流式。
+
+### 2026-09-02 · 演示改为 GIF；本机路径移出公开文档
+
+- 完成：按用户指令，不再录制正式演示视频，对外只提供 GIF。删除根目录临时文件 `tmp_extract_memory.py`、`tmp_memory_extract.txt`、`Start_End_Database.txt`。本机绝对路径从公开文档移入 [`docs/LOCAL_ENV.md`](LOCAL_ENV.md)，`.env.example` 改为注释示例。修复 `docs/PROJECT_OVERVIEW.md` 迁移后变成 `docs/docs/...` 的相对链接。本步无核心代码注释需求（仅文档与删除临时文件）。
+- 未完成：未 `git add`/`commit`/`push`（用户未要求）。未改脚本里的本机回退默认值。未跑 `.\scripts\run_smoke.ps1`（无运行时代码变更）。
+- 公共契约变化：无新 Pydantic Schema、枚举、数据库字段或 CLI。
+- 关键决策：`AUDIT-H06` 按产品决定关闭，不再把正式演示视频当作发布阻塞项。历史交接日志中的 H06 缺口按当时事实保留。
+- 实际验证：用脚本核对 `docs/PROJECT_OVERVIEW.md` 内相对链接均指向现存文件；抽查公开文档不再出现 `E:\Anaconda\...` 命令。
+- 未运行：pytest、CTest、在线评测、Compose 重启。
+- 外部服务当前状态：本步未启动或停止 Fast / Compose。
+- 已知限制/风险：`scripts/run_smoke.ps1` 等仍可能把本机 Python 当作未设置 `AMR_PYTHON_EXE` 时的回退值；那不是公开文档。
+- 下一步直接需要的信息：不要再要求补录 `.mp4/.mov` 演示。本机路径只改 `LOCAL_ENV.md` 或 `.env`。
 

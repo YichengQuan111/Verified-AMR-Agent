@@ -38,9 +38,9 @@ FastAPI Router → Application Service → Repository → SQLAlchemy ORM → Pos
 在项目根目录运行：
 
 ```powershell
-E:\Anaconda\envs\torch128\python.exe scripts\migrate_database.py upgrade
-E:\Anaconda\envs\torch128\python.exe scripts\migrate_database.py check
-E:\Anaconda\envs\torch128\python.exe scripts\migrate_database.py current
+python scripts\migrate_database.py upgrade
+python scripts\migrate_database.py check
+python scripts\migrate_database.py current
 ```
 
 `upgrade` 可重复执行并只向前迁移。脚本故意不提供 downgrade；首个迁移的 `downgrade()` 也会明确抛错，防止误删八张核心表。后续字段变化应新增前向迁移，不能修改已执行迁移或用自动降级删表。

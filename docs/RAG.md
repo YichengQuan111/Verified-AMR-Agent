@@ -23,7 +23,7 @@ Markdown + Front Matter
   → documents.status=indexed / indexed_at（仅在 Qdrant 成功后）
 ```
 
-当前模型固定路径为 `E:\Llama.cpp\Embedding`。维度由实际 SentenceTransformer 模型动态读取；2026-08-20 实测为 1024，代码和配置都没有写死该数字。
+Embedding 模型路径由 `RAG_EMBEDDING_MODEL_PATH` 配置，本机值见 [LOCAL_ENV.md](LOCAL_ENV.md)。维度由实际 SentenceTransformer 模型动态读取；2026-08-20 实测为 1024，代码和配置都没有写死该数字。
 
 `RAG 示例问题` section 仍保留在冻结源文档中，但不生成检索 chunk。该 section 只有问题清单，没有规则答案；把它当成证据会导致问题词面命中自身并抬高无答案分数。
 
@@ -92,7 +92,7 @@ Precision/nDCG/citation/answerability/ACL 只在 test+attack holdout 上计算�
 
 ```powershell
 docker compose up -d postgres qdrant
-& 'E:\Anaconda\envs\torch128\python.exe' .\scripts\migrate_database.py check
+python .\scripts\migrate_database.py check
 ```
 
 重建正式索引：
@@ -100,26 +100,26 @@ docker compose up -d postgres qdrant
 ```powershell
 $env:HF_HUB_OFFLINE = '1'
 $env:TRANSFORMERS_OFFLINE = '1'
-& 'E:\Anaconda\envs\torch128\python.exe' .\scripts\index_warehouse_knowledge.py
+python .\scripts\index_warehouse_knowledge.py
 ```
 
 不删除 collection、只替换本批 doc ID 的旧 points：
 
 ```powershell
-& 'E:\Anaconda\envs\torch128\python.exe' .\scripts\index_warehouse_knowledge.py --no-rebuild
+python .\scripts\index_warehouse_knowledge.py --no-rebuild
 ```
 
 执行一次查询：
 
 ```powershell
-& 'E:\Anaconda\envs\torch128\python.exe' .\scripts\query_warehouse_knowledge.py `
+python .\scripts\query_warehouse_knowledge.py `
   'AMR 当前电量 25% 属于哪个区间？' --role viewer --top-k 5
 ```
 
 运行固定 20 例评测：
 
 ```powershell
-& 'E:\Anaconda\envs\torch128\python.exe' -m evals.rag.run_eval `
+python -m evals.rag.run_eval `
   --output .\tmp\p007_rag_eval.json
 ```
 

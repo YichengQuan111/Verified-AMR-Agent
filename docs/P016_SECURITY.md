@@ -104,7 +104,7 @@ Checkpoint 中保留已完成工具结果、当前等待任务、HITLInterrupt �
 ## 6. 实际验证
 
 - P0-16 专项：tests/unit/test_p016_security.py，8 passed。
-- 全量 Python：E:\Anaconda\envs\torch128\python.exe -m pytest -q -p no:cacheprovider，
+- 全量 Python：python -m pytest -q -p no:cacheprovider，
   215 passed，1 warning；唯一 warning 是既有 jieba/pkg_resources 弃用提示。
 - 仓库 smoke：scripts/run_smoke.ps1 通过；环境/依赖检查通过，PostgreSQL 8 张核心表
   缺失数 0，Qdrant amr_warehouse_knowledge 健康，Python 215 passed、1 warning，

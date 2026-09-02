@@ -83,9 +83,9 @@ run_id + plan_version + task_id
 ## 5. 验证入口
 
 ```powershell
-E:\Anaconda\envs\torch128\python.exe -m pytest tests\unit\test_p014_checkpoint.py -q -p no:cacheprovider
-E:\Anaconda\envs\torch128\python.exe -m pytest tests\unit\test_p014_replanner.py -q -p no:cacheprovider
-E:\Anaconda\envs\torch128\python.exe -m pytest tests\integration\test_p014_postgres.py -q -p no:cacheprovider
+python -m pytest tests\unit\test_p014_checkpoint.py -q -p no:cacheprovider
+python -m pytest tests\unit\test_p014_replanner.py -q -p no:cacheprovider
+python -m pytest tests\integration\test_p014_postgres.py -q -p no:cacheprovider
 ```
 
 真实 PostgreSQL 集成测试只清理自身生成的 `run_id`，不使用 SQLite 冒充数据库，也不

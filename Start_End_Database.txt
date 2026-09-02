@@ -1,6 +1,0 @@
-docker compose up -d
-PostgreSQL
-            localhost:5432
-Qdrant
-            localhost:6333
-docker compose down

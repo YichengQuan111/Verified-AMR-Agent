@@ -15,9 +15,9 @@
   → 带引用的证据报告
 ```
 
-当前代码范围覆盖 **P0-00～P0-20** 的实现与 2026-08-21 发布审计修复。发布入口已强制验签 Principal 与 HITL；Compose 默认不再公开数据库/Qdrant 端口或弱密钥。本机已复验 HITL 三连、全量 smoke、RAG holdout 与 P0-18/P0-19；**正式演示视频仍缺失**，因此不能写成 Release PASS。Smart Profile 仍为硬禁用。
+当前代码范围覆盖 **P0-00～P0-20** 的实现与 2026-08-21 发布审计修复。发布入口已强制验签 Principal 与 HITL；Compose 默认不再公开数据库/Qdrant 端口或弱密钥。本机已复验 HITL 三连、全量 smoke、RAG holdout 与 P0-18/P0-19。对外演示资产是 README 嵌入的 GIF（`docs/media/demo_v0.gif`）。未在 HITL dispatch 窗口做真实 OS 强杀、七类异常未再注入真实 C++ 主链，因此不能写成 Release PASS。Smart Profile 仍为硬禁用。
 
-部署、架构、HTTP 契约、最终验证和演示入口见：[启动手册](docs/SERVICES_STARTUP.md)、[架构图](docs/ARCHITECTURE.md)、[API 文档](docs/API.md)、[测试报告](docs/TEST_REPORT.md)、[3 分钟演示脚本](docs/DEMO_SCRIPT.md)。
+部署、架构、HTTP 契约、最终验证和演示入口见：[启动手册](SERVICES_STARTUP.md)、[架构图](ARCHITECTURE.md)、[API 文档](API.md)、[测试报告](TEST_REPORT.md)、[3 分钟演示脚本](DEMO_SCRIPT.md)。
 
 ## 1. 固定范围
 
@@ -29,7 +29,7 @@
 - Python/C++ 确定性代码负责约束、分配、路径、冲突处理、仿真与验证。
 - P0 不包含 ROS 2、Gazebo、真实底盘、CBS/ECBS、MILP、多 Agent、Redis、Celery、Kubernetes 或任意代码执行 Sandbox。
 
-完整边界以 [docs/scope.md](docs/scope.md) 和 [P0 技术路线](docs/AMR_Agent_P0技术路线与实施ToDo.docx) 为准。
+完整边界以 [docs/scope.md](scope.md) 和 [P0 技术路线](AMR_Agent_P0技术路线与实施ToDo.docx) 为准。
 
 ## 2. 当前完成状态
 
@@ -55,7 +55,7 @@
 | P0-17 | 已完成 | Trace/受控验证报告。 |
 | P0-18 | 离线 oracle 回归 | 固定 60 例现消费独立 oracle（含 mutation fail-closed）。这是离线契约回归，不是 60 例在线 LLM 质量分。 |
 | P0-19 | 在线独立 ReAct 对照 | `p0-19.online.v2`：共享前置后分别进入固定图、独立 ReAct 循环、生产 PEVR。v1 一次 retry 已作废。离线独立执行仍作恢复额度回归；Replay 仅可视化。Smart 延期。 |
-| P0-20 | 部署已加固；演示视频缺失 | Compose 需要外部 secrets，数据面仅内部网络，API 绑定 loopback。正式演示视频仍不存在。 |
+| P0-20 | 部署已加固；演示以 GIF 交付 | Compose 需要外部 secrets，数据面仅内部网络，API 绑定 loopback。对外演示为 README 嵌入的 GIF。 |
 
 明确尚未实现：真实 ROS/底盘接入；P0-15 不注册任意自动补偿工具，副作用未知
 状态仍必须人工核对。单独构造 `ToolRegistry` 时状态/审批仍默认使用进程内适配器；
@@ -97,7 +97,7 @@ BEGIN → INSERT runs → flush → INSERT events → flush → COMMIT
 
 真实 PostgreSQL 故障注入已经验证：第二个 INSERT 失败时，第一个已经发出的 INSERT 也会回滚。
 
-详细设计见 [docs/DATABASE.md](docs/DATABASE.md)。
+详细设计见 [docs/DATABASE.md](DATABASE.md)。
 
 ## 4. 当前 HTTP 接口
 
@@ -142,6 +142,7 @@ BEGIN → INSERT runs → flush → INSERT events → flush → COMMIT
 | `docs/TEST_REPORT.md` | P0-20 最终实际验证命令、服务状态、3 次在线闭环、P0-18/P0-19 指标与限制。 |
 | `docs/DEMO_SCRIPT.md` | P0-20 3 分钟演示台词、命令、观察点和失败恢复/证据报告展示顺序。 |
 | `docs/RESUME_FACTS.md` | 仅汇总已经实现且已经实测的可对外表述事实；明确 Smart 与离线评测限制。 |
+| `docs/LOCAL_ENV.md` | 本机绝对路径与 `AMR_PYTHON_EXE` / `FAST_ARTIFACT_ROOT` / `RAG_EMBEDDING_MODEL_PATH`；不作为对外项目介绍。 |
 | `domains/amr_warehouse/` | 仓储领域契约和种子数据。 |
 | `migrations/` | Alembic 前向迁移。 |
 | `tests/` | 单元、契约、真实 PostgreSQL 集成和 C++ 冒烟测试。 |
@@ -149,17 +150,18 @@ BEGIN → INSERT runs → flush → INSERT events → flush → COMMIT
 
 ## 6. 固定环境
 
-| 组件 | 路径或地址 |
+本机 Python、MSVC/CMake/Ninja、llama.cpp 与 Embedding 的绝对路径见 [LOCAL_ENV.md](LOCAL_ENV.md) 和根目录 `.env.example` 注释。公开命令一律写 `python`；若 PATH 不是项目环境，先设置 `AMR_PYTHON_EXE`。
+
+| 组件 | 地址 |
 |---|---|
-| 项目 Python | `E:\Anaconda\envs\torch128\python.exe`（Python 3.12） |
 | PostgreSQL | `localhost:5432` / database `amr_agent` |
 | Qdrant | `http://localhost:6333` |
-| Embedding | `E:\Llama.cpp\Embedding`（Qwen3-Embedding-0.6B，维度动态读取） |
+| Embedding | 本地 Qwen3-Embedding-0.6B（路径由 `RAG_EMBEDDING_MODEL_PATH` 配置，维度动态读取） |
 | FastAPI | `http://127.0.0.1:8000` |
 | Compose API | `http://127.0.0.1:8000`（容器内端口 `8000`，默认不把宿主 Fast 作为启动硬依赖） |
 | 模型 API | `http://127.0.0.1:8080/v1` |
-| Fast 模型脚本 | `E:\Llama.cpp\start-qwen3.6-agent.cmd` |
-| Smart 模型脚本 | `E:\Llama.cpp\start-qwen3.8-agent.cmd`（暂时禁用，不得启动） |
+| Fast 模型 | `scripts/start_local.ps1 -StartFast`（内部走 `start_fast_secure.ps1`） |
+| Smart 模型 | 暂时禁用，不得启动 |
 
 不要假设 Docker、数据库、Qdrant 或 Qwen 已经运行；每次新会话都应重新检查。
 
@@ -168,8 +170,8 @@ BEGIN → INSERT runs → flush → INSERT events → flush → COMMIT
 ### 7.1 安装锁定依赖
 
 ```powershell
-Set-Location 'C:\Users\QYC\Documents\AMR_Agent'
-& 'E:\Anaconda\envs\torch128\python.exe' -m pip install `
+# 在仓库根目录执行
+python -m pip install `
   -r .\requirements.lock `
   -r .\requirements-dev.lock
 ```
@@ -188,10 +190,10 @@ Set-Location 'C:\Users\QYC\Documents\AMR_Agent'
 .\scripts\start_local.ps1 -StartFast
 ```
 
-Fast 仍由 `E:\Llama.cpp\start-qwen3.6-agent.cmd` 在 Windows 宿主机启动；Compose API 不复制模型文件，也不引入远程模型依赖。独立核对数据库迁移时执行：
+Fast 仍由 `scripts/start_local.ps1 -StartFast` 在 Windows 宿主机启动；Compose API 不复制模型文件，也不引入远程模型依赖。独立核对数据库迁移时执行：
 
 ```powershell
-& 'E:\Anaconda\envs\torch128\python.exe' .\scripts\migrate_database.py check
+python .\scripts\migrate_database.py check
 ```
 
 `check` 必须报告 8 张核心表全部存在；不要执行手工删表或 `docker compose down -v`。
@@ -225,19 +227,19 @@ Fast 仍由 `E:\Llama.cpp\start-qwen3.6-agent.cmd` 在 Windows 宿主机启动�
 需要真实模型时，只启动 Fast，再运行宿主机网关预检；Compose API 可以先独立健康：
 
 ```powershell
-& 'E:\Anaconda\envs\torch128\python.exe' .\scripts\check_model_gateway.py
+python .\scripts\check_model_gateway.py
 Invoke-RestMethod 'http://127.0.0.1:8000/health'
 ```
 
 Compose 默认 `MODEL_GATEWAY_VALIDATE_ON_STARTUP=false`，只用于把容器健康与宿主机模型生命周期解耦；真实模型链路仍必须通过 `check_model_gateway.py --profile fast`。如需宿主机开发 API，才使用本地 Uvicorn，并先启动 Fast：
 
 ```powershell
-& 'E:\Anaconda\envs\torch128\python.exe' -m uvicorn apps.api.main:app --host 127.0.0.1 --port 8000
+python -m uvicorn apps.api.main:app --host 127.0.0.1 --port 8000
 ```
 
 不要启动或选择 Smart；环境变量不能绕过其 `enabled=false` 门禁。
 
-完整启动顺序见 [docs/SERVICES_STARTUP.md](docs/SERVICES_STARTUP.md)。
+完整启动顺序见 [docs/SERVICES_STARTUP.md](SERVICES_STARTUP.md)。
 
 ## 8. P0-07 仓储 SOP RAG
 
@@ -250,11 +252,11 @@ P0-07 已实现以下闭环：
 - 交付索引器、查询 CLI、混合检索器、ACL 过滤器和 20 个 RAG 评测样例。
 - 能计算 Recall@K、MRR、Section Recall@K、Precision@K、nDCG@K、引用正确率；跨角色泄漏必须为 0。
 
-索引器复用 P0-06 `documents` 表和 `DocumentService`，没有新增数据库 revision。检索结果可转换为 P0-05 `ContextEvidence(source_type="rag")`。详细设计、阈值校准、运行命令和当前 20 例结果见 [docs/RAG.md](docs/RAG.md)。
+索引器复用 P0-06 `documents` 表和 `DocumentService`，没有新增数据库 revision。检索结果可转换为 P0-05 `ContextEvidence(source_type="rag")`。详细设计、阈值校准、运行命令和当前 20 例结果见 [docs/RAG.md](RAG.md)。
 
 ```powershell
-& 'E:\Anaconda\envs\torch128\python.exe' .\scripts\index_warehouse_knowledge.py
-& 'E:\Anaconda\envs\torch128\python.exe' -m evals.rag.run_eval `
+python .\scripts\index_warehouse_knowledge.py
+python -m evals.rag.run_eval `
   --output .\tmp\p007_rag_eval.json
 ```
 
@@ -264,7 +266,7 @@ P0-07 已实现以下闭环：
 
 分配器计算 `distance + lateness_risk + priority_bonus + battery_risk + load_penalty` 的显式加权代价；预计完成后低于 15% 安全余量、电量不高于 20% 的普通新任务、非空闲/非健康/离线车辆、未满足依赖和缺失工位都返回 `INF` 与稳定原因码。矩形 AMR—订单矩阵通过 dummy 行/列表示未匹配，不会把 INF 组合返回为真实分配。
 
-详细请求/响应字段、原因码、阈值、退出码和范围边界见 [docs/TASK_ALLOCATOR.md](docs/TASK_ALLOCATOR.md)。编译后可直接执行：
+详细请求/响应字段、原因码、阈值、退出码和范围边界见 [docs/TASK_ALLOCATOR.md](TASK_ALLOCATOR.md)。编译后可直接执行：
 
 ```powershell
 Get-Content .\request.json -Raw | .\build\cpp\services\planner_cpp\task_allocator_cli.exe --algorithm hungarian
@@ -276,7 +278,7 @@ P0-08 只用 Manhattan 距离做分配代价，不处理障碍、单向边、时
 
 `route_planner` 使用 `(x, y, heading, t)` 时间扩展状态，前进、转向和等待都有明确代价；生产 A* 使用曼哈顿启发式，独立 Dijkstra 只作为正确性基线。多 AMR 按订单优先级、发布时间和稳定 ID 规划，路径写入 `(cell,t)` 与 `(edge,t)` 预约表，禁止顶点冲突和交换边冲突。障碍、禁行边、单向边、边界和有限 `max_time` 都是硬约束，无解时返回 `status=infeasible` 且失败路线不携带路径。
 
-请求/响应字段、动作时间语义、退出码和调用示例见 [docs/ROUTE_PLANNER.md](docs/ROUTE_PLANNER.md)。编译后可直接执行：
+请求/响应字段、动作时间语义、退出码和调用示例见 [docs/ROUTE_PLANNER.md](ROUTE_PLANNER.md)。编译后可直接执行：
 
 ```powershell
 Get-Content .\route_request.json -Raw | .\build\cpp\services\planner_cpp\route_planner_cli.exe --algorithm astar
@@ -286,9 +288,9 @@ Get-Content .\route_request.json -Raw | .\build\cpp\services\planner_cpp\route_p
 
 `fleet_plan_validator` 对地图、P0-04 AMR/订单字段、工位位置、载荷和 P0-09 路径做独立确定性复核，检查任务依赖、时间窗、载荷、电量安全余量、禁行区、工位容量、最小安全距离、顶点冲突和交换边冲突。路线规划器返回的 `status`、LLM 提供的“已验证”字段或 Prompt 文本都只是外部输入，不能替代这一步；未知的 `llm_valid`、`skip_validation` 等旁路字段会在 JSON 边界被拒绝。
 
-每个非法计划返回 `status=invalid` 和按约束分组的稳定错误码；证据包含相关任务/订单、AMR、坐标、时间、观测值/上限和路径索引，便于定位与审计。错误码全集由 [docs/FLEET_PLAN_VALIDATOR.md](docs/FLEET_PLAN_VALIDATOR.md) 和 `--error-dictionary` 输出共同定义。
+每个非法计划返回 `status=invalid` 和按约束分组的稳定错误码；证据包含相关任务/订单、AMR、坐标、时间、观测值/上限和路径索引，便于定位与审计。错误码全集由 [docs/FLEET_PLAN_VALIDATOR.md](FLEET_PLAN_VALIDATOR.md) 和 `--error-dictionary` 输出共同定义。
 
-请求/响应字段、离散时间语义、退出码和边界见 [docs/FLEET_PLAN_VALIDATOR.md](docs/FLEET_PLAN_VALIDATOR.md)。编译后可直接执行：
+请求/响应字段、离散时间语义、退出码和边界见 [docs/FLEET_PLAN_VALIDATOR.md](FLEET_PLAN_VALIDATOR.md)。编译后可直接执行：
 
 ```powershell
 Get-Content .\fleet_plan_request.json -Raw | .\build\cpp\services\planner_cpp\fleet_plan_validator_cli.exe --validate
@@ -305,10 +307,10 @@ Get-Content .\fleet_plan_request.json -Raw | .\build\cpp\services\planner_cpp\fl
 侧还维护订单、工位、充电站状态，并提供不进入正常 Agent 工具白名单的
 `FaultInjection`（`offline`、`battery_drain`、`stuck`）供后续 Eval 使用。
 
-详细字段和边界见 [docs/AMR_SIMULATOR.md](docs/AMR_SIMULATOR.md)。专项测试：
+详细字段和边界见 [docs/AMR_SIMULATOR.md](AMR_SIMULATOR.md)。专项测试：
 
 ```powershell
-& 'E:\Anaconda\envs\torch128\python.exe' -m pytest tests\unit\test_p011_simulator.py -q
+python -m pytest tests\unit\test_p011_simulator.py -q
 ```
 
 ## 13. P0-12 九个白名单工具
@@ -335,10 +337,10 @@ result = registry.execute(
 
 分配、A* 和 Validator 只通过固定 exe 与 JSON stdin/stdout 调用；不会接受 Shell、
 任意路径、任意命令或 `faults` 字段。故障注入仍仅供 P0-11 Eval 接口使用。完整
-契约和固定 suite/case 列表见 [docs/P012_TOOLS.md](docs/P012_TOOLS.md)。专项测试：
+契约和固定 suite/case 列表见 [docs/P012_TOOLS.md](P012_TOOLS.md)。专项测试：
 
 ```powershell
-& 'E:\Anaconda\envs\torch128\python.exe' -m pytest tests\unit\test_p012_tools.py -q
+python -m pytest tests\unit\test_p012_tools.py -q
 ```
 
 ## 14. P0-13 PEVR 正常闭环
@@ -352,19 +354,19 @@ Validator 和 Python 仿真。`dispatch_simulation` 的 `requires_approval=true`
 真实 Fast 验收入口（先 `.\scripts\start_local.ps1 -StartFast`，并准备 operator JWT）：
 
 ```powershell
-& 'E:\Anaconda\envs\torch128\python.exe' scripts\run_p013_e2e.py `
+python scripts\run_p013_e2e.py `
   --run-id p020-demo-live `
   --jwt-token-file .\tmp\operator.jwt `
   --output .\tmp\p013_e2e_wait.json
 # 首次必须退出码 3 / waiting_approval；再用同一 run_id 与 approval_id：
-& 'E:\Anaconda\envs\torch128\python.exe' scripts\run_p013_e2e.py `
+python scripts\run_p013_e2e.py `
   --run-id p020-demo-live `
   --jwt-token-file .\tmp\operator.jwt `
   --approve-and-resume <approval_id> `
   --output .\tmp\p013_e2e_result.json
 ```
 
-不要再使用 `--approve-dispatch`。报告包含 RAG citations、plan version、工具证据、阶段和仿真指标。详细边界见 [docs/P013_PEVR.md](docs/P013_PEVR.md)。
+不要再使用 `--approve-dispatch`。报告包含 RAG citations、plan version、工具证据、阶段和仿真指标。详细边界见 [docs/P013_PEVR.md](P013_PEVR.md)。
 
 ## 15. P0-14 Checkpoint、幂等与局部重规划
 
@@ -382,10 +384,10 @@ P0-14 在不新增数据库表的前提下复用 P0-06 的 `runs.run_state_snaps
 专项测试：
 
 ```powershell
-& 'E:\Anaconda\envs\torch128\python.exe' -m pytest tests\unit\test_p014_checkpoint.py tests\unit\test_p014_replanner.py tests\integration\test_p014_postgres.py -q -p no:cacheprovider
+python -m pytest tests\unit\test_p014_checkpoint.py tests\unit\test_p014_replanner.py tests\integration\test_p014_postgres.py -q -p no:cacheprovider
 ```
 
-详细恢复顺序、数据库事务边界和已知限制见 [docs/P014_CHECKPOINT.md](docs/P014_CHECKPOINT.md)。
+详细恢复顺序、数据库事务边界和已知限制见 [docs/P014_CHECKPOINT.md](P014_CHECKPOINT.md)。
 
 ## 16. P0-15 故障分类与终止策略
 
@@ -397,12 +399,12 @@ Checkpoint 冲突直接 human；未知错误 fatal。总工具步数、总时长
 
 局部重规划通过 P0-14 `LocalReplanner` 和同一 Checkpoint Store 落账，保留已完成任务及
 Effect Ledger，不重复副作用；完整分类表、预算边界、状态字段和验收命令见
-[docs/P015_FAULTS.md](docs/P015_FAULTS.md)。
+[docs/P015_FAULTS.md](P015_FAULTS.md)。
 
 专项测试：
 
 ```powershell
-& 'E:\Anaconda\envs\torch128\python.exe' -m pytest tests\unit\test_p015_faults.py tests\integration\test_p015_fault_recovery.py -q -p no:cacheprovider
+python -m pytest tests\unit\test_p015_faults.py tests\integration\test_p015_fault_recovery.py -q -p no:cacheprovider
 ```
 
 ## 17. P0-16 RBAC、HITL 与安全边界
@@ -431,7 +433,7 @@ handler。
 
 详细契约、审批状态机、数据库复用和限制见 docs/P016_SECURITY.md。
 
-专项测试：E:\Anaconda\envs\torch128\python.exe -m pytest tests\unit\test_p016_security.py -q -p no:cacheprovider
+专项测试：python -m pytest tests\unit\test_p016_security.py -q -p no:cacheprovider
 
 ## 18. P0-17 Trace、受控验证与证据报告
 
@@ -446,7 +448,7 @@ evidence_refs；Checkpoint 恢复和 PostgreSQL events 表都保留该链路。�
 
 专项测试：
 
-    & 'E:\Anaconda\envs\torch128\python.exe' -m pytest tests\unit\test_p017_trace.py tests\unit\test_p017_validation.py -q -p no:cacheprovider
+    python -m pytest tests\unit\test_p017_trace.py tests\unit\test_p017_validation.py -q -p no:cacheprovider
 
 ## 19. P0-18 60 例自动评测
 
@@ -461,12 +463,12 @@ GGUF、Prompt、九个 ToolSpec 和输入文件 SHA-256；正确拒绝和意外�
 ```
 
 输出为 `tmp/p018_eval/p018_eval.json` 和 `tmp/p018_eval/p018_eval.md`。详细字段、指标、
-限制和验收命令见 [docs/P018_EVAL.md](docs/P018_EVAL.md)。
+限制和验收命令见 [docs/P018_EVAL.md](P018_EVAL.md)。
 
 专项测试：
 
 ```powershell
-& 'E:\Anaconda\envs\torch128\python.exe' -m pytest tests\unit\test_p018_eval.py -q -p no:cacheprovider
+python -m pytest tests\unit\test_p018_eval.py -q -p no:cacheprovider
 ```
 
 ## 20. P0-19 策略对照实验
@@ -483,29 +485,29 @@ P0-19 复用 P0-18 的 60 例。离线默认是 `offline_independent_oracle` 恢
 ```
 
 产物写入 `tmp/p019_online_strategy_compare/`。详细口径和限制见
-[docs/P019_STRATEGY_COMPARISON.md](docs/P019_STRATEGY_COMPARISON.md)。Qwen3.8 Smart
+[docs/P019_STRATEGY_COMPARISON.md](P019_STRATEGY_COMPARISON.md)。Qwen3.8 Smart
 对照已延期而非完成：本步未启动、未测试，不阻塞 P0-19，延期项为
 `P0-19-SMART-COMPARISON`。
 
 专项测试：
 
 ```powershell
-& 'E:\Anaconda\envs\torch128\python.exe' -m pytest tests\unit\test_p019_compare.py -q -p no:cacheprovider
+python -m pytest tests\unit\test_p019_compare.py -q -p no:cacheprovider
 ```
 
 ## 21. P0-20 部署与演示收口
 
-Compose 服务和宿主机模型的边界、健康检查、服务顺序、停止方式与故障定位见 [docs/SERVICES_STARTUP.md](docs/SERVICES_STARTUP.md)。系统数据流见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)，已实现 HTTP 契约见 [docs/API.md](docs/API.md)。
+Compose 服务和宿主机模型的边界、健康检查、服务顺序、停止方式与故障定位见 [docs/SERVICES_STARTUP.md](SERVICES_STARTUP.md)。系统数据流见 [docs/ARCHITECTURE.md](ARCHITECTURE.md)，已实现 HTTP 契约见 [docs/API.md](API.md)。
 
-3 分钟演示按以下顺序覆盖：自然语言订单 → 本地 Fast 理解 → RAG 证据 → DAG → C++ 分配/路径/验证 → 仿真 → Observation 验证与异常恢复 → 带引用证据报告；可复现实测命令、3 次闭环和限制见 [docs/DEMO_SCRIPT.md](docs/DEMO_SCRIPT.md) 与 [docs/TEST_REPORT.md](docs/TEST_REPORT.md)。可写入简历的事实只取 [docs/RESUME_FACTS.md](docs/RESUME_FACTS.md)，其中不把离线 oracle/Trace Replay 当在线模型质量，也不把 Smart 写成完成。
+3 分钟演示按以下顺序覆盖：自然语言订单 → 本地 Fast 理解 → RAG 证据 → DAG → C++ 分配/路径/验证 → 仿真 → Observation 验证与异常恢复 → 带引用证据报告；可复现实测命令、3 次闭环和限制见 [docs/DEMO_SCRIPT.md](DEMO_SCRIPT.md) 与 [docs/TEST_REPORT.md](TEST_REPORT.md)。可写入简历的事实只取 [docs/RESUME_FACTS.md](RESUME_FACTS.md)，其中不把离线 oracle/Trace Replay 当在线模型质量，也不把 Smart 写成完成。
 
 ## 22. 协作与交接入口
 
 开始任何新任务前，按顺序阅读：
 
-1. [AGENTS.md](AGENTS.md)：全仓库强制规则。
-2. [docs/HANDOFF_CONTEXT.md](docs/HANDOFF_CONTEXT.md)：唯一跨会话事实入口。
-3. [docs/FILE_PURPOSES.md](docs/FILE_PURPOSES.md)：所有新增/修改文件的长期职责登记。
+1. [AGENTS.md](../AGENTS.md)：全仓库强制规则。
+2. [docs/HANDOFF_CONTEXT.md](HANDOFF_CONTEXT.md)：唯一跨会话事实入口。
+3. [docs/FILE_PURPOSES.md](FILE_PURPOSES.md)：所有新增/修改文件的长期职责登记。
 4. 与当前工作包相关的 Scope、技术路线、接口和测试。
 
 推进任何工作包时，都必须同步：

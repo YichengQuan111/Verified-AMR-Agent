@@ -3,24 +3,24 @@
 本文件是仓库内 LLM 调用延迟的唯一口径说明。实现入口：
 
 ```powershell
-E:\Anaconda\envs\torch128\python.exe -m evals.perf benchmark --repeats 2 --output tmp\ttft_benchmark.json
-E:\Anaconda\envs\torch128\python.exe -m evals.perf parse-log --log tmp\llama-server.err.log
-E:\Anaconda\envs\torch128\python.exe -m evals.perf restate-legacy
-E:\Anaconda\envs\torch128\python.exe -m evals.perf summarize-pevr-llm --report tmp\p018_pevr_llm36_20260901\p018_online_eval.json --log-offset 9398
-E:\Anaconda\envs\torch128\python.exe -m evals.perf pevr-ttft
-E:\Anaconda\envs\torch128\python.exe -m evals.perf compare-cache --output-root tmp\p018_pevr_llm36_ttft_cache_20260901
+python -m evals.perf benchmark --repeats 2 --output tmp\ttft_benchmark.json
+python -m evals.perf parse-log --log tmp\llama-server.err.log
+python -m evals.perf restate-legacy
+python -m evals.perf summarize-pevr-llm --report tmp\p018_pevr_llm36_20260901\p018_online_eval.json --log-offset 9398
+python -m evals.perf pevr-ttft
+python -m evals.perf compare-cache --output-root tmp\p018_pevr_llm36_ttft_cache_20260901
 ```
 
 PEVR 案例级 TTFT 需要显式打开评测探针（生产 `ModelProvider` 仍是 `stream=false`）。默认只打印命令，不会开跑：
 
 ```powershell
-E:\Anaconda\envs\torch128\python.exe -m evals.p018.run_eval --config evals\p018\online_config.json --output-dir tmp\p018_pevr_ttft --measure-ttft
+python -m evals.p018.run_eval --config evals\p018\online_config.json --output-dir tmp\p018_pevr_ttft --measure-ttft
 ```
 
 36 LLM 例有/无缓存对照（不是正式 60 例发布报告）：
 
 ```powershell
-E:\Anaconda\envs\torch128\python.exe -m evals.perf compare-cache --output-root tmp\p018_pevr_llm36_ttft_cache_20260901
+python -m evals.perf compare-cache --output-root tmp\p018_pevr_llm36_ttft_cache_20260901
 ```
 
 或 `python -m evals.perf pevr-ttft --run` 跑完整 60 例。产物是 `pevr_ttft_metrics.json` 与 `pevr_ttft_samples.jsonl`。

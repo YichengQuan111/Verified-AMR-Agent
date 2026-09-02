@@ -5,9 +5,9 @@
 ## 0:00–0:20：服务与边界
 
 ```powershell
-Set-Location 'C:\Users\QYC\Documents\AMR_Agent'
+# 在仓库根目录执行
 .\scripts\start_local.ps1
-& 'E:\Anaconda\envs\torch128\python.exe' .\scripts\check_model_gateway.py --profile fast
+python .\scripts\check_model_gateway.py --profile fast
 docker compose ps
 ```
 
@@ -16,7 +16,7 @@ docker compose ps
 ## 0:20–1:20：自然语言订单到确定性执行
 
 ```powershell
-& 'E:\Anaconda\envs\torch128\python.exe' .\scripts\run_p013_e2e.py `
+python .\scripts\run_p013_e2e.py `
   --run-id p020-demo-live-20260821 `
   --output .\tmp\p020_demo_live.json
 ```
@@ -35,7 +35,7 @@ docker compose ps
 ## 1:20–2:10：验证、异常恢复与安全边界
 
 ```powershell
-& 'E:\Anaconda\envs\torch128\python.exe' -m pytest `
+python -m pytest `
   tests\unit\test_p015_faults.py `
   tests\integration\test_p015_fault_recovery.py -q -p no:cacheprovider
 ```
@@ -58,7 +58,7 @@ $report.report | Select-Object run_id,final_status,plan_version,completed_order_
 .\scripts\run_p019_compare.ps1 -OutputDir .\tmp\p019_strategy_compare_p020_final
 ```
 
-口播：P0-18 的 60 例是离线确定性 oracle，现已消费独立 oracle，仍不是在线 LLM 质量分；P0-19 默认是三策略独立离线对照，Replay 只是可视化。正式演示视频尚未入库，本脚本不能替代可播放 artifact。简历只引用 [`RESUME_FACTS.md`](RESUME_FACTS.md)；Smart 仍禁用。
+口播：P0-18 的 60 例是离线确定性 oracle，现已消费独立 oracle，仍不是在线 LLM 质量分；P0-19 默认是三策略独立离线对照，Replay 只是可视化。循环演示看 README 中的 GIF。简历只引用 [`RESUME_FACTS.md`](RESUME_FACTS.md)；Smart 仍禁用。
 
 ## 真实连续闭环证据
 

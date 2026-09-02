@@ -14,7 +14,7 @@
 - 现象：本机 Anaconda `Library` 中能找到 Boost.JSON，但项目的固定 CMake 配置没有声明 Boost 根路径；直接依赖它会让换机器或后续 Python 环境变更时 CLI 无法构建。
 - 原因：跨语言边界只需要严格 JSON 的一个小子集，使用未锁定的环境路径会把运行时依赖和 Python 环境耦合，也无法满足“避免新增不必要依赖”的边界。
 - 最终解决：实现只覆盖本模块契约的严格 JSON 编解码器，拒绝重复键/未知字段/非有限数值，并将不可行矩阵的内部 INF 序列化为标准 JSON 字符串 `"INF"`。
-- 后续避免：若未来要替换第三方 JSON 库，必须先补固定版本、CMake 发现方式和离线构建验证；不能直接引用 `E:\Anaconda\Library` 等个人环境路径。
+- 后续避免：若未来要替换第三方 JSON 库，必须先补固定版本、CMake 发现方式和离线构建验证；不能直接引用本机 conda `Library` 等个人环境路径（见 [`LOCAL_ENV.md`](LOCAL_ENV.md)）。
 
 ## 2026-08-20 · 等待测试必须控制动作代价与替代动作
 
@@ -223,7 +223,7 @@
 
 - 现象：直接执行 PATH 中的 `python -m pytest` 落到 Anaconda base，因依赖缺失在收集阶段失败；文档渲染运行时虽然带 `python-docx`，却没有项目 pytest 依赖。
 - 原因：同一桌面会话同时存在项目环境和文档工具环境，依赖能力不同；省略解释器绝对路径会产生与代码无关的假失败。
-- 最终解决：仓库验证统一显式使用 `E:\Anaconda\envs\torch128\python.exe`；可移植 smoke 允许用参数或 `AMR_*` 环境变量覆盖 Python/CMake/Ninja/MSVC 路径，并把误用环境的收集失败与产品测试结果分开记录。
+- 最终解决：仓库验证通过 `AMR_PYTHON_EXE`（本机值见 [`LOCAL_ENV.md`](LOCAL_ENV.md)）或 smoke 参数覆盖 Python/CMake/Ninja/MSVC 路径，并把误用环境的收集失败与产品测试结果分开记录。
 - 后续避免：运行任何验收前先打印解释器和锁依赖报告；工具专用 runtime 只用于其技能任务，不能据其缺包判断仓库失败。
 
 ## 2026-08-21 · 非终态故障不能简单按 fault_id 永久去重

@@ -35,16 +35,10 @@
 
 ## 依赖与环境检查
 
-项目继续固定使用：
-
-```text
-E:\Anaconda\envs\torch128\python.exe
-```
-
-安装锁定的直接依赖：
+解释器由 `AMR_PYTHON_EXE` 指定，本机值见 [LOCAL_ENV.md](LOCAL_ENV.md)。公开命令写 `python`；若 PATH 不是项目环境，先设置该变量。
 
 ```powershell
-& 'E:\Anaconda\envs\torch128\python.exe' -m pip install `
+python -m pip install `
   -r .\requirements.lock `
   -r .\requirements-dev.lock
 ```
@@ -52,7 +46,7 @@ E:\Anaconda\envs\torch128\python.exe
 一条命令输出 Python、锁定包、CMake、Ninja 和 MSVC 路径及匹配状态：
 
 ```powershell
-& 'E:\Anaconda\envs\torch128\python.exe' .\scripts\check_environment.py
+python .\scripts\check_environment.py
 ```
 
 ## Python 与 C++ 冒烟测试

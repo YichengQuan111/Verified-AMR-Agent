@@ -35,11 +35,11 @@ Planner 的 `JsonValue` 在本地 Fast 模型上可能被写成有限的 `{type,
 首次运行必须停在 `waiting_approval`（退出码 3），再用同一 `run_id` 与 `approval_id` 批准恢复：
 
 ```powershell
-& 'E:\Anaconda\envs\torch128\python.exe' scripts\run_p013_e2e.py `
+python scripts\run_p013_e2e.py `
   --run-id p020-release-hitl-1-20260821-2028 `
   --jwt-token-file .\tmp\operator.jwt `
   --output tmp\p013_e2e_wait.json
-& 'E:\Anaconda\envs\torch128\python.exe' scripts\run_p013_e2e.py `
+python scripts\run_p013_e2e.py `
   --run-id p020-release-hitl-1-20260821-2028 `
   --jwt-token-file .\tmp\operator.jwt `
   --approve-and-resume <approval_id> `
@@ -66,8 +66,8 @@ Planner 的 `JsonValue` 在本地 Fast 模型上可能被写成有限的 `{type,
 ## 单元与回归
 
 ```powershell
-& 'E:\Anaconda\envs\torch128\python.exe' -m pytest tests\unit\test_p013_pevr.py -q -p no:cacheprovider
-& 'E:\Anaconda\envs\torch128\python.exe' scripts\export_schemas.py
+python -m pytest tests\unit\test_p013_pevr.py -q -p no:cacheprovider
+python scripts\export_schemas.py
 & '.\scripts\run_smoke.ps1'
 ```
 

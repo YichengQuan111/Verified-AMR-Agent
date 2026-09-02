@@ -5,7 +5,7 @@
 P0-07 的固定 20 例仓储 RAG 数据位于 `rag/cases.json`，执行入口为：
 
 ```powershell
-& 'E:\Anaconda\envs\torch128\python.exe' -m evals.rag.run_eval `
+python -m evals.rag.run_eval `
   --output .\tmp\p007_rag_eval.json
 ```
 
@@ -69,12 +69,12 @@ TTFT 必须用流式首 token 测量，不能用 llama.cpp `progress=1.00` 或 P
 生产 `ModelProvider` 仍是 `stream=false`。契约见 [docs/LLM_LATENCY_METRICS.md](../docs/LLM_LATENCY_METRICS.md)。
 
 ```powershell
-E:\Anaconda\envs\torch128\python.exe -m evals.perf benchmark --repeats 2 --output tmp\ttft_benchmark.json
-E:\Anaconda\envs\torch128\python.exe -m evals.perf benchmark --compare-cache --repeats 2
-E:\Anaconda\envs\torch128\python.exe -m evals.perf restate-legacy
-E:\Anaconda\envs\torch128\python.exe -m evals.perf summarize-pevr-llm --report tmp\p018_pevr_llm36_20260901\p018_online_eval.json --log-offset 9398
-E:\Anaconda\envs\torch128\python.exe -m evals.perf pevr-ttft
-E:\Anaconda\envs\torch128\python.exe -m evals.perf compare-cache --output-root tmp\p018_pevr_llm36_ttft_cache_20260901
+python -m evals.perf benchmark --repeats 2 --output tmp\ttft_benchmark.json
+python -m evals.perf benchmark --compare-cache --repeats 2
+python -m evals.perf restate-legacy
+python -m evals.perf summarize-pevr-llm --report tmp\p018_pevr_llm36_20260901\p018_online_eval.json --log-offset 9398
+python -m evals.perf pevr-ttft
+python -m evals.perf compare-cache --output-root tmp\p018_pevr_llm36_ttft_cache_20260901
 ```
 
 36 LLM 例有/无 `cache_prompt` 对照须显式 `--measure-ttft --llm-only`（不是正式 60 例发布报告）。2026-09-01 证据在 `tmp/p018_pevr_llm36_ttft_cache_20260901/`。

@@ -15,7 +15,7 @@ P0-18 提供统一的 `EvalHarness`、固定 60 例数据集和一条命令入�
 也可以显式指定项目解释器和输出目录：
 
 ```powershell
-& 'E:\Anaconda\envs\torch128\python.exe' -m evals.p018.run_eval `
+python -m evals.p018.run_eval `
   --output-dir .\tmp\p018_eval
 ```
 
@@ -101,7 +101,7 @@ P0-18 仍然是 `offline_deterministic_oracle`。新的 60/60 只证明离线契
 P0-18 专项测试为：
 
 ```powershell
-& 'E:\Anaconda\envs\torch128\python.exe' -m pytest `
+python -m pytest `
   tests\unit\test_p018_eval.py -q -p no:cacheprovider
 ```
 
@@ -164,7 +164,7 @@ zero tolerance 结果均保持既有口径：所有通过率为 1.0，七项零�
 或：
 
 ```powershell
-& 'E:\Anaconda\envs\torch128\python.exe' -m evals.p018.run_eval `
+python -m evals.p018.run_eval `
   --config evals\p018\online_config.json `
   --output-dir .\tmp\p018_online_eval
 ```
@@ -270,7 +270,7 @@ zero tolerance 结果均保持既有口径：所有通过率为 1.0，七项零�
 专项测试：
 
 ```powershell
-& 'E:\Anaconda\envs\torch128\python.exe' -m pytest `
+python -m pytest `
   tests\unit\test_p018_online.py tests\unit\test_p018_eval.py -q -p no:cacheprovider
 ```
 

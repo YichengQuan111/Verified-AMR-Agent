@@ -29,7 +29,7 @@
 5. `AUDIT-H01`、`AUDIT-H02`、`AUDIT-H03`：修复评测 oracle、RAG 退出门禁和策略对照后，重新生成可证明真实行为的 P0-18/P0-19 报告；否则发布指标不可引用。
 6. `AUDIT-H04`：固定并校验实际 Fast 模型/参数/文件哈希，保证发布报告能够证明运行的具体 artifact。
 7. `AUDIT-H05`：修复 release_time 前禁止移动导致的可行计划误判，并统一 Planner/Validator/Simulator 时间窗语义。
-8. `AUDIT-H06`：补齐 P0-20 正式演示视频及可核验 artifact；文字脚本不能替代明确交付物。
+8. `AUDIT-H06`：**2026-09-02 已关闭**。对外演示资产改为 GIF，不再要求正式演示视频。
 9. `AUDIT-H07`：在上述修复和复测后同步纠正 README、测试报告、演示稿和简历事实，撤下无法证明的能力与指标。
 
 ## 3. P0-00～P0-20 逐项验收矩阵
@@ -58,7 +58,7 @@
 | P0-17 Trace/验证报告 | PASS | 在线 Trace 序号、工具计数、时长、订单、仿真时间戳和报告指标独立重算一致；受控 pytest/CTest 白名单工作正常。 |
 | P0-18 60 例 Eval | FAIL | 命令返回 60/60，但 runner 不消费 oracle、若干分支自生成期望证据，注入样例出现确定性假通过，见 `AUDIT-H01`。 |
 | P0-19 策略对照 | FAIL | 实际为同一 P0-18 Trace 的标签/步数投影，不是三个独立策略执行，Token/资源/墙钟均未观测，见 `AUDIT-H02`。Smart 对照按用户要求不作为缺陷。 |
-| P0-20 部署/演示 | FAIL | 一键脚本与现有 Compose 健康检查可运行，容器也能访问宿主 Fast；但安全默认值、恢复/审批问题、依赖复现和演示视频缺失不满足发布收口，见 `AUDIT-C01`～`C04`、`AUDIT-H06`、`AUDIT-M02`。 |
+| P0-20 部署/演示 | FAIL | 一键脚本与现有 Compose 健康检查可运行，容器也能访问宿主 Fast；但安全默认值、恢复/审批问题和依赖复现不满足发布收口，见 `AUDIT-C01`～`C04`、`AUDIT-M02`。`AUDIT-H06` 已于 2026-09-02 按产品决定关闭（演示改为 GIF）。 |
 
 ## 4. P0-Critical
 
@@ -156,13 +156,13 @@
 
 ### AUDIT-H06：P0-20 要求的演示视频交付物不存在
 
-- **严重程度**：P1-High
+- **严重程度**：P1-High（**2026-09-02 关闭**：产品决定不再录制正式演示视频，对外演示改为仓库 GIF `docs/media/demo_v0.gif`，已嵌入 `README.md`。本条不再作为发布阻塞项。）
 - **涉及文件/函数**：正式 `docs/AMR_Agent_P0技术路线与实施ToDo.docx` 的 P0-20 交付物；`docs/DEMO_SCRIPT.md`；仓库发布资产。
-- **复现方式或证据**：递归搜索 `.mp4/.mov/.mkv/.webm/.avi`（排除 `.git/tmp`）返回 `demo_media_files=0`。仓库只有演示口播/命令脚本，没有视频文件、下载链接、artifact ID 或校验哈希。
-- **为什么违反当前设计/P0 要求**：P0-20 明确包含演示视频作为发布收口交付物；文字脚本不能替代可播放的真实演示证据。它直接影响发布质量与面试展示，虽不导致运行时错误，仍属 High。
-- **推荐修复方向**：在 Critical/High 功能修复后录制真实安全审批、正常闭环、异常恢复和报告证据；大文件可放发布制品仓库，但仓库必须保存稳定链接、版本、时长、录制 commit/report ID 与 SHA-256。
-- **修复后的验收方法**：从干净环境按链接可播放，内容与对应 commit/命令一致，展示的 run/trace/approval/effect 可在报告中核对；不得使用当前 legacy 审批轨迹冒充安全闭环。
-- **是否可能影响其他模块**：需要更新 README、DEMO_SCRIPT、TEST_REPORT 和 RESUME_FACTS；应最后执行，避免先录制已知错误行为。
+- **复现方式或证据**：2026-08-21 审计时递归搜索 `.mp4/.mov/.mkv/.webm/.avi`（排除 `.git/tmp`）返回 `demo_media_files=0`。当时仓库只有演示口播/命令脚本。
+- **为什么违反当时设计/P0 要求**：P0-20 曾把演示视频列为发布收口交付物。
+- **推荐修复方向（已作废）**：原建议在功能修复后录制真实闭环。
+- **修复后的验收方法（已替换）**：以 README 相对路径引用的 GIF 作为对外演示资产即可。
+- **是否可能影响其他模块**：已同步更新 README、PROJECT_OVERVIEW、DEMO_SCRIPT、TEST_REPORT、RESUME_FACTS 和交接文档。
 
 ### AUDIT-H07：README/报告/简历事实把组件回归或离线投影写成已完成能力与指标
 
@@ -213,7 +213,7 @@
 - `AUDIT-M01`：RunState 依赖闭包强化；发布前至少扫描现有 checkpoint，确认没有坏状态。
 - `AUDIT-M02`：字节级容器/依赖复现；如果 P0 发布仅限定当前演示机，可先固定当前镜像 digest和环境清单，再在 P1 完成第二机器复建。
 - `AUDIT-M03`：Fast API key/CORS；前提是发布期间严格保持 loopback、关闭不可信网页，并且 `AUDIT-C04` 已完成网络/凭据收口。
-- `AUDIT-H06` 不建议延期，因为它是 P0-20 明确交付物；若发布定义不包含对外演示资产，必须由产品 Scope 正式删除，而不能静默缺失。
+- `AUDIT-H06`：2026-09-02 已按产品决定关闭（演示改为 GIF），不再作为发布阻塞项。
 
 ## 8. 实际运行过的命令与结果
 
@@ -273,7 +273,7 @@
 | `docker compose config --quiet` | 退出码 0。 |
 | `.\scripts\start_local.ps1 -TimeoutSeconds 30` | 退出码 0；PostgreSQL/Qdrant/API 均 healthy；脚本未启动 Fast。 |
 | `docker compose ps` | 三服务 healthy；API/PG/Qdrant 端口均发布到 IPv4/IPv6 全接口。 |
-| 仓库视频文件递归搜索 | `demo_media_files=0`。 |
+| 仓库视频文件递归搜索 | 2026-08-21 当时 `demo_media_files=0`。2026-09-02 起对外演示改为 GIF，本项不再作为发布核验。 |
 
 本轮生成的临时审计 artifact 位于 `tmp/p0_audit_*`；它们是可删除生成物，不是源码交付物，也没有登记为公共契约。
 
@@ -284,7 +284,7 @@
 - **完整 OS 进程强杀矩阵**：本轮没有再次在 dispatch 多个时间窗执行强杀；现有 smoke 中的 P0-14 集成测试通过，但当前数据库外部 ID 冲突已使真实终态恢复失败。应在 `AUDIT-C02/C03` 修复后按每个事务窗口重跑。
 - **真实在线 Workflow/ReAct/PEVR 60×3**：仓库没有三个独立执行 adapter，现有命令只能 Trace Replay；不能把未执行写成通过。Smart 按用户要求保持禁用，不在未运行缺陷中扣分。
 - **干净 VM/第二台机器的无缓存部署**：未运行。删除现有 Docker volumes/cache 会改变用户环境且不是审查必要动作；当前仅验证已有环境的一键启动、Compose 配置和容器/宿主模型连通性。
-- **演示视频播放核验**：无文件或链接可核验。
+- **演示 GIF**：`docs/media/demo_v0.gif` 已嵌入 README；不再核验正式演示视频。
 
 ## 10. 发布复验总门槛
 
@@ -299,4 +299,4 @@
 7. P0-19 三策略为独立执行而非投影；Smart 继续不作为 P0 门槛。
 8. RAG 使用独立 holdout，坏阈值命令非零退出。
 9. 模型/脚本/参数/hash 进入版本证据，README、报告、简历事实与最终 artifact 完全一致。
-10. 演示视频和可复现部署制品齐全，Fast 最终停止状态或保留状态在交接中明确记录。
+10. 演示 GIF（`docs/media/demo_v0.gif`）已嵌入 README；可复现部署制品齐全，Fast 最终停止状态或保留状态在交接中明确记录。

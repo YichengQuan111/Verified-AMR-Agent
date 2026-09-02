@@ -11,7 +11,6 @@
 
 ```powershell
 cmake -S . -B build\cpp -G Ninja -DCMAKE_BUILD_TYPE=Release `
-  -DCMAKE_MAKE_PROGRAM=E:\BuildingTools\Common7\IDE\CommonExtensions\Microsoft\CMake\Ninja\ninja.exe `
   -DBUILD_TESTING=ON
 cmake --build build\cpp
 ctest --test-dir build\cpp -R "^fleet_validator_" --output-on-failure

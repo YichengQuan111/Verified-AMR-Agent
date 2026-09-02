@@ -59,7 +59,7 @@ P0-04 `Observation` 和 `SimulationEvent` 日志。`Observation.observed_at` 使
 ## 验证
 
 ```powershell
-& 'E:\Anaconda\envs\torch128\python.exe' -m pytest tests\unit\test_p011_simulator.py -q
+python -m pytest tests\unit\test_p011_simulator.py -q
 ```
 
 专项测试覆盖正常运输、完整状态迁移、充电速率与站点状态、低电量待充、离线

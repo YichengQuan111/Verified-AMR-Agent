@@ -1353,6 +1353,22 @@ Fast 运行。新增/修改的核心 Python 已补中文模块说明、docstring
 | 生成物 | `tmp/p018_pevr_llm36_ttft_cache_20260901/` | 2026-09-01 流式 TTFT 有/无缓存对照。汇总 SHA-256=`3D683EED…2B00CE`。不是正式 P0-18 发布报告。 | 不得覆盖 8/30、8/31、`tmp/p018_pevr_llm36_20260901/`。 |
 | 生成物 | `tmp/llama-server.err.log.pre_20260901_ttft_compare.bak` | 重启 Fast 前备份的旧 llama 日志（启动器会截断 `llama-server.err.log`）。 | 保留 8/31、9/1 非流式重跑日志。 |
 
+## 2026-09-02：演示改为 GIF；本机路径移出公开文档
+
+本步无核心代码注释需求（仅文档、`.env.example` 注释，以及删除根目录临时文件）。
+
+| 变更 | 文件 | 作用 | 下游影响 |
+|---|---|---|---|
+| 新建 | `docs/LOCAL_ENV.md` | 集中记录本机 Python / MSVC / llama.cpp / Embedding 绝对路径及对应环境变量。 | 公开文档不再复制盘符路径；后续本机路径只改这里或 `.env`。 |
+| 修改 | `.env.example` | 把 `AMR_PYTHON_EXE`、`FAST_ARTIFACT_ROOT`、`RAG_EMBEDDING_MODEL_PATH` 的本机值改到注释，并指向 `LOCAL_ENV.md`。 | 复制 `.env` 时按本机填写，而不是把盘符当跨机器默认。 |
+| 删除 | `tmp_extract_memory.py`、`tmp_memory_extract.txt`、`Start_End_Database.txt` | 根目录一次性临时脚本/摘录/旧数据库笔记，不是源码交付物。 | 不要再引用 `Start_End_Database.txt`。 |
+| 修改 | `docs/PROJECT_OVERVIEW.md` | 修复迁入 `docs/` 后仍写 `docs/...` 的相对链接；演示口径改为 GIF；环境表改指向 `LOCAL_ENV.md`。 | GitHub/文档站不再出现 `docs/docs/...` 断链。 |
+| 修改 | `docs/SERVICES_STARTUP.md`、`docs/PROJECT_SETUP.md`、`docs/RAG.md`、`docs/DEMO_SCRIPT.md`、`docs/TEST_REPORT.md`、`docs/RESUME_FACTS.md`、`docs/DATABASE.md`、`docs/P013_PEVR.md`、`docs/P014_CHECKPOINT.md`、`docs/P016_SECURITY.md`、`docs/P017_TRACE_VERIFICATION.md`、`docs/P018_EVAL.md`、`docs/AMR_SIMULATOR.md`、`docs/LLM_LATENCY_METRICS.md`、`docs/MODEL_GATEWAY.md`、`docs/FLEET_PLAN_VALIDATOR.md`、`evals/README.md`、`infra/README.md` | 公开命令改为 `python` / 仓库脚本；去掉 `E:\Anaconda`、`E:\Llama.cpp`、`E:\BuildingTools`、`C:\Users\QYC\...`。 | 克隆仓库的人按 `.env` / `LOCAL_ENV.md` 配置本机路径。 |
+| 修改 | `docs/P0_AUDIT_TODO.md` | `AUDIT-H06` 按产品决定关闭：对外演示改为 GIF。 | 不再把正式演示视频当发布阻塞。 |
+| 修改 | `docs/P001_P003_FILE_GUIDE.md` | 从“原有未修改文件”中去掉已删除的 `Start_End_Database.txt`。 | 与仓库现状一致。 |
+| 修改 | `docs/HANDOFF_CONTEXT.md`、`docs/FILE_PURPOSES.md`、`docs/LESSONS_LEARNED.md` | 交接入口指向 `LOCAL_ENV.md`；登记本步。 | 后续 Agent 不再要求补录视频，也不把本机路径写回公开文档。 |
+
+
 
 
 

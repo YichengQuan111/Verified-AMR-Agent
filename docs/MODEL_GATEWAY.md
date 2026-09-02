@@ -17,8 +17,8 @@
 在线预检：
 
 ```powershell
-& 'E:\Anaconda\envs\torch128\python.exe' .\scripts\check_model_gateway.py
-& 'E:\Anaconda\envs\torch128\python.exe' .\scripts\check_model_gateway.py --profile smart
+python .\scripts\check_model_gateway.py
+python .\scripts\check_model_gateway.py --profile smart
 ```
 
 第一条在 Fast 服务在线时必须成功。第二条用于验证禁用门禁，预期非零退出并返回
@@ -48,13 +48,13 @@
 20 次在线契约冒烟：
 
 ```powershell
-& 'E:\Anaconda\envs\torch128\python.exe' .\scripts\smoke_llm_structured.py
+python .\scripts\smoke_llm_structured.py
 ```
 
 五个 P0-05 2-shot Prompt 的真实节点冒烟：
 
 ```powershell
-& 'E:\Anaconda\envs\torch128\python.exe' .\scripts\smoke_p005_prompts.py --profile fast
+python .\scripts\smoke_p005_prompts.py --profile fast
 ```
 
 该脚本依次调用 `understand_goal`、`plan_tasks`、`verify_observation`、`replan`
@@ -68,5 +68,5 @@ P0-05 在线结果为 2/5，不能用 alias 检查或单个结构化样例替代
 离线契约测试覆盖正确 alias、错误 alias 拒绝启动、超时参数、无工具请求面、一次修复成功和二次失败终止：
 
 ```powershell
-& 'E:\Anaconda\envs\torch128\python.exe' -m pytest .\tests\unit\test_model_provider.py -q
+python -m pytest .\tests\unit\test_model_provider.py -q
 ```
