@@ -1,7 +1,7 @@
 """P0-19 同源 Trace Replay 实验器。
 
 实验器先验证 P0-18 报告的 digest、60 个 case、Fast 模型指纹、Prompt/ToolSpec
-版本和全部逐例 Trace，再对同一份证据做三种控制流投影。固定 Workflow 与 PEVR
+版本和全部逐例 Trace，再对同一份证据做三种控制流投影。Plan-and-Execute 与 PEVR
 保留源事件；ReAct 的 think/act/observe 只是可视化投影，**不能**代表独立 ReAct
 Agent，也不能当作发布质量对照。所有业务终态、工具错误和安全计数直接来自源
 事件。在线独立 ReAct 对照见 ``p0-19.online.v2``。
@@ -290,7 +290,7 @@ def _projection(strategy: P019Strategy, case: EvalReportCase) -> tuple[int, int,
         projection.append(
             {
                 "projection_sequence": index,
-                "kind": "workflow_step" if strategy is P019Strategy.FIXED_WORKFLOW else "pevr_event",
+                "kind": "plan_execute_step" if strategy is P019Strategy.PLAN_EXECUTE else "pevr_event",
                 "stage": stage,
                 "source_sequence": event.get("sequence"),
                 "tool_name": event.get("tool_name"),
@@ -548,11 +548,11 @@ def compare_source_report(
     )
     # FairnessEvidence 自身会 fail closed；下面的策略配置也必须只包含三个固定 ID。
     strategy_ids = [item.get("id") for item in p019_config.get("strategies", []) if isinstance(item, Mapping)]
-    if strategy_ids != [strategy.value for strategy in (P019Strategy.FIXED_WORKFLOW, P019Strategy.REACT, P019Strategy.PEVR)]:
+    if strategy_ids != [strategy.value for strategy in (P019Strategy.PLAN_EXECUTE, P019Strategy.REACT, P019Strategy.PEVR)]:
         raise SourceReportError("P0-19 策略配置顺序或 ID 被修改")
     raw_results: list[StrategyCaseResult] = []
     summaries: list[StrategySummary] = []
-    for strategy in (P019Strategy.FIXED_WORKFLOW, P019Strategy.REACT, P019Strategy.PEVR):
+    for strategy in (P019Strategy.PLAN_EXECUTE, P019Strategy.REACT, P019Strategy.PEVR):
         strategy_results = [_case_result(strategy, case) for case in source_cases]
         raw_results.extend(strategy_results)
         summaries.append(_aggregate(strategy, strategy_results))

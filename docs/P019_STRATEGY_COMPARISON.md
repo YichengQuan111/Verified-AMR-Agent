@@ -1,16 +1,16 @@
 # P0-19：三策略完整在线闭环对照
 
 P0-19 当前发布口径是 `online_fast_three_strategy_closed_loop` / **`p0-19.online.v2`**：
-固定 Workflow、**独立 ReAct 循环**、生产 PEVR 分别真实执行与 P0-18 完整在线闭环相同的
-`amr-p018-60` 固定 60 例，共 180 个独立 strategy-case。
+**Plan-and-Execute**、**独立 ReAct 循环**、生产 **PEVR** 分别真实执行与 P0-18 完整在线闭环
+相同的 `amr-p018-60` 固定 60 例，共 180 个独立 strategy-case。
 
 三者只共享策略无关前置：
 
 ```text
 Guard/Auth → Understand → 初次 Retrieve → 冻结共同初始事实
-                                          ├─ Fixed Workflow 图
+                                          ├─ Plan-and-Execute（八阶段图，关闭恢复）
                                           ├─ Independent ReAct Loop
-                                          └─ Production PEVR
+                                          └─ PEVR（= Plan-and-Execute + verify/replan）
 ```
 
 共用 Qwen3.6 Fast 制品、P0-18 在线配置、加难地图、seed、初次 Retrieve、ToolSpec、
@@ -27,9 +27,22 @@ JWT/HITL、Validator 和预算包络。ReAct 控制 Prompt（`amr.eval.p019.reac
 
 | 策略 | 在线控制语义 | 生产影响 |
 | --- | --- | --- |
-| `fixed_workflow` | 共享前置后进入固定八阶段图；关闭故障恢复，不 retry、不 replan。 | 仅评测 Harness。 |
+| `plan_execute` | 共享前置后进入八阶段图：`plan` 节点一次性产出任务 DAG，之后线性执行到底；关闭故障恢复，不 retry、不 replan。 | 仅评测 Harness。 |
 | `react` | 共享前置后进入独立 `decide → guard → act → observe → terminal_check` 循环；不实例化 `PEVRGraphRunner`，不生成四任务 DAG，本轮不重复检索。 | 仅评测 Harness；不保存原始思维链。 |
-| `pevr` | 共享前置后进入生产 PEVR 图和默认恢复预算。 | 唯一生产主链。 |
+| `pevr` | 共享前置后进入生产 PEVR 图和默认恢复预算（= `plan_execute` + verify→replan）。 | 唯一生产主链。 |
+
+**这不是三条互不相干的范式曲线，读的时候要分开看：**
+
+- `plan_execute` 与 `pevr` 共用同一张八阶段图、同一套 `amr.p005.*` Prompt、同一条
+  `NORMAL_PEVR_TOOL_CHAIN` 四任务链，唯一差别是 `fault_recovery_enabled`
+  （`evals/p018/online.py` 的 `_run_pevr_case`）。因此**这一对是 verify→replan 环的消融**，
+  两者之差就是该环的净贡献，而不是两种范式的差距。
+- `react` 是唯一真正的跨范式对照：独立 runner、独立 Prompt、逐步决策、不产出 DAG。
+
+另外，正常路径上 `plan` 节点的输出空间被 `NORMAL_PEVR_TOOL_CHAIN` 和
+`canonicalize_normal_pevr_plan` 锁死（四个工具各一次、依赖边与固定事实按合同重写），
+所以这里的"规划"实质是参数绑定；模型真正拥有规划权的地方是异常后的局部重规划
+（`agent/planning/replanner.py`）。
 
 独立 ReAct 的确定性门禁（模型无权放宽）：ToolSpec/JSON Schema、角色、JWT Principal、
 白名单、工具依赖、幂等与未知副作用、Validator digest、HITL 签名审批、Effect Ledger、
@@ -69,17 +82,31 @@ Effect 最多一次。模型 `finish` 只表示请求完成，终态由确定性
 数据集 SHA-256=`3a8a8d799a68cedd58ea674c02f1e9a433f16b708c50e4ce9c085a7df4ee3368`，
 P0-18 在线配置 SHA-256=`fc6945218fa22ac64d6eef5ff57414fe987269680c051a0ba98717d5b5ffc5ef`，
 P0-19 在线配置 SHA-256=`c077dfcf4f40e8c0c6176bdbd8df0482305326385ce5e597721eeece7f62da48`。
-异常终态已按 `expected_outcome == observed_outcome` 复核：3/10、6/10、9/10。
+异常终态已按 `expected_outcome == observed_outcome` 复核：ReAct 6/10、Plan-and-Execute 3/10、PEVR 9/10。
 
 | 策略 | 全例预期符合 | 任务完成 | 计划合法 | 异常终态正确 | 成功恢复 | 模型调用 | Token | 墙钟 P50/P95 (ms) |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| fixed_workflow | 52/60 | 36/44 | 33/36 | 3/10 | 0/1 | 117 | 757143 | 57768 / 87715 |
-| react | 46/60 | 30/44 | 24/32 | 6/10 | 4/4 | 326 | 888837 | 49098 / 84508 |
-| pevr | 59/60 | 43/44 | 34/37 | 9/10 | 6/7 | 132 | 841688 | 59156 / 95214 |
+| `react` | 46/60 | 30/44 | 24/32 | 6/10 | 4/4 | 326 | 888,837 | 49098 / 84508 |
+| `plan_execute` | 52/60 | 36/44 | 33/36 | 3/10 | 0/1 | 117 | 757,143 | 57768 / 87715 |
+| `pevr` | 59/60 | 43/44 | 34/37 | 9/10 | 6/7 | 132 | 841,688 | 59156 / 95214 |
 
-PEVR 唯一未符合预期仍为 `p018-exception-004`（工具步预算耗尽）。ReAct 低于 Fixed/PEVR
-是独立循环的真实结果，不是 v1 一次 retry 的 54/60。ReAct 主路径 Trace 不含
+怎么读这张表：
+
+- **`plan_execute` → `pevr` 是消融**：同图同 Prompt，只开 `fault_recovery_enabled`。
+  全例符合 52 → 59，异常终态正确 3/10 → 9/10，代价是 +15 次模型调用、+11.2% Token、
+  P95 +8.6%。这一列差值就是 verify→replan 环的净收益与净成本。
+- **`react` 是跨范式对照**：逐步决策在异常上确实优于不重规划的 `plan_execute`
+  （6/10 vs 3/10），但正常例更差（30/44 vs 36/44、计划合法 24/32 vs 33/36），
+  且模型调用 326 次 ≈ `pevr` 的 2.5 倍、Token 高 5.6%。即"每步都问模型"买到的
+  是异常适应性，赔上的是正常路径的稳定性和成本。
+
+PEVR 唯一未符合预期仍为 `p018-exception-004`（工具步预算耗尽）。ReAct 46/60 是独立循环的
+真实结果，不是已作废 v1 一次 retry 的 54/60。ReAct 主路径 Trace 不含
 `plan_tasks`/`PEVRGraphRunner` 节点；正常例可见多轮 `react_decide`/`react_act`/`react_observe`。
+
+> 上述报告在策略 id 由 `fixed_workflow` 改名为 `plan_execute` **之前**产出。数值是实测量，
+> 不受改名影响；但重跑会得到新的 `report_id`/`report_digest`（策略 id 参与摘要计算）。
+> 旧制品仍可被当前代码读取：两个策略枚举都保留了 `fixed_workflow` 只读别名。
 
 ## 公平性
 
@@ -101,7 +128,7 @@ PEVR 唯一未符合预期仍为 `p018-exception-004`（工具步预算耗尽）
 - `tmp/p019_online_strategy_compare/p019_strategy_comparison.json`：完整报告及 180 条源 Trace。
 - `tmp/p019_online_strategy_compare/p019_strategy_comparison.md`：同一报告对象渲染的汇总。
 - `tmp/p019_online_strategy_compare/p019_raw_trajectories.jsonl`：每行一个 strategy-case。
-- `tmp/p019_online_strategy_compare/{fixed_workflow,react,pevr}/`：三套独立 P0-18 在线子报告。
+- `tmp/p019_online_strategy_compare/{react,plan_execute,pevr}/`：三套独立 P0-18 在线子报告（改名前的制品目录名是 `fixed_workflow`）。
 - `tmp/p019_online_strategy_compare/p019_online_progress.jsonl`：可恢复进度；属于运行产物，不是源码。
 
 ## 限制

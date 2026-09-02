@@ -81,10 +81,14 @@ from .reproducibility import build_reproducibility, canonical_digest
 
 
 class StrategyRecoveryPolicy(str, Enum):
-    """P0-18/P0-19 共用的离线恢复额度。生产 PEVR 图仍走完整控制器。"""
+    """P0-18/P0-19 共用的离线恢复额度。生产 PEVR 图仍走完整控制器。
+
+    额度是恢复维度而不是范式名：``NO_RECOVERY`` 对应 Plan-and-Execute 臂
+    （max_replans=0/max_retries=0），``REACT`` 是离线 max_retries=1 遗留夹具。
+    """
 
     PEVR = "pevr"
-    WORKFLOW = "workflow"
+    NO_RECOVERY = "no_recovery"
     REACT = "react"
 
 
@@ -1184,7 +1188,7 @@ class EvalHarness:
             orders = [snapshot.orders[0]]
         max_replans = 2
         max_retries = 2
-        if self.recovery_policy is StrategyRecoveryPolicy.WORKFLOW:
+        if self.recovery_policy is StrategyRecoveryPolicy.NO_RECOVERY:
             max_replans = 0
             max_retries = 0
         elif self.recovery_policy is StrategyRecoveryPolicy.REACT:

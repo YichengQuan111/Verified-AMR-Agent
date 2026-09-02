@@ -38,11 +38,25 @@ class P019ExecutionMode(str, Enum):
 
 
 class P019Strategy(str, Enum):
-    """三种固定对照策略；ReAct 只允许出现在评测层。"""
+    """三种对照策略；ReAct 只允许出现在评测层。
 
-    FIXED_WORKFLOW = "fixed_workflow"
+    ``plan_execute`` 是“LLM 一次性产出任务 DAG → 确定性执行器跑完 → 不重规划”
+    的 Plan-and-Execute 臂；它与 ``pevr`` 共用同一张八阶段图和同一套 Prompt，
+    只差 ``fault_recovery_enabled``，因此二者构成 verify→replan 环的消融。
+    ``react`` 是唯一真正的跨范式对照（独立循环、独立 Prompt、不产出 DAG）。
+    """
+
+    PLAN_EXECUTE = "plan_execute"
     REACT = "react"
     PEVR = "pevr"
+
+    @classmethod
+    def _missing_(cls, value: object) -> "P019Strategy | None":
+        """兼容重命名前落盘的 ``fixed_workflow`` 报告，只影响读取。"""
+
+        if value == "fixed_workflow":
+            return cls.PLAN_EXECUTE
+        return None
 
 
 class SmartComparisonStatus(str, Enum):
@@ -302,7 +316,7 @@ class P019Report(P019Contract):
     report_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
 
     EXPECTED_STRATEGIES: ClassVar[set[P019Strategy]] = {
-        P019Strategy.FIXED_WORKFLOW,
+        P019Strategy.PLAN_EXECUTE,
         P019Strategy.REACT,
         P019Strategy.PEVR,
     }
@@ -313,7 +327,7 @@ class P019Report(P019Contract):
 
         strategy_names = {summary.strategy for summary in self.strategies}
         if strategy_names != self.EXPECTED_STRATEGIES:
-            raise ValueError("P0-19 必须恰好包含 fixed_workflow/react/pevr")
+            raise ValueError("P0-19 必须恰好包含 plan_execute/react/pevr")
         result_names = {strategy: [] for strategy in self.EXPECTED_STRATEGIES}
         for item in self.raw_results:
             result_names[item.strategy].append(item.case_id)

@@ -65,12 +65,20 @@ class OnlineControlStrategy(str, Enum):
     """在线评测允许的控制策略身份。
 
     ``react`` 只作为独立 ReAct Harness 的身份前缀；本类不得再把一次
-    retry/stop 伪装成 ReAct，也不得在 FIXED/PEVR 路径调用伪 ReAct 控制器。
+    retry/stop 伪装成 ReAct，也不得在 Plan-and-Execute / PEVR 路径调用伪 ReAct 控制器。
     """
 
-    FIXED_WORKFLOW = "fixed_workflow"
+    PLAN_EXECUTE = "plan_execute"
     REACT = "react"
     PEVR = "pevr"
+
+    @classmethod
+    def _missing_(cls, value: object) -> "OnlineControlStrategy | None":
+        """兼容重命名前落盘的 ``fixed_workflow`` 制品，只影响读取。"""
+
+        if value == "fixed_workflow":
+            return cls.PLAN_EXECUTE
+        return None
 
 
 def _now() -> datetime:
@@ -440,7 +448,7 @@ class OnlineFastHarness:
         *,
         auto_approve: bool = True,
     ) -> tuple[EvalOutcome, str | None, str | None, dict[str, Any], ZeroToleranceMetrics, list[str], int, int, int, list[dict[str, Any]]]:
-        """执行共享八阶段图；Fixed 关闭恢复，PEVR 保留生产恢复。
+        """执行共享八阶段图；Plan-and-Execute 关闭恢复，PEVR 保留生产恢复。
 
         ReAct 策略必须由 ``evals.p019.react_eval.ReActOnlineHarness`` 执行，
         本方法不得再实例化伪 ReAct 控制器或在异常后做一次 retry/stop。
@@ -479,7 +487,7 @@ class OnlineFastHarness:
             fault_recovery_enabled=self.control_strategy is OnlineControlStrategy.PEVR,
         )
         strategy_prefix = {
-            OnlineControlStrategy.FIXED_WORKFLOW: "fw",
+            OnlineControlStrategy.PLAN_EXECUTE: "pe",
             OnlineControlStrategy.REACT: "react",
             OnlineControlStrategy.PEVR: "pevr",
         }[self.control_strategy]

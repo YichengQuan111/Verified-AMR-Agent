@@ -135,7 +135,7 @@ BEGIN → INSERT runs → flush → INSERT events → flush → COMMIT
 | `docs/P017_TRACE_VERIFICATION.md` | Trace 字段、受控验证白名单、日志解析、证据定位和 JSON/Markdown 报告契约。 |
 | `evals/rag/` | 20 例固定 RAG 数据与 Recall/MRR/Precision/nDCG/Citation/ACL 执行器。 |
 | `evals/p018/` | P0-18 固定 60 例数据、严格契约、离线确定性 Harness、复现指纹、JSON/Markdown 报告和 CLI。 |
-| `evals/p019/` | P0-19 固定策略配置、P0-18 源报告 digest 门禁、三策略 Trace Replay、Token/延迟/资源可观测性标记、原始 JSONL 和汇总报告 CLI。 |
+| `evals/p019/` | P0-19 三策略（ReAct / Plan-and-Execute / PEVR）配置、P0-18 源报告 digest 门禁、三策略 Trace Replay、Token/延迟/资源可观测性标记、原始 JSONL 和汇总报告 CLI。 |
 | `docs/P019_STRATEGY_COMPARISON.md` | P0-19 公平性口径、指标定义、实测汇总、限制、Smart 延期和复核入口。 |
 | `docs/ARCHITECTURE.md` | P0-20 系统边界图、数据流、宿主机/容器职责和真实演示入口。 |
 | `docs/API.md` | P0-20 已实现 HTTP 端点、认证、健康检查、错误结构和不执行评测的边界。 |
@@ -473,8 +473,10 @@ GGUF、Prompt、九个 ToolSpec 和输入文件 SHA-256；正确拒绝和意外�
 
 P0-19 复用 P0-18 的 60 例。离线默认是 `offline_independent_oracle` 恢复额度回归；
 `offline_trace_replay` 只作可视化。在线发布口径是 `p0-19.online.v2`：共享前置后分别进入
-固定图、独立 ReAct 循环和生产 PEVR。当前报告 `p019-online-5bf27026e1607cfe` 状态 passed，
-Fixed/ReAct/PEVR 全例符合 52/60、46/60、59/60；旧 v1 一次 retry 不得再当作独立 ReAct。
+独立 ReAct 循环、Plan-and-Execute 图和生产 PEVR。当前报告 `p019-online-5bf27026e1607cfe`
+状态 passed，ReAct/Plan-and-Execute/PEVR 全例符合 46/60、52/60、59/60；旧 v1 一次 retry
+不得再当作独立 ReAct。`plan_execute` 与 `pevr` 同图同 Prompt，只差 `fault_recovery_enabled`，
+二者构成 verify→replan 环的消融；`react` 才是跨范式对照。
 
 ```powershell
 .\scripts\run_p019_compare.ps1 -Mode online -OutputDir tmp\p019_online_strategy_compare

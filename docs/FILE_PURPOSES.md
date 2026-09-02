@@ -648,7 +648,7 @@ Token/资源未观测的失败关闭语义。JSON 配置、PowerShell 入口、M
 | 新建 | `evals/p019/contracts.py` | 定义执行模式、三策略、逐例结果、Token/延迟/资源可观测性、汇总、公平性门禁和 Smart deferred 契约；未知字段和不完整失败证据拒绝。 | 回放器、JSON/Markdown/JSONL 报告、Schema 消费者。 |
 | 新建 | `evals/p019/dataset.py` | 加载固定 P0-19 配置并限制 P0-18 dataset/config 只能解析仓库内路径；强制 Fast、三策略顺序和 Smart 未启动/未完成。 | `run_compare.py`、公平性校验。 |
 | 新建 | `evals/p019/config.json` | 冻结 P0-19 版本、`offline_trace_replay`、三策略语义、Fast 参数和 Smart 延期/Backlog 记录；本步无核心代码注释需求。 | CLI、报告复现指纹和人工复核。 |
-| 新建 | `evals/p019/replay.py` | 验证 P0-18 源报告 digest、60 例、Prompt/ToolSpec/配置/Fast 指纹，保留源 Trace 并生成固定 Workflow/PEVR/ReAct 控制流投影；Token/资源缺失时 fail closed 为未观测。 | P0-19 CLI、报告层和专项测试；不调用模型、不执行工具。 |
+| 新建 | `evals/p019/replay.py` | 验证 P0-18 源报告 digest、60 例、Prompt/ToolSpec/配置/Fast 指纹，保留源 Trace 并生成 Plan-and-Execute/PEVR/ReAct 控制流投影；Token/资源缺失时 fail closed 为未观测。 | P0-19 CLI、报告层和专项测试；不调用模型、不执行工具。 |
 | 新建 | `evals/p019/reporting.py` | 从同一 `P019Report` 渲染完整 JSON、Markdown 汇总和逐行 JSONL 原始轨迹，不过滤 denied/blocked。 | 用户验收、人工逐例复核和后续分析。 |
 | 新建 | `evals/p019/run_compare.py` | 提供固定源报告/配置/输出目录参数和退出码，禁止任意命令/脚本/数据集选择器。 | `scripts/run_p019_compare.ps1`、CI/验收。 |
 | 新建 | `scripts/run_p019_compare.ps1` | 使用 torch128 Python 调用 P0-19 CLI；只消费 P0-18 源报告，不启动 Fast/Smart；本步无核心代码注释需求。 | Windows 操作者和项目验收。 |
@@ -1162,7 +1162,7 @@ Dockerfile、依赖锁和报告属于配置/文档/数据契约，本步无核�
 
 ## 2026-08-28：P0-19 三策略同 60 例真实 Fast 完整闭环
 
-本步为 Fixed Workflow、有界 ReAct、生产 PEVR 增加独立在线评测适配，并完成 180 条真实
+本步为 Plan-and-Execute、有界 ReAct、生产 PEVR 增加独立在线评测适配，并完成 180 条真实
 Fast 运行。新增/修改的核心 Python 已补中文模块说明、docstring 和关键分支注释，重点解释策略
 隔离、模型调用前安全门、完整 Trace、资源采样、manifest 恢复和失败关闭行为；没有修改 C++
 核心代码，因此无 C++ 注释需求。JSON、Schema、PowerShell、依赖锁和 Markdown 不支持或不需要
@@ -1253,8 +1253,8 @@ Fast 运行。新增/修改的核心 Python 已补中文模块说明、docstring
 | 新建 | `evals/p019/react_contracts.py` | 独立 ReAct 的 Decision/Step/RunState/终态契约；Prompt `amr.eval.p019.react_agent` / `2.0.0`。 | Schema 导出、评测 Runner、测试。 |
 | 新建 | `evals/p019/react_runner.py` | 持续 `decide→guard→act→observe→terminal_check`；受控引用物化、HITL/Effect/预算门禁；不导入调用 `PEVRGraphRunner.run`。每轮上下文含封闭参数契约；Effect 指纹与 Registry input_model 对齐。 | `ReActOnlineHarness`。 |
 | 新建 | `evals/p019/react_eval.py` | 评测层独立 ReAct Harness，覆盖 P0-18 闭环主路径，sidecar 仍复用父类；Understand 显式 `requested_output_tokens=4096`。 | P0-19 在线三策略执行器。 |
-| 修改 | `evals/p018/online.py` | 删除伪 ReAct 控制器；`REACT` 策略若误入 P0-18 Harness 立即失败。 | 仅 Fixed/PEVR 走 `PEVRGraphRunner`。 |
-| 修改 | `evals/p019/online.py` | 三策略分别选择 Fixed/ReAct/PEVR runner；manifest 含 v2 Prompt/Runner 版本；公平性 `same_prompts=false`。 | 在线 180 例 CLI。 |
+| 修改 | `evals/p018/online.py` | 删除伪 ReAct 控制器；`REACT` 策略若误入 P0-18 Harness 立即失败。 | 仅 Plan-and-Execute/PEVR 走 `PEVRGraphRunner`。 |
+| 修改 | `evals/p019/online.py` | 三策略分别选择 Plan-and-Execute/ReAct/PEVR runner；manifest 含 v2 Prompt/Runner 版本；公平性 `same_prompts=false`。 | 在线 180 例 CLI。 |
 | 修改 | `evals/p019/contracts.py`、`dataset.py`、`online_config.json`、`replay.py`、`reporting.py`、`independent.py`、`config.json` | 升级报告/配置版本，纠正异常终态口径，Replay/离线 react 槽位标明可视化或遗留夹具。 | 配置校验、报告渲染、离线回归。 |
 | 修改 | `scripts/export_schemas.py` | 导出 `ReActDecision`/`ReActStep`/`ReActRunState` 与更新后的 `P019Report`。 | `docs/schemas/*`、契约测试。 |
 | 新建 | `tests/unit/test_p019_react_agent.py` | 覆盖不调用 PEVR 图、多轮循环、单工具、引用/冻结拒绝、HITL、预算终止、finish 检查。 | 独立 ReAct 回归。 |
@@ -1283,7 +1283,7 @@ Fast 运行。新增/修改的核心 Python 已补中文模块说明、docstring
 | 修改 | `tests/unit/test_p005_context_engineering.py`、`test_model_provider.py`、`test_settings.py`、`test_p019_react_agent.py`、`tests/unit/fakes.py` | 覆盖前缀位置、`cache_prompt` 开关和 cached token 解析。 | 网关与 ReAct 回归。 |
 | 修改 | `docs/HANDOFF_CONTEXT.md`、`docs/FILE_PURPOSES.md`、`docs/LESSONS_LEARNED.md`、`docs/PROJECT_OVERVIEW.md`、`docs/P019_STRATEGY_COMPARISON.md` | 交接、职责、缓存前缀教训和当前版本。 | 后续 Agent 不得把安全边界再追加到节点正文之后。 |
 | 新建 | `scripts/compare_prompt_cache.py` | Fast 上有/无 `cache_prompt` 的实测对照：warmup、breaker、P0-05 五节点各连续两次、ReAct 两轮；汇总命中率与配对成功墙钟。 | 人工/Agent 跑在线对照；不进入生产路径。 |
-| 新建 | `scripts/compare_pevr_prompt_cache.py` | 只跑生产 PEVR 的 P0-18 在线 60 例，关/开 `cache_prompt` 各一轮，按 case_id 对齐墙钟。不跑 Fixed/ReAct。 | 有 LLM 的 PEVR 耗时对照；生成物在 `tmp/`。 |
+| 新建 | `scripts/compare_pevr_prompt_cache.py` | 只跑生产 PEVR 的 P0-18 在线 60 例，关/开 `cache_prompt` 各一轮，按 case_id 对齐墙钟。不跑 Plan-and-Execute/ReAct。 | 有 LLM 的 PEVR 耗时对照；生成物在 `tmp/`。 |
 | 新建 | `tests/unit/test_pevr_prompt_cache_compare.py` | 百分位、60 例汇总、按 case_id 配对加速比的离线测试。 | 防止把未对齐的例算进加速比。 |
 | 新建 | `tests/unit/test_prompt_cache_compare.py` | 命中率、汇总公式、配对成功加速比的离线测试；不启动模型。 | 防止把超时失败算进加速比。 |
 | 生成物 | `tmp/prompt_cache_compare.json` | 2026-08-30 Fast 节点级实测原始记录与汇总；SHA-256=`8097a3d1…7922676c`。 | 证据，不得登记为源码，不得手工改写后当新实验。 |

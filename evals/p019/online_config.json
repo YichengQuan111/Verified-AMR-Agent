@@ -21,10 +21,10 @@
   },
   "strategies": [
     {
-      "id": "fixed_workflow",
+      "id": "plan_execute",
       "production_path": false,
       "fault_recovery_enabled": false,
-      "description": "共享 Guard/Understand/初次 Retrieve 后进入固定八阶段图；异常后立即停止，不重试、不重规划。"
+      "description": "Plan-and-Execute：共享 Guard/Understand/初次 Retrieve 后进入八阶段图，plan 节点一次性产出任务 DAG，之后线性执行；异常后立即停止，不重试、不重规划。与 pevr 同图同 Prompt，只差 fault_recovery_enabled。"
     },
     {
       "id": "react",
@@ -36,7 +36,7 @@
       "id": "pevr",
       "production_path": true,
       "fault_recovery_enabled": true,
-      "description": "共享前置后进入生产 PEVR 图，保留 max_retries=2/max_replans=2 原生恢复预算。"
+      "description": "Plan-and-Execute + verify→replan：共享前置后进入生产 PEVR 图，保留 max_retries=2/max_replans=2 原生恢复预算。"
     }
   ],
   "react_agent": {
@@ -51,9 +51,9 @@
   "schedule": {
     "policy": "latin_square_interleaved",
     "patterns": [
-      ["fixed_workflow", "react", "pevr"],
-      ["react", "pevr", "fixed_workflow"],
-      ["pevr", "fixed_workflow", "react"]
+      ["plan_execute", "react", "pevr"],
+      ["react", "pevr", "plan_execute"],
+      ["pevr", "plan_execute", "react"]
     ]
   },
   "resource_sampling": {

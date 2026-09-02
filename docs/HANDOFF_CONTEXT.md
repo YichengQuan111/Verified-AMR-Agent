@@ -1,7 +1,7 @@
 # AMR Agent 项目交接上下文
 
 最后更新：2026-09-01
-当前实现里程碑记录：P0-00～P0-20 代码已落地。P0-19 在线对照为 **`p0-19.online.v2` 独立 ReAct**：报告 `p019-online-5bf27026e1607cfe`，digest `5bf27026e1607cfe…d82f456`，Fixed/ReAct/PEVR 全例符合 **52/60、46/60、59/60**，异常终态 **3/10、6/10、9/10**，七项零容忍均为 0，`react_uses_pevr_runner=false`。旧 `p0-19.online.v1` 一次 retry 已作废，不能 `--resume`。离线独立执行仍作恢复额度回归；其中 react 槽位是 `max_retries=1` 遗留夹具。Smart 继续硬禁用。2026-08-21 原审计文档仍是 FAIL 快照，H06 正式演示视频仍未补。
+当前实现里程碑记录：P0-00～P0-20 代码已落地。P0-19 在线对照为 **`p0-19.online.v2` 独立 ReAct**：报告 `p019-online-5bf27026e1607cfe`，digest `5bf27026e1607cfe…d82f456`，ReAct/Plan-and-Execute/PEVR 全例符合 **46/60、52/60、59/60**，异常终态 **6/10、3/10、9/10**，七项零容忍均为 0，`react_uses_pevr_runner=false`。策略 id 已由 `fixed_workflow` 改名为 `plan_execute`（枚举保留只读别名，旧制品仍可读）；该报告产出于改名前，重跑会得到新的 report_id/digest。下文历史步骤日志中的 `Fixed`/`固定 Workflow` 指的就是同一条 Plan-and-Execute 臂，按原文保留。旧 `p0-19.online.v1` 一次 retry 已作废，不能 `--resume`。离线独立执行仍作恢复额度回归；其中 react 槽位是 `max_retries=1` 遗留夹具。Smart 继续硬禁用。2026-08-21 原审计文档仍是 FAIL 快照，H06 正式演示视频仍未补。
 RAG 评测器现已在真实 12 例 holdout 上补充章节级 Precision@K=`0.236364`、nDCG@K=`1.0`；Recall@K/MRR/Section Recall/Citation/Answerability 仍为 1，ACL leak=0。
 当前下一步：2026-09-01 已完成 **36 LLM 例 PEVR 有/无 `cache_prompt` + 流式 TTFT** 对照（`tmp/p018_pevr_llm36_ttft_cache_20260901/`），**不是**正式 P0-18 60 例发布分数。TTFT 来自评测探针首个非空 SSE delta，未用 Prefill / `progress=1.00` 回填。生产 `ModelProvider` 仍是 `stream=false`。8/31 非流式 Prefill 1.44× / 墙钟 1.10× 仍可引用，不要用本次流式 Prefill 1.57× 去覆盖那张表。不要覆盖 8/30、8/31 或 `tmp/p018_pevr_llm36_20260901/`。P0-05 Prompt `1.2.0`，ReAct `2.1.0`。P0-19 v2 三策略在线 180 仍是前缀缓存前的成绩。Fast **未停止**。不要改生产非流式契约。Smart 对照仍须用户明确启用。
 

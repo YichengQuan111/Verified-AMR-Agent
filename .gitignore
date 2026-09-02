@@ -25,3 +25,8 @@ tutorial/
 
 # 本次面向 Agent / RAG 的独立系统教程，同样只保留在本机
 tutorial_Codex/
+
+# 秋招面试 PPT 及其备份，属于个人求职材料，不作为仓库源码交付物
+*.pptx
+*.ppt
+*.potx

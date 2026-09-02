@@ -10,6 +10,8 @@ import json
 from pathlib import Path
 from typing import Mapping
 
+from .contracts import P019Strategy
+
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_CONFIG_PATH = Path(__file__).with_name("config.json")
@@ -21,6 +23,11 @@ ALLOWED_EXECUTION_MODES = {
     "online_fast_three_strategy_closed_loop",
 }
 ALLOWED_VERSIONS = {"p0-19.v1", "p0-19.v2", "p0-19.online.v1", "p0-19.online.v2"}
+EXPECTED_STRATEGY_ORDER = (
+    P019Strategy.PLAN_EXECUTE,
+    P019Strategy.REACT,
+    P019Strategy.PEVR,
+)
 
 
 def _rooted(relative: str) -> Path:
@@ -47,8 +54,13 @@ def load_config(path: str | Path = DEFAULT_CONFIG_PATH) -> dict[str, object]:
         raise ValueError("P0-19 只允许独立 oracle、显式 Trace Replay 或在线三策略闭环")
     strategies = payload.get("strategies")
     strategy_ids = [item.get("id") if isinstance(item, Mapping) else None for item in strategies] if isinstance(strategies, list) else None
-    if strategy_ids != ["fixed_workflow", "react", "pevr"]:
-        raise ValueError("P0-19 策略顺序必须固定为 fixed_workflow/react/pevr")
+    # 先过一遍 Enum：重命名前的 ``fixed_workflow`` 配置仍能读，顺序约束不放宽。
+    try:
+        normalized_ids = [P019Strategy(item).value for item in strategy_ids] if strategy_ids else None
+    except ValueError as exc:
+        raise ValueError("P0-19 策略 id 必须是 plan_execute/react/pevr") from exc
+    if normalized_ids != [strategy.value for strategy in EXPECTED_STRATEGY_ORDER]:
+        raise ValueError("P0-19 策略顺序必须固定为 plan_execute/react/pevr")
     model = payload.get("model")
     if not isinstance(model, Mapping) or model.get("profile") != "fast" or model.get("alias") != "qwen3.6-fast":
         raise ValueError("P0-19 必须固定使用 Qwen3.6 Fast")

@@ -1,10 +1,14 @@
 """P0-19 三策略真实 Fast 在线闭环执行器。
 
 三种策略共享 Guard → Understand → 初次 Retrieve 的策略无关前置，再分别进入：
-固定 Workflow 图、独立 ReAct 循环、生产 PEVR 图。Fixed / PEVR 仍走 P0-18
+Plan-and-Execute 图、独立 ReAct 循环、生产 PEVR 图。Plan-and-Execute / PEVR 仍走 P0-18
 ``OnlineFastHarness``；ReAct 必须走 ``ReActOnlineHarness``，禁止实例化
 ``PEVRGraphRunner``。数据集、Fast 制品、工具、安全门禁和预算包络保持相同；
 控制 Prompt 按策略不同，因此不再宣称 ``same_prompts=true``。
+
+Plan-and-Execute 与 PEVR 共用同一张八阶段图和同一套 ``amr.p005.*`` Prompt，
+只差 ``fault_recovery_enabled``：因此这一对是 verify→replan 环的消融，而 ReAct
+才是真正的跨范式对照。
 """
 
 from __future__ import annotations
@@ -54,7 +58,7 @@ from .replay import (
 
 DEFAULT_ONLINE_OUTPUT_DIR = Path("tmp/p019_online_strategy_compare")
 STRATEGY_ORDER = (
-    P019Strategy.FIXED_WORKFLOW,
+    P019Strategy.PLAN_EXECUTE,
     P019Strategy.REACT,
     P019Strategy.PEVR,
 )
@@ -274,10 +278,10 @@ def _actual_control_events(strategy: P019Strategy, case: EvalReportCase) -> list
                 for event in controller
             ]
         return [{"kind": "react_loop_missing", "status": "not_applicable"}]
-    if strategy is P019Strategy.FIXED_WORKFLOW:
+    if strategy is P019Strategy.PLAN_EXECUTE:
         return [
             {
-                "kind": "fixed_workflow_actual",
+                "kind": "plan_execute_actual",
                 "fault_recovery_enabled": False,
                 "terminal_status": case.observed_outcome.value,
             }
@@ -360,13 +364,13 @@ class OnlineThreeStrategyComparison:
         if len(self.dataset.cases) != 60:
             raise OnlineComparisonError("在线三策略必须精确覆盖 P0-18 的 60 例")
         self.harnesses = {
-            P019Strategy.FIXED_WORKFLOW: OnlineFastHarness(
+            P019Strategy.PLAN_EXECUTE: OnlineFastHarness(
                 dataset=self.dataset,
                 config=self.p018_config,
                 dataset_path=self.p018_dataset_path,
                 config_path=self.p018_config_path,
                 verification_timeout_seconds=verification_timeout_seconds,
-                control_strategy=OnlineControlStrategy.FIXED_WORKFLOW,
+                control_strategy=OnlineControlStrategy.PLAN_EXECUTE,
             ),
             P019Strategy.REACT: ReActOnlineHarness(
                 dataset=self.dataset,
@@ -675,7 +679,7 @@ class OnlineThreeStrategyComparison:
             same_safety_gates=True,
             same_budget_envelope=True,
             strategy_prompt_versions={
-                "fixed_workflow": f"amr.p005.*@{P005_PROMPT_VERSION}",
+                "plan_execute": f"amr.p005.*@{P005_PROMPT_VERSION}",
                 "react": f"{REACT_PROMPT_ID}@{REACT_PROMPT_VERSION}",
                 "pevr": f"amr.p005.*@{P005_PROMPT_VERSION}",
             },
@@ -696,15 +700,15 @@ class OnlineThreeStrategyComparison:
                 )
             )
         summary_map = {summary.strategy: summary for summary in summaries}
-        workflow = summary_map[P019Strategy.FIXED_WORKFLOW]
+        plan_execute = summary_map[P019Strategy.PLAN_EXECUTE]
         react = summary_map[P019Strategy.REACT]
         pevr = summary_map[P019Strategy.PEVR]
         conclusions = [
             "三策略各自真实执行同一 P0-18 固定 60 例，共 180 条独立身份；Fast 制品、共享前置、初次 Retrieve、ToolSpec、安全门禁与预算包络通过公平性门禁。ReAct 控制 Prompt 与 PEVR 不同，same_prompts=false。",
-            f"全例预期符合率：Workflow {workflow.evaluation_pass_count}/60，ReAct {react.evaluation_pass_count}/60，PEVR {pevr.evaluation_pass_count}/60；任务完成率分别为 {workflow.task_completion_count}/{workflow.positive_case_count}、{react.task_completion_count}/{react.positive_case_count}、{pevr.task_completion_count}/{pevr.positive_case_count}。",
-            f"异常终态正确率按 expected==observed：Workflow {workflow.recovery_terminal_correct_count}/{workflow.recovery_case_count}，ReAct {react.recovery_terminal_correct_count}/{react.recovery_case_count}，PEVR {pevr.recovery_terminal_correct_count}/{pevr.recovery_case_count}；成功恢复（发生恢复动作且最终完成）为 {workflow.successful_recovery_count}/{workflow.successful_recovery_case_count}、{react.successful_recovery_count}/{react.successful_recovery_case_count}、{pevr.successful_recovery_count}/{pevr.successful_recovery_case_count}。",
-            f"墙钟 P95：Workflow {workflow.latency.p95_case_ms:.1f} ms，ReAct {react.latency.p95_case_ms:.1f} ms，PEVR {pevr.latency.p95_case_ms:.1f} ms；Token 总量分别为 {workflow.token_usage.total_tokens}、{react.token_usage.total_tokens}、{pevr.token_usage.total_tokens}。",
-            "PEVR 仍是唯一生产主链；Fixed 走固定图，独立 ReAct 只存在于评测层且 react_uses_pevr_runner=false。",
+            f"全例预期符合率：Plan-and-Execute {plan_execute.evaluation_pass_count}/60，ReAct {react.evaluation_pass_count}/60，PEVR {pevr.evaluation_pass_count}/60；任务完成率分别为 {plan_execute.task_completion_count}/{plan_execute.positive_case_count}、{react.task_completion_count}/{react.positive_case_count}、{pevr.task_completion_count}/{pevr.positive_case_count}。",
+            f"异常终态正确率按 expected==observed：Plan-and-Execute {plan_execute.recovery_terminal_correct_count}/{plan_execute.recovery_case_count}，ReAct {react.recovery_terminal_correct_count}/{react.recovery_case_count}，PEVR {pevr.recovery_terminal_correct_count}/{pevr.recovery_case_count}；成功恢复（发生恢复动作且最终完成）为 {plan_execute.successful_recovery_count}/{plan_execute.successful_recovery_case_count}、{react.successful_recovery_count}/{react.successful_recovery_case_count}、{pevr.successful_recovery_count}/{pevr.successful_recovery_case_count}。",
+            f"墙钟 P95：Plan-and-Execute {plan_execute.latency.p95_case_ms:.1f} ms，ReAct {react.latency.p95_case_ms:.1f} ms，PEVR {pevr.latency.p95_case_ms:.1f} ms；Token 总量分别为 {plan_execute.token_usage.total_tokens}、{react.token_usage.total_tokens}、{pevr.token_usage.total_tokens}。",
+            "PEVR 仍是唯一生产主链；Plan-and-Execute 臂与 PEVR 共用同一张图和同一套 Prompt，只差 fault_recovery_enabled，因此二者之差即 verify→replan 环的净贡献；独立 ReAct 只存在于评测层且 react_uses_pevr_runner=false。",
         ]
         limitations = [
             "这是一次本机单模型单 GPU 在线运行，没有重复试验或置信区间；temperature=0.1 仍可能产生跨次波动。",

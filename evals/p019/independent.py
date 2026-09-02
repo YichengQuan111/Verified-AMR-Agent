@@ -34,7 +34,7 @@ from .replay import _aggregate, _case_result, _relative
 
 
 STRATEGY_POLICIES = {
-    P019Strategy.FIXED_WORKFLOW: StrategyRecoveryPolicy.WORKFLOW,
+    P019Strategy.PLAN_EXECUTE: StrategyRecoveryPolicy.NO_RECOVERY,
     P019Strategy.REACT: StrategyRecoveryPolicy.REACT,
     P019Strategy.PEVR: StrategyRecoveryPolicy.PEVR,
 }
@@ -89,7 +89,7 @@ def run_independent_comparison(
     config_path: str | Path = DEFAULT_CONFIG_PATH,
     verification_runner: Any | None = None,
 ) -> P019Report:
-    """对同一 60 例分别执行 Workflow / ReAct / PEVR 恢复策略。"""
+    """对同一 60 例分别执行 Plan-and-Execute / ReAct / PEVR 恢复额度。"""
 
     p019_config = load_config(config_path)
     if p019_config.get("execution_mode") != P019ExecutionMode.INDEPENDENT_ORACLE.value:
@@ -108,10 +108,10 @@ def run_independent_comparison(
             p018_config_path=p018_config_path,
             verification_runner=runner,
         )
-        for strategy in (P019Strategy.FIXED_WORKFLOW, P019Strategy.REACT, P019Strategy.PEVR)
+        for strategy in (P019Strategy.PLAN_EXECUTE, P019Strategy.REACT, P019Strategy.PEVR)
     }
     pevr_report = reports[P019Strategy.PEVR]
-    workflow_report = reports[P019Strategy.FIXED_WORKFLOW]
+    plan_execute_report = reports[P019Strategy.PLAN_EXECUTE]
     react_report = reports[P019Strategy.REACT]
     if len(pevr_report.cases) != 60:
         raise IndependentComparisonError("独立对照必须覆盖 60 例")
@@ -139,7 +139,7 @@ def run_independent_comparison(
     same_dataset = (
         pevr_report.dataset_id == "amr-p018-60"
         and pevr_report.dataset_version == "p0-18.v1"
-        and workflow_report.dataset_id == pevr_report.dataset_id
+        and plan_execute_report.dataset_id == pevr_report.dataset_id
         and react_report.dataset_id == pevr_report.dataset_id
     )
     same_tools = (
@@ -158,7 +158,7 @@ def run_independent_comparison(
     same_config = sha256_file(p018_config_path) == sha256_file(rooted_path(str(p019_config["p018_config_path"])))
     combined_identity = canonical_digest(
         {
-            "workflow": workflow_report.report_digest,
+            "plan_execute": plan_execute_report.report_digest,
             "react": react_report.report_digest,
             "pevr": pevr_report.report_digest,
         }
@@ -182,27 +182,27 @@ def run_independent_comparison(
     )
     raw_results: list[StrategyCaseResult] = []
     summaries: list[StrategySummary] = []
-    for strategy in (P019Strategy.FIXED_WORKFLOW, P019Strategy.REACT, P019Strategy.PEVR):
+    for strategy in (P019Strategy.PLAN_EXECUTE, P019Strategy.REACT, P019Strategy.PEVR):
         strategy_results = _strategy_results(strategy, reports[strategy])
         raw_results.extend(strategy_results)
         summaries.append(_aggregate(strategy, strategy_results, latency_source="p018_independent_oracle"))
     smart = SmartDeferral.model_validate(p019_config["smart_comparison"])
-    workflow = next(item for item in summaries if item.strategy is P019Strategy.FIXED_WORKFLOW)
+    plan_execute = next(item for item in summaries if item.strategy is P019Strategy.PLAN_EXECUTE)
     react = next(item for item in summaries if item.strategy is P019Strategy.REACT)
     pevr = next(item for item in summaries if item.strategy is P019Strategy.PEVR)
     split_cases = [
         case_id
         for case_id in case_ids
-        if next(item.observed_outcome for item in raw_results if item.strategy is P019Strategy.FIXED_WORKFLOW and item.case_id == case_id)
+        if next(item.observed_outcome for item in raw_results if item.strategy is P019Strategy.PLAN_EXECUTE and item.case_id == case_id)
         != next(item.observed_outcome for item in raw_results if item.strategy is P019Strategy.PEVR and item.case_id == case_id)
     ]
     conclusions = [
         f"三种策略独立执行同一 P0-18 60 例；PEVR 预期符合 {pevr.evaluation_pass_count}/{pevr.case_count}，"
-        f"Workflow {workflow.evaluation_pass_count}/{workflow.case_count}，ReAct {react.evaluation_pass_count}/{react.case_count}。",
-        f"终态被策略额度分开的 case 数：{len(split_cases)}；Workflow 与 PEVR 不再复制同一 observed_outcome。",
+        f"Plan-and-Execute {plan_execute.evaluation_pass_count}/{plan_execute.case_count}，ReAct {react.evaluation_pass_count}/{react.case_count}。",
+        f"终态被策略额度分开的 case 数：{len(split_cases)}；Plan-and-Execute 与 PEVR 不再复制同一 observed_outcome。",
         f"异常路径 PEVR 成功恢复 {pevr.successful_recovery_count}/{pevr.successful_recovery_case_count}，"
-        f"Workflow {workflow.successful_recovery_count}/{workflow.successful_recovery_case_count}。",
-        "PEVR 是生产恢复策略；固定 Workflow 与离线 react 槽位只在评测层独立执行。离线 react 是 max_retries=1 遗留夹具，不是独立 ReAct Agent。",
+        f"Plan-and-Execute {plan_execute.successful_recovery_count}/{plan_execute.successful_recovery_case_count}。",
+        "PEVR 是生产恢复策略；Plan-and-Execute 臂与离线 react 槽位只在评测层独立执行。离线 react 是 max_retries=1 遗留夹具，不是独立 ReAct Agent。",
         "Qwen3.8 Smart 对照已延期：本步未启动、未测试、未完成，不阻塞 P0-19。",
     ]
     limitations = [
@@ -220,7 +220,7 @@ def run_independent_comparison(
         "dataset_version": pevr_report.dataset_version,
         "case_count": 60,
         "strategy_report_digests": {
-            "fixed_workflow": workflow_report.report_digest,
+            "plan_execute": plan_execute_report.report_digest,
             "react": react_report.report_digest,
             "pevr": pevr_report.report_digest,
         },

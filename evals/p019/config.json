@@ -16,9 +16,9 @@
   },
   "strategies": [
     {
-      "id": "fixed_workflow",
+      "id": "plan_execute",
       "production_path": false,
-      "description": "无恢复额度的固定线性流程：max_replans=0、max_retries=0；独立执行同一 60 例。"
+      "description": "Plan-and-Execute 臂：一次性规划后线性执行，无恢复额度（max_replans=0、max_retries=0）；独立执行同一 60 例。"
     },
     {
       "id": "react",

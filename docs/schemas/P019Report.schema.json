@@ -259,9 +259,9 @@
       "type": "string"
     },
     "P019Strategy": {
-      "description": "三种固定对照策略；ReAct 只允许出现在评测层。",
+      "description": "三种对照策略；ReAct 只允许出现在评测层。\n\n``plan_execute`` 是“LLM 一次性产出任务 DAG → 确定性执行器跑完 → 不重规划”\n的 Plan-and-Execute 臂；它与 ``pevr`` 共用同一张八阶段图和同一套 Prompt，\n只差 ``fault_recovery_enabled``，因此二者构成 verify→replan 环的消融。\n``react`` 是唯一真正的跨范式对照（独立循环、独立 Prompt、不产出 DAG）。",
       "enum": [
-        "fixed_workflow",
+        "plan_execute",
         "react",
         "pevr"
       ],

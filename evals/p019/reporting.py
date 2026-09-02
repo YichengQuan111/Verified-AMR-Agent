@@ -116,7 +116,7 @@ def report_to_markdown(report: P019Report) -> str:
         "| 策略 | 全例预期符合率 | 任务完成率 | 计划合法率 | 异常终止正确率 | 成功重规划率 | 工具错误/意外 | 步数均值/P95 | Token | Trace 延迟 P95 | 资源 |",
         "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |",
     ]
-    for strategy in (P019Strategy.FIXED_WORKFLOW, P019Strategy.REACT, P019Strategy.PEVR):
+    for strategy in (P019Strategy.PLAN_EXECUTE, P019Strategy.REACT, P019Strategy.PEVR):
         summary = summaries[strategy]
         lines.append(
             "| {name} | {accuracy} | {completion} | {plan} | {recovery} | {successful} | {errors} | {mean:.2f}/{p95:.2f} | {tokens} | {latency:.2f} ms | {resource} |".format(
@@ -145,7 +145,7 @@ def report_to_markdown(report: P019Report) -> str:
             "| --- | ---: | ---: | ---: | ---: | ---: | ---: |",
         ]
     )
-    for strategy in (P019Strategy.FIXED_WORKFLOW, P019Strategy.REACT, P019Strategy.PEVR):
+    for strategy in (P019Strategy.PLAN_EXECUTE, P019Strategy.REACT, P019Strategy.PEVR):
         zero = summaries[strategy].zero_tolerance
         lines.append(
             f"| {strategy.value} | {zero.vertex_collision_count + zero.edge_collision_count} | {zero.forbidden_zone_entry_count} | {zero.low_battery_violation_count} | {zero.role_leak_count} | {zero.duplicate_side_effect_count} | {zero.approval_bypass_count} |"
@@ -159,7 +159,7 @@ def report_to_markdown(report: P019Report) -> str:
             f"- JSONL 原始轨迹（每行一个策略-case）：`p019_raw_trajectories.jsonl`。",
             f"- {source_label}：`{_md(report.source_report.get('path'))}`，SHA-256=`{_md(source_sha256)}`。",
             (
-                "- 在线独立 ReAct 只保存短 decision_summary、动作、Observation 和安全事实，不保存原始思维链；Fixed/PEVR 保存各自实际控制事实。"
+                "- 在线独立 ReAct 只保存短 decision_summary、动作、Observation 和安全事实，不保存原始思维链；Plan-and-Execute / PEVR 保存各自实际控制事实。"
                 if report.execution_mode.value == "online_fast_three_strategy_closed_loop"
                 else "- Replay 模式的 ReAct think/act/observe 仅是可视化投影，不代表新的在线调用。"
             ),
