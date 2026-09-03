@@ -660,6 +660,21 @@ def _validate_handler(dependencies: ToolDependencies) -> ToolHandler:
                 retryable=False,
             ) from exc
         refs = tuple(f"validator://{item.code}" for item in output.errors)
+        # P1-1：STL 第二判定层的汇总进入审计元数据与 Trace（鲁棒度、险胜数），
+        # 完整逐条结果仍在 output.stl 中；这里只记录，不改变 valid 的判定来源。
+        stl_metadata: dict[str, Any] = {}
+        stl_refs: tuple[str, ...] = ()
+        if output.stl is not None:
+            stl_metadata = {
+                "stl_spec_version": output.stl.spec_version,
+                "stl_enforcement": output.stl.enforcement,
+                "stl_status": output.stl.status,
+                "stl_violated_count": output.stl.violated_count,
+                "stl_narrow_pass_count": output.stl.narrow_pass_count,
+                "stl_min_robustness": output.stl.min_robustness,
+                "stl_min_robustness_formula_id": output.stl.min_robustness_formula_id,
+            }
+            stl_refs = (f"stl://{output.stl.spec_version}/{output.stl.status}",)
         if not output.valid or output.status != "valid" or output.errors:
             raise _failure(
                 "P0-10 Validator 拒绝计划",
@@ -667,12 +682,17 @@ def _validate_handler(dependencies: ToolDependencies) -> ToolHandler:
                 code="fleet_plan_invalid",
                 retryable=False,
                 output=output,
-                evidence_refs=list(refs),
-                details={"error_count": output.error_count, "ruleset_version": output.ruleset_version},
+                evidence_refs=[*refs, *stl_refs],
+                details={
+                    "error_count": output.error_count,
+                    "ruleset_version": output.ruleset_version,
+                    **stl_metadata,
+                },
             )
         return ToolHandlerResponse(
             output=output,
-            evidence_refs=(f"validator://{output.ruleset_version}/valid",),
+            evidence_refs=(f"validator://{output.ruleset_version}/valid", *stl_refs),
+            audit_metadata=stl_metadata or None,
         )
 
     return handler

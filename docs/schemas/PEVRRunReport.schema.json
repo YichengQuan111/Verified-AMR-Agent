@@ -428,6 +428,42 @@
           "minimum": 0,
           "title": "Total Tool Duration Ms",
           "type": "integer"
+        },
+        "stl_status": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Stl Status"
+        },
+        "stl_min_robustness": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Stl Min Robustness"
+        },
+        "stl_violated_count": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Stl Violated Count",
+          "type": "integer"
+        },
+        "stl_narrow_pass_count": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Stl Narrow Pass Count",
+          "type": "integer"
         }
       },
       "required": [

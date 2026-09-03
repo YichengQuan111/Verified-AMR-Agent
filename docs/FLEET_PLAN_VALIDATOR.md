@@ -5,6 +5,11 @@
 `environment_ref` 指向的文件，也不会信任 P0-08 的 Manhattan 代价、P0-09 的
 `status` 或任何 LLM/Prompt 声明。
 
+P1-1 起验证器有两层：本文描述的**规则层**，以及从 `config/stl/fleet_plan_stl_spec.json`
+加载 STL 规约、独立提取信号并计算定量鲁棒度的**STL 第二判定层**（gate 模式下违反即
+`invalid`）。STL 层的 DSL、语义、规约文件、输出字段与 60 例一致性核对见
+[`P1_STL_VALIDATOR.md`](P1_STL_VALIDATOR.md)。
+
 ## 构建与入口
 
 在已初始化 MSVC 开发环境的 PowerShell 中：
@@ -21,7 +26,12 @@ ctest --test-dir build\cpp -R "^fleet_validator_" --output-on-failure
 ```powershell
 Get-Content fleet_plan_request.json -Raw |
   .\build\cpp\services\planner_cpp\fleet_plan_validator_cli.exe --validate
+# P1-1：规则层 + STL 第二判定层（Python 工具层与仿真门禁固定使用这一形式）
+Get-Content fleet_plan_request.json -Raw |
+  .\build\cpp\services\planner_cpp\fleet_plan_validator_cli.exe --validate `
+    --stl-spec .\config\stl\fleet_plan_stl_spec.json
 .\build\cpp\services\planner_cpp\fleet_plan_validator_cli.exe --error-dictionary
+.\build\cpp\services\planner_cpp\fleet_plan_validator_cli.exe --describe-stl-spec .\config\stl\fleet_plan_stl_spec.json
 ```
 
 CLI 的 stdin 上限为 4 MiB，使用 P0-08 的严格 JSON 子集：重复键、未知字段、非
@@ -29,10 +39,14 @@ CLI 的 stdin 上限为 4 MiB，使用 P0-08 的严格 JSON 子集：重复键�
 而是 stdout 返回 `status="invalid"` 的结构化结果；调用方必须检查 `valid=true`、
 `status="valid"`、`errors=[]` 和 `ruleset_version="p0-10.v1"`。
 
+`--stl-spec` 是 CLI 唯一允许读取的文件，路径只来自 argv（Python 侧固定为仓库内
+`config/stl/fleet_plan_stl_spec.json`）；请求 JSON 没有任何字段能指定规约。规约缺失或
+非法时以退出码 `2`、`invalid_stl_specification` 失败，不会退化成只跑规则层。
+
 退出码：
 
 - `0`：请求已经确定性处理，计划可能 `valid`，也可能 `invalid`。
-- `2`：JSON、字段、参数或契约错误；stdout 返回 `status="error"`。
+- `2`：JSON、字段、参数或契约错误（含 STL 规约错误）；stdout 返回 `status="error"`。
 - `3`：未预期内部异常。
 
 ## 请求契约（schema_version=`"1.0"`）
@@ -141,6 +155,13 @@ ID 到正整数容量的覆盖表；同一工位同一离散服务时刻的 pick
 规则会携带坐标/时间和观察值/上限，依赖错误会携带前后任务，路径错误会携带 path
 索引。这样 Trace 和人工排障不需要解析中文 message 才能定位。
 
+P1-1 起响应还固定包含 `stl` 键：未传 `--stl-spec` 时为 `null`，否则是 STL 第二判定层
+报告（`status`、`satisfied`、`violated_count`、`narrow_pass_count`、`min_robustness` 与逐条
+`results[*]` 的 `formula_id/scope/satisfied/robustness/weakest_time/coordinate/vacuous/narrow_pass`）。
+gate 模式下每条违反实例同时追加一条 `stl_specification_violated` 错误证据（`message` 含公式 id，
+`observed` 为鲁棒度，`limit` 为 0，`time` 为最薄弱时刻）。字段语义见
+[`P1_STL_VALIDATOR.md`](P1_STL_VALIDATOR.md)。
+
 ## 错误字典
 
 机器可读的完整字典由以下命令从 C++ 单一实现导出：
@@ -162,8 +183,10 @@ ID 到正整数容量的覆盖表；同一工位同一离散服务时刻的 pick
 | 工位 | `workstation_capacity_config_missing`、`workstation_capacity_exceeded`、`pickup_location_missing`、`dropoff_location_missing` |
 | 车队安全 | `vertex_conflict`、`swap_edge_conflict`、`safety_distance_breached` |
 | 快照/身份/配置 | `environment_ref_empty`、`invalid_map`、`invalid_time_horizon`、`invalid_config`、`invalid_order`、`duplicate_amr_id`、`duplicate_order_id`、`duplicate_location_id`、`duplicate_completed_order_id`、`unknown_route_amr`、`unknown_route_order`、`duplicate_route_amr`、`duplicate_route_order`、`amr_unavailable` |
+| STL 第二判定层（P1-1） | `stl_specification_violated`（gate 模式下每条被违反的公式实例一条；`message` 含公式 id） |
 
-P0-10 的 CTest 为每个主要约束提供正反例，并额外验证错误证据字段、稳定序列化、
-错误字典唯一/排序和 LLM 旁路字段拒绝。Validator 通过前，后续 Executor 不得派发
+错误字典共 57 个错误码。P0-10 的 CTest（15 个 `fleet_validator_*`）为每个主要约束提供正反例，并额外验证错误证据字段、稳定序列化、
+错误字典唯一/排序和 LLM 旁路字段拒绝；P1-1 的 14 个 `stl_*` CTest 用同一批正反例核对
+STL 层与规则层的布尔一致性。Validator 通过前，后续 Executor 不得派发
 计划；P0-13/P0-12 只能把 `status="valid"` 当作可执行门禁。
 

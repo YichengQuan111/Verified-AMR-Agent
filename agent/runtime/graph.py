@@ -3477,6 +3477,24 @@ class PEVRGraphRunner:
         """从真实工具和模型节点结果计算报告指标，不接受 LLM 自报数字。"""
 
         results = state["tool_results"]
+        # P1-1：从最近一次成功的 validate_fleet_plan 输出重算 STL 摘要；这是
+        # 确定性工具事实，不经过 LLM。旧 Trace/假 Registry 没有 stl 字段时保持默认。
+        stl_status: str | None = None
+        stl_min_robustness: float | None = None
+        stl_violated_count = 0
+        stl_narrow_pass_count = 0
+        for item in reversed(results):
+            if item.tool_name is not ToolName.VALIDATE_FLEET_PLAN or item.status is not ToolResultStatus.SUCCESS:
+                continue
+            if not isinstance(item.output, dict) or not isinstance(item.output.get("stl"), dict):
+                break
+            stl_output = ValidationResponse.model_validate(item.output).stl
+            if stl_output is not None:
+                stl_status = stl_output.status
+                stl_min_robustness = stl_output.min_robustness
+                stl_violated_count = stl_output.violated_count
+                stl_narrow_pass_count = stl_output.narrow_pass_count
+            break
         return PEVRMetrics(
             graph_stage_count=len(PEVR_STAGE_ORDER),
             # finish 的模型调用已经发生，但当前 state 是进入 finish 前的信封，
@@ -3492,6 +3510,10 @@ class PEVRGraphRunner:
             simulation_status=simulation.status.value,
             simulation_end_time=simulation.end_time,
             total_tool_duration_ms=sum(item.duration_ms for item in results),
+            stl_status=stl_status,
+            stl_min_robustness=stl_min_robustness,
+            stl_violated_count=stl_violated_count,
+            stl_narrow_pass_count=stl_narrow_pass_count,
         )
 
 

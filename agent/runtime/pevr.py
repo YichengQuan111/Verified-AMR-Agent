@@ -182,6 +182,13 @@ class PEVRMetrics(PEVRContract):
     simulation_status: str
     simulation_end_time: int = Field(ge=0)
     total_tool_duration_ms: int = Field(ge=0)
+    # P1-1：STL 第二判定层摘要，从 validate_fleet_plan 工具输出确定性重算。
+    # 保持可选/默认值是为了兼容 P1-1 之前持久化的报告；“险胜”只记录，不改变
+    # 终态或重规划行为。
+    stl_status: str | None = None
+    stl_min_robustness: float | None = None
+    stl_violated_count: int = Field(default=0, ge=0)
+    stl_narrow_pass_count: int = Field(default=0, ge=0)
 
 
 class PEVRRunReport(PEVRContract):

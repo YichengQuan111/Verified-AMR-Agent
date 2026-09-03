@@ -63,6 +63,23 @@ Smart 继续延期。
 零容忍全 0。完整契约见
 [docs/P019_STRATEGY_COMPARISON.md](../docs/P019_STRATEGY_COMPARISON.md)。
 
+## P1-1 STL 与规则验证器布尔一致性核对
+
+`evals/stl_consistency/harness.py` 不依赖模型：用正式 `ToolRegistry`（生产 Hungarian + A*，
+P0-18 加难地图、每例 seed 障碍与电量/release 覆盖）为 P0-18 中会经过运输主链的 32 个用例生成
+真实计划，再施加 13 种确定性变异（超载、低电、封路格/边、单向逆行、deadline/release、截断路径、
+空闲 AMR 闯入、安全距离 2、无路线前置）和 6 个合成多车冲突场景，对每个计划分别跑
+`fleet_plan_validator_cli --validate` 与 `--validate --stl-spec`，逐公式比对
+“公式违反 ⟺ 对应规则错误码出现”。任何不一致都以非零退出码失败。
+
+```powershell
+.\scripts\run_stl_consistency.ps1
+```
+
+报告写入 `tmp/stl_consistency/stl_consistency.{json,md}`。2026-09-03 实测：453 个计划
+（32 基础 + 415 变异 + 6 合成）计划级一致 453/453，3171 次公式级核对 0 不一致，
+STL 单次增量 +1.2 ms。契约与语义见 [docs/P1_STL_VALIDATOR.md](../docs/P1_STL_VALIDATOR.md)。
+
 ## LLM 延迟 Benchmark（TTFT / Prefill / E2E）
 
 TTFT 必须用流式首 token 测量，不能用 llama.cpp `progress=1.00` 或 Prefill 回填。

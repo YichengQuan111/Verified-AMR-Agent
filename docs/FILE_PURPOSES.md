@@ -1368,10 +1368,30 @@ Fast 运行。新增/修改的核心 Python 已补中文模块说明、docstring
 | 修改 | `docs/P001_P003_FILE_GUIDE.md` | 从“原有未修改文件”中去掉已删除的 `Start_End_Database.txt`。 | 与仓库现状一致。 |
 | 修改 | `docs/HANDOFF_CONTEXT.md`、`docs/FILE_PURPOSES.md`、`docs/LESSONS_LEARNED.md` | 交接入口指向 `LOCAL_ENV.md`；登记本步。 | 后续 Agent 不再要求补录视频，也不把本机路径写回公开文档。 |
 
+## 2026-09-03：P1-1 STL 规约第二判定层
 
+本步核心 C++/Python 代码均已补充中文注释（设计原因、两层独立、信号语义对齐、fail-closed 边界）。规约文件为纯 JSON，无注释需求，语义在 `docs/P1_STL_VALIDATOR.md` 登记。
 
-
-
-
-
-
+| 变更 | 文件 | 作用 | 下游影响 |
+|---|---|---|---|
+| 新建 | `services/planner_cpp/include/fleet_plan_validator/stl_monitor.hpp` | STL DSL AST、规约结构、通用 `evaluate()`、`MonitorReport`/`InstanceResult` 公共类型。 | P2-B（规约综合、在线监控、SMT 交叉核对）复用同一 AST 与求值接口。 |
+| 新建 | `services/planner_cpp/src/stl_monitor.cpp` | 词法/递归下降解析、规范文本输出、规约加载（未知字段/信号/参数 fail-closed）、逐时刻布尔 + 鲁棒度 + witness 求值（G/F/U/and/or/not/->）。 | 与车队无关，可单独用于任何离散信号轨迹。 |
+| 新建 | `services/planner_cpp/src/stl_fleet_monitor.cpp` | 从 `FleetPlanRequest` 独立提取位置/电量/载荷/距离/事件裕量信号（不复用规则层 helper），按 order/amr/pair/station/dependency 作用域实例化公式并汇总报告。 | 信号目录变化必须同步 `stl_monitor.cpp` 的作用域目录；一致性 harness 据此核对。 |
+| 修改 | `services/planner_cpp/include/fleet_plan_validator/fleet_plan_validator.hpp`、`src/fleet_plan_validator.cpp` | `ValidationResult.stl`；`validate_fleet_plan(request, spec)` 重载：规则层 → STL 层 → gate 模式追加 `stl_specification_violated`；错误字典增至 57 码。 | 单参数版本行为不变；Python 只经 CLI 调用两层版本。 |
+| 修改 | `services/planner_cpp/include/fleet_plan_validator/json_codec.hpp`、`src/fleet_plan_validator_json_codec.cpp` | 响应新增固定 `stl` 键（无规约时 `null`）与 `stl_report_to_value()`。 | `ValidationResponse.stl` Python 契约与之逐字段对应。 |
+| 修改 | `services/planner_cpp/src/fleet_plan_validator_main.cpp` | CLI 增加 `--validate --stl-spec <path>` 与 `--describe-stl-spec <path>`；规约错误退出码 2 `invalid_stl_specification`，不退化为只跑规则层。 | Python 工具层/仿真门禁固定传入仓库内规约路径。 |
+| 新建 | `services/planner_cpp/tests/stl_monitor_tests.cpp` | 14 个 CTest：DSL 往返/优先级、原子严格性、布尔算子、G/F/U/嵌套语义、规约拒绝、发布规约文件、合法计划精确鲁棒度、13 个反例精确鲁棒度与最薄弱时刻、逐公式布尔一致性、gate/shadow/skipped、稳定序列化、时间域 2000 性能。 | CTest 基线从 38 增至 53。 |
+| 修改 | `services/planner_cpp/CMakeLists.txt` | 把两个 STL 源文件编进 `fleet_plan_validator` 库；新增 `stl_monitor_tests` 目标与 14 个 `stl_*` 用例（规约路径通过 `--spec` 注入）。 | `run_smoke.ps1` 自动包含。 |
+| 新建 | `config/stl/fleet_plan_stl_spec.json` | 发布规约 `amr-fleet-plan-stl`/`p1-1.v1`：8 条公式、规则码映射、险胜阈值、`enforcement=gate`。 | 修改公式或阈值只改此文件；CTest `stl_spec_file` 锁定 8 条公式 id 与覆盖码。 |
+| 修改 | `agent/tools/cpp_client.py` | `STL_SPECIFICATION_RELATIVE_PATH`、`stl_specification_path`；`validate_plan` 固定 argv `--validate --stl-spec <path>`，规约缺失 `stl_specification_unavailable` fail-closed。 | 所有经工具层的验证都跑两层。 |
+| 修改 | `services/amr_simulator/validator.py` | 仿真前置门禁同样传入固定规约路径；缺失时 `ValidatorExecutionError`。 | 仿真与工具层验证同一份规约。 |
+| 修改 | `agent/tools/schemas.py` | 新增 `STLScopeOutput`、`STLInstanceOutput`、`STLMonitorOutput`；`ValidationResponse.stl` 可选字段并校验“gate 违反必须 invalid”。 | `docs/schemas/ValidationResponse.schema.json` 已重导出。 |
+| 修改 | `agent/tools/registry.py` | `validate_fleet_plan` 成功/失败都把 STL 摘要写入审计元数据与证据引用 `stl://<spec_version>/<status>`。 | Trace `tool` 事件 metadata 自动携带鲁棒度摘要。 |
+| 修改 | `agent/runtime/pevr.py`、`agent/runtime/graph.py` | `PEVRMetrics.stl_status/stl_min_robustness/stl_violated_count/stl_narrow_pass_count`（可选，兼容旧报告），`_build_metrics` 从工具输出确定性重算。 | `docs/schemas/PEVRRunReport.schema.json` 已重导出；险胜只记录不改行为。 |
+| 修改 | `docs/schemas/ValidationResponse.schema.json`、`docs/schemas/PEVRRunReport.schema.json` | `scripts/export_schemas.py` 重导出。 | 契约一致性测试通过。 |
+| 新建 | `evals/stl_consistency/__init__.py`、`evals/stl_consistency/harness.py`、`scripts/run_stl_consistency.ps1` | 用正式 ToolRegistry 为 P0-18 运输类用例生成真实计划，叠加 13 种变异与 6 个合成场景，对比仅规则层/规则层+STL 的逐公式布尔一致性，输出 JSON/Markdown 报告；不一致非零退出。 | P1 后续改动验证器或规约时的回归门禁。 |
+| 新建 | `tests/unit/test_p1_stl_validator.py` | 固定规约路径、真实 CLI 输出契约、gate/shadow/规约损坏退出码、契约拒绝矛盾汇总、PEVRMetrics 兼容、harness 合成/变异一致性。 | pytest 基线新增 6 例。 |
+| 修改 | `tests/unit/test_p012_tools.py` | Validator argv 断言改为 `--validate --stl-spec <仓库内规约>`。 | — |
+| 新建 | `docs/P1_STL_VALIDATOR.md` | DSL 文法与语义、规约文件、信号目录与规则层对齐表、输出契约、一致性实测、面试口径、限制。 | 面试与 P2-B 的入口文档。 |
+| 修改 | `docs/FLEET_PLAN_VALIDATOR.md`、`README.md`、`docs/RESUME_FACTS.md`、`docs/PROJECT_OVERVIEW.md`、`docs/TEST_REPORT.md`、`evals/README.md`、`docs/HANDOFF_CONTEXT.md`、`docs/LESSONS_LEARNED.md`、`docs/FILE_PURPOSES.md` | 登记两层验证、CLI 参数、指标与实测。部分文档无核心代码注释需求。 | 简历与后续 Agent。 |
+| 生成物 | `tmp/stl_consistency/stl_consistency.{json,md}` | 2026-09-03 一致性核对报告（453 计划、3171 次核对、0 不一致）。 | 可重跑覆盖。 |

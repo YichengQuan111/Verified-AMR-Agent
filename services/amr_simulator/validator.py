@@ -58,6 +58,9 @@ class FleetPlanValidatorClient:
         )
         self._repository_root = repository_root
         self._executable = Path(executable) if executable is not None else default_executable
+        # P1-1：STL 规约与 agent.tools.cpp_client 使用同一固定文件，仿真前置门禁
+        # 因此与工具层跑的是同一份两层验证；缺失时 fail-closed。
+        self._stl_specification = repository_root / "config" / "stl" / "fleet_plan_stl_spec.json"
         self._timeout_seconds = timeout_seconds
 
     @property
@@ -65,6 +68,12 @@ class FleetPlanValidatorClient:
         """返回固定 Validator 路径，供启动检查和审计日志使用。"""
 
         return self._executable
+
+    @property
+    def stl_specification(self) -> Path:
+        """返回固定 STL 规约路径；计划 JSON 不能覆盖它。"""
+
+        return self._stl_specification
 
     def validate(self, plan: SimulationPlan | Mapping[str, Any]) -> dict[str, Any]:
         """调用 Validator 并在未通过时抛出结构化 ``PlanValidationError``。"""
@@ -86,10 +95,14 @@ class FleetPlanValidatorClient:
             raise ValidatorExecutionError(
                 f"找不到 P0-10 Validator 可执行文件: {self._executable}"
             )
+        if not self._stl_specification.is_file():
+            raise ValidatorExecutionError(
+                f"找不到 P1-1 STL 规约文件: {self._stl_specification}"
+            )
 
         try:
             completed = subprocess.run(
-                [str(self._executable), "--validate"],
+                [str(self._executable), "--validate", "--stl-spec", str(self._stl_specification)],
                 input=request,
                 capture_output=True,
                 text=True,

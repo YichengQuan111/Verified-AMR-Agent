@@ -391,7 +391,10 @@ def test_cpp_client_uses_fixed_argv_and_shell_false() -> None:
     response = client.validate_plan({"safe": True}, timeout_seconds=1.0)
     assert response == {"status": "ok"}
     assert observed["kwargs"]["shell"] is False
-    assert observed["args"][-1] == "--validate"
+    # P1-1：argv 固定为 --validate --stl-spec <仓库内规约文件>；规约路径不来自 payload。
+    assert observed["args"][1:] == ["--validate", "--stl-spec", str(client.stl_specification_path)]
+    assert client.stl_specification_path == client.repository_root / "config" / "stl" / "fleet_plan_stl_spec.json"
+    assert client.stl_specification_path.is_file()
     assert observed["args"][0].endswith("fleet_plan_validator_cli.exe")
     assert "safe" in json.loads(observed["kwargs"]["input"])
 

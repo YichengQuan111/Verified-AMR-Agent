@@ -11,7 +11,8 @@
   → 受限上下文与结构化任务合同
   → RAG 证据
   → 任务 DAG
-  → 确定性分配/路径/验证
+  → 确定性分配/路径
+  → 双层验证器 Guardrail（规则层 + STL 规约层）
   → 离散事件仿真
   → 观测验证与局部重规划/审批
   → 返回用户
@@ -23,7 +24,8 @@
 
 - **自然语言下单**：本地 Qwen 3.6 35B A3B 模型把任意运输请求抽取为结构化订单，进入完整 PEVR 闭环。
 - **固定 PEVR 闭环**：`guard → understand → retrieve → plan → validate → execute → verify → finish`；任何计划必须先通过确定性 Validator 才能执行。
-- **C++17 确定性规划**：A* 路径规划、物理安全验证器。
+- **C++17 确定性规划**：任务分配、A* 路径规划。
+- **双层验证器 Guardrail**：C++17 车队计划验证器由规则层与 STL 规约层组成，两层独立判定、缺一不可。规则层对时间窗、电量、载荷、禁行区及顶点/边冲突做约束检查；STL 层从 JSON 规约文件加载 8 条信号时序逻辑公式，独立提取轨迹信号计算定量鲁棒度与最薄弱时刻。两层在 453 个计划、3171 次公式级判定上布尔一致率 100%。
 - **Python 离散事件仿真**：固定 1 秒 tick，只执行通过验证的计划。
 - **RAG 证据与拒答**：章节切块、本地 Embedding + Qdrant/BM25 混合检索、检索期 ACL、引用标注与证据不足确定性拒答。
 - **安全与人工接管**：HITL 审批、工具白名单。
@@ -43,12 +45,11 @@ ReAct、Plan-and-Execute 和 PEVR 分别真实执行同一套在线闭环 60 例
 | Plan-and-Execute | 52/60 | 3/10 | 36/44 | 117 / 757,143 |
 | PEVR | 59/60 | 9/10 | 43/44 | 132 / 841,688 |
 
-两条结论要分开读：
 
-- **Plan-and-Execute → PEVR 是消融，不是两种范式**：两者共用同一张八阶段图、同一套
-Prompt 和同一条四任务链，唯一差别是 verify→replan 的行为。异常终态正确率 **3/10 → 9/10**、全例符合 **52 → 59**，
+- Plan-and-Execute → PEVR 是消融，不是两种范式：两者共用同一张八阶段图、同一套
+Prompt 和同一条四任务链，唯一差别是 verify→replan 的行为。异常终态正确率 3/10 → 9/10、全例符合 52 → 59，
   代价是 +15 次模型调用与 +11% Token。这一差值就是 verify→replan 的净贡献。
-- **ReAct 是跨范式对照**：逐步决策在异常上强于不重规划的 Plan-and-Execute，但正常例更弱，且模型调用是 PEVR 的 2.5 倍。
+- ReAct 是跨范式对照：逐步决策在异常上强于不重规划的 Plan-and-Execute，但正常例更弱，且模型调用是 PEVR 的 2.5 倍。
 
 
 
@@ -74,6 +75,35 @@ RAG 结果来自本地Qwen3-Embedding-0.6B、Qdrant 与 BM25 混合检索
 | nDCG@K | 1.000 | 按章节级二元相关性评价排序质量 |
 | ACL 泄漏数 | 0 | 检索候选中没有出现当前角色无权访问的文档 |
 
+
+## 双层验证器 Guardrail：规则层 + STL 规约层
+
+LLM 只负责理解与规划，任何计划在派发前都必须通过 C++17 车队计划验证器；它是“LLM 不能绕过 Validator”
+这一安全论证的落点。验证器由两个独立实现的判定层组成，任一层拒绝即计划 `invalid`：
+
+```text
+LLM 任务 DAG →  分配 →  A* 路径
+  → 规则层：时间窗、电量、载荷、禁行区/边、工位容量 → 稳定错误码 + 定位证据
+  → STL 规约层：独立提取轨迹信号 → 布尔结论 + 鲁棒度 + 最薄弱时刻
+  → 两层都通过 → 离散事件仿真
+```
+
+| 层 | 判定方式 | 输出 | 作用 |
+|---|---|---|---|
+| 规则层 | 约束检查，条件语句 | 通过/失败 + 任务、AMR、坐标、时刻、观测值 | 派发门禁，拒绝 `llm_valid`/`skip_validation` 等旁路字段 |
+| STL 规约层 | 信号时序逻辑：`F[release,deadline]` 交付、`G(battery ≥ margin)`、`G ¬in_zone`、`¬pickup U dropoff`、`G(occupancy ≤ cap)`等| 每条公式的布尔结论、定量鲁棒度、最薄弱时刻 | 与规则层布尔结论不一致即 Bug；鲁棒度记录可作为 Agentic RL 奖励信号 |
+
+两层刻意不共享代码：STL 层重新提取位置、电量、载荷、距离和事件裕量信号，不读取规则层的中间结果，
+因此一个 helper 的 Bug 不会同时骗过两层。规约文件只能由 CLI 固定路径加载，请求 JSON 无法指定或削弱它。
+
+| 指标 | 结果 |
+|---|---:|
+| STL 公式数 / 覆盖的安全约束错误码 | 8 / 17（全部；其余 40 码为结构/契约类，由规则层独占） |
+| 计划级布尔一致 / 公式级核对不一致 | 453/453 / 0 of 3171 |
+| 单次验证增量开销（中位数，含进程启动） | +1.2 ms（5.8 → 7.0 ms） |
+ 
+
+ 
 
 
 ## 快速开始
@@ -104,6 +134,7 @@ python -m pip install -r .\requirements.lock -r .\requirements-dev.lock
 | [docs/PROJECT_OVERVIEW.md](docs/PROJECT_OVERVIEW.md) | 项目完整说明：固定范围、工作包状态、架构与各子系统细节 |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 系统架构图与数据流 |
 | [docs/API.md](docs/API.md) | HTTP 接口契约 |
+| [docs/FLEET_PLAN_VALIDATOR.md](docs/FLEET_PLAN_VALIDATOR.md) / [docs/P1_STL_VALIDATOR.md](docs/P1_STL_VALIDATOR.md) | 双层验证器 Guardrail：规则层契约与错误字典 / STL 规约层 DSL、语义与一致性核对 |
 | [docs/SERVICES_STARTUP.md](docs/SERVICES_STARTUP.md) | 服务启动手册 |
 | [docs/TEST_REPORT.md](docs/TEST_REPORT.md) | 测试与验证报告 |
 | [docs/HANDOFF_CONTEXT.md](docs/HANDOFF_CONTEXT.md) | 跨会话交接上下文 |

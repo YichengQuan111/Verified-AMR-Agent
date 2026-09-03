@@ -385,8 +385,87 @@ class ValidationEvidenceOutput(ToolSchema):
     related_path_index: int
 
 
+class STLScopeOutput(ToolSchema):
+    """P1-1 STL 公式实例的作用域身份；不适用的 ID 为空字符串而不是省略。"""
+
+    kind: Literal["order", "amr", "pair", "station", "dependency"]
+    order_id: str
+    related_order_id: str
+    amr_id: str
+    related_amr_id: str
+    station_id: str
+
+
+class STLInstanceOutput(ToolSchema):
+    """一条 STL 公式在一个作用域上的判定：布尔结论 + 定量鲁棒度 + 最薄弱时刻。
+
+    ``robustness`` 为 None 表示鲁棒度为 ±inf（空窗口的空真/空假），此时
+    ``vacuous`` 为 True；``narrow_pass`` 表示满足但鲁棒度低于规约的 warn_below。
+    """
+
+    formula_id: str
+    scope: STLScopeOutput
+    satisfied: bool
+    robustness: float | None
+    weakest_time: int | None
+    coordinate: GridPosition | None
+    related_coordinate: GridPosition | None
+    vacuous: bool
+    narrow_pass: bool
+
+    @model_validator(mode="after")
+    def validate_flags(self) -> "STLInstanceOutput":
+        """险胜只能出现在满足且鲁棒度有限的实例上。"""
+
+        if self.narrow_pass and (not self.satisfied or self.robustness is None):
+            raise ValueError("narrow_pass 必须同时满足 satisfied=true 且鲁棒度有限")
+        if self.vacuous != (self.robustness is None):
+            raise ValueError("vacuous 必须与 robustness 是否为空一致")
+        return self
+
+
+class STLMonitorOutput(ToolSchema):
+    """P1-1 STL 第二判定层报告；汇总计数必须能由 results 逐条重算。"""
+
+    spec_id: str
+    spec_version: str
+    enforcement: Literal["gate", "shadow"]
+    status: Literal["satisfied", "violated", "skipped"]
+    satisfied: bool
+    skip_reason: str | None
+    formula_count: int = Field(ge=0)
+    instance_count: int = Field(ge=0)
+    violated_count: int = Field(ge=0)
+    narrow_pass_count: int = Field(ge=0)
+    min_robustness: float | None
+    min_robustness_formula_id: str | None
+    min_robustness_scope: STLScopeOutput | None
+    results: list[STLInstanceOutput]
+
+    @model_validator(mode="after")
+    def validate_counts(self) -> "STLMonitorOutput":
+        """拒绝与逐条结果矛盾的汇总；skipped 时不得携带任何实例。"""
+
+        if self.instance_count != len(self.results):
+            raise ValueError("instance_count 必须等于 results 数量")
+        if self.violated_count != sum(not item.satisfied for item in self.results):
+            raise ValueError("violated_count 必须等于未满足实例数")
+        if self.narrow_pass_count != sum(item.narrow_pass for item in self.results):
+            raise ValueError("narrow_pass_count 必须等于险胜实例数")
+        if self.status == "skipped":
+            if self.results or self.satisfied or not self.skip_reason:
+                raise ValueError("status=skipped 必须无实例、satisfied=false 且给出 skip_reason")
+        elif self.satisfied != (self.status == "satisfied") or self.satisfied != (self.violated_count == 0):
+            raise ValueError("satisfied 必须与 status 和 violated_count 一致")
+        return self
+
+
 class ValidationResponse(ToolSchema):
-    """P0-10 验证响应；valid=false 是安全结论而非进程崩溃。"""
+    """P0-10 验证响应；valid=false 是安全结论而非进程崩溃。
+
+    P1-1 起响应附带 ``stl`` 第二判定层报告：未传规约时为 None；gate 模式下
+    STL 违反必须同时体现为 ``stl_specification_violated`` 错误证据。
+    """
 
     schema_version: Literal["1.0"]
     ruleset_version: Literal["p0-10.v1"]
@@ -394,6 +473,7 @@ class ValidationResponse(ToolSchema):
     valid: bool
     error_count: int
     errors: list[ValidationEvidenceOutput]
+    stl: STLMonitorOutput | None = None
 
     @model_validator(mode="after")
     def validate_summary(self) -> "ValidationResponse":
@@ -406,6 +486,9 @@ class ValidationResponse(ToolSchema):
                 raise ValueError("status=valid 必须同时满足 valid=true 且 errors 为空")
         elif self.valid or not self.errors:
             raise ValueError("status=invalid 必须同时满足 valid=false 且包含错误证据")
+        if self.stl is not None and self.stl.enforcement == "gate" and self.stl.status == "violated":
+            if self.valid or not any(item.code == "stl_specification_violated" for item in self.errors):
+                raise ValueError("gate 模式下 STL 违反必须使计划 invalid 并附带 stl_specification_violated")
         return self
 
 

@@ -12,6 +12,7 @@
 - 真实 RAG holdout（8 test + 4 attack）测得 Recall@K=1、MRR=1、Precision@K=0.236364、nDCG@K=1、citation=1、answerability=1、ACL=0；Precision/nDCG 按唯一文档+章节二元 oracle 计算且排除不可答例。`--minimum-hybrid-score 1 --minimum-vector-score 1` 退出码 2。
 - 实现 PostgreSQL Checkpoint/Effect Ledger、生产图有限 retry/replan、JWT/RBAC/HITL 和固定验证白名单；七类异常的生产图测试使用 FakeRegistry，不等于现场设备/真实 C++ 故障注入已关闭。
 - P0-20 Compose 已改为必需 secrets、内部数据网络和 loopback API；对外演示为 `docs/media/demo_v0.gif`。
+- P1-1（2026-09-03）：在 C++ 车队计划验证器中引入 STL 规约第二判定层：8 条 STL 公式从 `config/stl/fleet_plan_stl_spec.json` 加载，独立提取信号并计算离散时间有限轨迹鲁棒度，覆盖全部 17 个安全/时序约束错误码；`evals/stl_consistency` 用生产 Hungarian/A* 为 P0-18 的 32 个运输类用例生成真实计划，叠加 415 个变异与 6 个合成冲突场景，共 453 个计划、3171 次公式级判定与规则验证器**布尔一致率 100%**（0 不一致）；单次验证增量 +1.2 ms（中位数）；14 个新增 CTest（合计 53/53）。简历可写：“在车队计划验证器中引入 STL 规约与定量鲁棒度监控，8 条公式覆盖全部安全约束，与规则验证器布尔一致率 100%（453 例）”。
 
 ## 必须同时注明的限定
 
@@ -19,3 +20,4 @@
 - P0-19 在线当前结果是 `p0-19.online.v2` 报告 `p019-online-5bf27026e1607cfe`（覆盖写入 `tmp/p019_online_strategy_compare`）：独立 ReAct/Plan-and-Execute/PEVR 全例符合 **46/60、52/60、59/60**，任务完成 **30/44、36/44、43/44**，异常终态按 expected==observed 为 **6/10、3/10、9/10**，七项零容忍均为 0。该报告产出于策略 id `fixed_workflow` → `plan_execute` 改名之前；数值不受影响，但重跑会得到新的 report_id/digest。不得把已作废的 v1 一次 retry 分数写成独立 ReAct。离线 `offline_independent_oracle`：三种策略各自跑同一数据集，异常恢复额度应能分开；Token、CPU、RSS、GPU 未观测，Trace 延迟不是墙钟。
 - Qwen3.8 Smart alias 保留但 `enabled=false`；历史 P0-05 在线验收仅 2/5，Smart 对照延期，未完成。
 - P0 范围不含 ROS 2、Gazebo、真实底盘、CBS/ECBS、MILP、Redis/Celery/Kubernetes 或任意代码执行 Sandbox。
+- P1-1 的 STL 层只做派发前离线验证，不做仿真流在线监控、SMT 交叉核对或模型检验；一致性核对的“453 个计划”是 P0-18 派生计划 + 确定性变异 + 合成场景，不是 60 例在线 LLM 运行；“险胜”只记录进 Trace/指标，不改变任何终态；`low_battery_charging` 公式在 P0 运输计划中没有规则层对应，是 `battery_safety` 的推论。

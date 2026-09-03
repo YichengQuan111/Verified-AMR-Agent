@@ -1,0 +1,74 @@
+{
+  "schema_version": "1.0",
+  "spec_id": "amr-fleet-plan-stl",
+  "spec_version": "p1-1.v1",
+  "description": "P1-1 车队计划 STL 规约。区间相对轨迹起点 start_time；命名时间参数已换算为偏移。裕量信号 *_margin = t - 事件时刻，事件未发生时按 max_time + 1 计。布尔型信号取值 +1/-1，用 `> 0` 判定，因此含布尔子式的公式鲁棒度饱和在 1。",
+  "enforcement": "gate",
+  "charging_location_ids": ["C1", "C2"],
+  "formulas": [
+    {
+      "id": "time_window",
+      "scope": "order",
+      "description": "装货不早于 release_time；在 [release_time, deadline] 内完成交付（终点占用保持到 max_time）。",
+      "formula": "G[0, release_time - 1](loaded_margin <= -1) and F[release_time, deadline](delivered_margin >= 0)",
+      "rule_codes": ["pickup_before_release", "dropoff_after_deadline", "dropoff_not_reached"],
+      "warn_below": 5
+    },
+    {
+      "id": "battery_safety",
+      "scope": "amr",
+      "description": "派发时刻电量严格高于普通新任务门槛，且全程电量不低于安全余量（只按合法 move 扣电）。",
+      "formula": "G[0, 0](battery > new_task_battery_threshold_percent) and G(battery >= battery_safety_reserve_percent)",
+      "rule_codes": ["amr_battery_below_new_task_threshold", "amr_battery_critical", "battery_safety_reserve_breached"],
+      "warn_below": 5
+    },
+    {
+      "id": "traffic_rules",
+      "scope": "amr",
+      "description": "全程不进入禁行格（到最近禁行格距离 ≥ 1）、不越界、不穿越禁行边或逆行单向边。",
+      "formula": "G(blocked_cell_distance >= 1 and boundary_margin >= 0 and edge_legal > 0)",
+      "rule_codes": ["forbidden_zone_occupied", "route_out_of_bounds", "forbidden_edge_traversed", "one_way_violation"],
+      "warn_below": null
+    },
+    {
+      "id": "load_capacity",
+      "scope": "amr",
+      "description": "初始载荷与装货后载荷全程不超过最大载荷。",
+      "formula": "G(load <= maximum_load_kg)",
+      "rule_codes": ["load_capacity_exceeded"],
+      "warn_below": 5
+    },
+    {
+      "id": "fleet_separation",
+      "scope": "pair",
+      "description": "任意两台 AMR 全程不同格、曼哈顿距离不低于最小安全距离、不在同一时段交换相邻边。",
+      "formula": "G(pair_distance >= 1 and pair_distance >= minimum_safety_distance_cells and no_edge_swap > 0)",
+      "rule_codes": ["vertex_conflict", "safety_distance_breached", "swap_edge_conflict"],
+      "warn_below": 1
+    },
+    {
+      "id": "workstation_capacity",
+      "scope": "station",
+      "description": "同一工位同一离散时刻的装卸服务数量不超过容量。",
+      "formula": "G(occupancy <= capacity)",
+      "rule_codes": ["workstation_capacity_exceeded"],
+      "warn_below": null
+    },
+    {
+      "id": "dependency_precedence",
+      "scope": "dependency",
+      "description": "在前置订单交付之前，当前订单不得装货（¬pickup U dropoff）；鲁棒度约为时序裕量的一半。",
+      "formula": "(dependent_loaded_margin <= -1) U (prerequisite_delivered_margin >= 0)",
+      "rule_codes": ["task_dependency_time_order", "task_dependency_unplanned"],
+      "warn_below": 2
+    },
+    {
+      "id": "low_battery_charging",
+      "scope": "amr",
+      "description": "电量一旦低于临界门槛，必须在 30 个时刻内到达充电站；运输计划不含充电动作，因此该规约在临界门槛不高于安全余量时由 battery_safety 蕴含，没有对应规则码。",
+      "formula": "G(battery >= critical_battery_threshold_percent or F[0, 30](at_charging_station > 0))",
+      "rule_codes": [],
+      "warn_below": 5
+    }
+  ]
+}

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "fleet_plan_validator/stl_monitor.hpp"
 #include "route_planner/route_planner.hpp"
 
 #include <map>
@@ -94,6 +95,9 @@ struct ValidationResult {
   std::string status{"invalid"};  // valid 或 invalid；两者都是已处理的业务结果
   bool valid{false};
   std::vector<ValidationEvidence> errors;
+  // P1-1：第二判定层的完整报告。未传入规约时为空；gate 模式下 STL 违反会
+  // 同时体现在 errors 中（错误码 stl_specification_violated）。
+  std::optional<stl::MonitorReport> stl;
 };
 
 // 返回按稳定错误码排序的只读错误字典；调用方可用于 --error-dictionary，
@@ -103,6 +107,17 @@ const std::vector<ValidationErrorDefinition>& error_dictionary() noexcept;
 // 对结构化计划执行完整确定性验证。非法计划通过 errors 返回，函数不会把
 // “发现违规”当作 C++ 异常；只有 JSON/契约边界错误才由 codec 抛出 ParseError。
 ValidationResult validate_fleet_plan(const FleetPlanRequest& request);
+
+// P1-1：规则层 + STL 第二判定层。specification 为 nullptr 时与单参数版本
+// 完全相同；否则先跑规则层，再独立提取信号做 STL 监控，gate 模式把违反追加
+// 为错误证据后统一排序。两层各自独立计算，不共享中间结论。
+ValidationResult validate_fleet_plan(const FleetPlanRequest& request,
+                                     const stl::Specification* specification);
+
+// 只运行 STL 第二判定层，返回每条公式实例的布尔结果、鲁棒度和最薄弱时刻；
+// 一致性核对和 CTest 通过它与规则层结论逐条比对。
+stl::MonitorReport monitor_fleet_plan(const FleetPlanRequest& request,
+                                      const stl::Specification& specification);
 
 }  // namespace amr::planner::validator
 

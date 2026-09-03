@@ -14,9 +14,14 @@ target_compile_features(route_planner PUBLIC cxx_std_17)
 # P0-10 只接收内存中的完整车队计划快照，并复用 P0-09 的 RouteStep/地图语义。
 # Validator 独立成库，CLI 和 CTest 均调用同一入口，确保后续 Python 工具不能
 # 复制或绕过确定性约束；错误证据由库统一排序后再序列化。
+# P1-1 STL 第二判定层与规则层编进同一静态库：stl_monitor.cpp 是与车队无关的
+# DSL 解析/求值核心，stl_fleet_monitor.cpp 负责从 FleetPlanRequest 独立提取
+# 信号。CLI 通过显式 --stl-spec 加载规约文件，请求 JSON 不能指定规约。
 add_library(fleet_plan_validator STATIC
   src/fleet_plan_validator.cpp
   src/fleet_plan_validator_json_codec.cpp
+  src/stl_monitor.cpp
+  src/stl_fleet_monitor.cpp
 )
 target_include_directories(fleet_plan_validator PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(fleet_plan_validator PUBLIC route_planner)
@@ -59,6 +64,12 @@ target_compile_definitions(
 add_executable(fleet_plan_validator_tests tests/fleet_plan_validator_tests.cpp)
 target_link_libraries(fleet_plan_validator_tests PRIVATE fleet_plan_validator)
 
+# P1-1 STL 测试：DSL 语义用手工轨迹验证，车队用例复用 P0-10 的正反例做布尔
+# 一致性核对；发布规约文件通过 --spec 传入，测试不隐式搜索文件系统。
+add_executable(stl_monitor_tests tests/stl_monitor_tests.cpp)
+target_link_libraries(stl_monitor_tests PRIVATE fleet_plan_validator)
+set(STL_SPEC_FILE "${PROJECT_SOURCE_DIR}/config/stl/fleet_plan_stl_spec.json")
+
 # 路由测试按场景拆成独立 CTest，失败时可以直接定位到障碍、预约、无解或
 # 性能门禁；测试只使用公共 route_planner 头，不复制生产搜索实现。
 add_executable(route_planner_tests tests/route_planner_tests.cpp)
@@ -75,7 +86,7 @@ target_compile_definitions(
 set(PLANNER_CPP_TARGETS
   task_allocator route_planner fleet_plan_validator route_planner_cli
   fleet_plan_validator_cli amr_planner_smoke task_allocator_cli task_allocator_tests
-  fleet_plan_validator_tests route_planner_tests
+  fleet_plan_validator_tests route_planner_tests stl_monitor_tests
 )
 foreach(target_name IN LISTS PLANNER_CPP_TARGETS)
   if(MSVC)
@@ -139,4 +150,20 @@ if(BUILD_TESTING)
   add_test(NAME fleet_validator_stable_evidence COMMAND fleet_plan_validator_tests --case stable_evidence)
   add_test(NAME fleet_validator_json_contract COMMAND fleet_plan_validator_tests --case json_contract)
   add_test(NAME fleet_validator_error_dictionary COMMAND fleet_plan_validator_tests --case error_dictionary)
+
+  add_test(NAME stl_parse_roundtrip COMMAND stl_monitor_tests --case parse_roundtrip)
+  add_test(NAME stl_atom_semantics COMMAND stl_monitor_tests --case atom_semantics)
+  add_test(NAME stl_boolean_operators COMMAND stl_monitor_tests --case boolean_operators)
+  add_test(NAME stl_globally_eventually COMMAND stl_monitor_tests --case globally_eventually)
+  add_test(NAME stl_until_semantics COMMAND stl_monitor_tests --case until_semantics)
+  add_test(NAME stl_nested_temporal COMMAND stl_monitor_tests --case nested_temporal)
+  add_test(NAME stl_spec_load_rejects COMMAND stl_monitor_tests --case spec_load_rejects)
+  add_test(NAME stl_spec_file COMMAND stl_monitor_tests --case spec_file --spec "${STL_SPEC_FILE}")
+  add_test(NAME stl_fleet_valid_plan COMMAND stl_monitor_tests --case fleet_valid_plan --spec "${STL_SPEC_FILE}")
+  add_test(NAME stl_fleet_violations COMMAND stl_monitor_tests --case fleet_violations --spec "${STL_SPEC_FILE}")
+  add_test(NAME stl_boolean_consistency COMMAND stl_monitor_tests --case boolean_consistency --spec "${STL_SPEC_FILE}")
+  add_test(NAME stl_gate_vs_shadow COMMAND stl_monitor_tests --case gate_vs_shadow --spec "${STL_SPEC_FILE}")
+  add_test(NAME stl_stable_evidence COMMAND stl_monitor_tests --case stable_evidence --spec "${STL_SPEC_FILE}")
+  add_test(NAME stl_performance COMMAND stl_monitor_tests --case performance --spec "${STL_SPEC_FILE}")
+  set_tests_properties(stl_performance PROPERTIES TIMEOUT 10)
 endif()

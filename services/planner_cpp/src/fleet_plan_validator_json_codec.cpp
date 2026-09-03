@@ -412,7 +412,59 @@ json::Value result_to_value(const validator::ValidationResult& result) {
       {"ruleset_version", json::Value(result.ruleset_version)},
       {"schema_version", json::Value(result.schema_version)},
       {"status", json::Value(result.status)},
+      {"stl", result.stl.has_value() ? stl_report_to_value(*result.stl) : json::Value(nullptr)},
       {"valid", json::Value(result.valid)},
+  };
+}
+
+namespace {
+
+json::Value scope_to_value(const stl::ScopeIdentity& scope) {
+  return json::Value::Object{
+      {"amr_id", json::Value(scope.amr_id)},
+      {"kind", json::Value(stl::scope_kind_name(scope.kind))},
+      {"order_id", json::Value(scope.order_id)},
+      {"related_amr_id", json::Value(scope.related_amr_id)},
+      {"related_order_id", json::Value(scope.related_order_id)},
+      {"station_id", json::Value(scope.station_id)},
+  };
+}
+
+}  // namespace
+
+json::Value stl_report_to_value(const stl::MonitorReport& report) {
+  json::Value::Array results;
+  results.reserve(report.results.size());
+  for (const auto& item : report.results) {
+    results.emplace_back(json::Value::Object{
+        {"coordinate", nullable_position(item.coordinate)},
+        {"formula_id", json::Value(item.formula_id)},
+        {"narrow_pass", json::Value(item.narrow_pass)},
+        {"related_coordinate", nullable_position(item.related_coordinate)},
+        {"robustness", nullable_number(item.robustness)},
+        {"satisfied", json::Value(item.satisfied)},
+        {"scope", scope_to_value(item.scope)},
+        {"vacuous", json::Value(item.vacuous)},
+        {"weakest_time", nullable_int(item.weakest_time)},
+    });
+  }
+  return json::Value::Object{
+      {"enforcement", json::Value(stl::enforcement_name(report.enforcement))},
+      {"formula_count", json::Value(static_cast<double>(report.formula_count))},
+      {"instance_count", json::Value(static_cast<double>(report.instance_count))},
+      {"min_robustness", nullable_number(report.min_robustness)},
+      {"min_robustness_formula_id", nullable_string(report.min_robustness_formula_id)},
+      {"min_robustness_scope", report.min_robustness_scope.has_value()
+                                   ? scope_to_value(*report.min_robustness_scope)
+                                   : json::Value(nullptr)},
+      {"narrow_pass_count", json::Value(static_cast<double>(report.narrow_pass_count))},
+      {"results", json::Value(std::move(results))},
+      {"satisfied", json::Value(report.satisfied)},
+      {"skip_reason", nullable_string(report.skip_reason)},
+      {"spec_id", json::Value(report.spec_id)},
+      {"spec_version", json::Value(report.spec_version)},
+      {"status", json::Value(report.status)},
+      {"violated_count", json::Value(static_cast<double>(report.violated_count))},
   };
 }
 

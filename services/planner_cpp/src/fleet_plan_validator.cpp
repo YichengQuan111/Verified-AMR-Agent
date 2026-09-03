@@ -1074,6 +1074,7 @@ const std::vector<ValidationErrorDefinition>& error_dictionary() noexcept {
       {"route_start_mismatch", "route_geometry", "路线首状态与 AMR 快照不一致", "order_id,amr_id,coordinate,time"},
       {"route_time_invalid", "route_timestamps", "路径时间不连续或越界", "order_id,amr_id,coordinate,time,related_time"},
       {"safety_distance_breached", "safety_distance", "两台 AMR 曼哈顿距离不足", "order_id,related_order_id,amr_id,related_amr_id,coordinate,related_coordinate,time,observed,limit"},
+      {"stl_specification_violated", "stl_specification", "STL 规约在 gate 模式下被违反（message 含公式 id，observed 为鲁棒度，time 为最薄弱时刻）", "order_id,related_order_id,amr_id,related_amr_id,coordinate,related_coordinate,time,observed,limit"},
       {"swap_edge_conflict", "swap_edge_conflict", "两台 AMR 交换同一条边", "order_id,related_order_id,amr_id,related_amr_id,coordinate,related_coordinate,time,related_time"},
       {"task_dependency_time_order", "task_dependency", "依赖任务尚未在当前任务 pickup 前完成", "order_id,related_order_id,amr_id,related_amr_id,coordinate,time,related_time"},
       {"task_dependency_unplanned", "task_dependency", "依赖任务没有执行路线", "order_id,related_order_id,amr_id"},
@@ -1088,6 +1089,11 @@ const std::vector<ValidationErrorDefinition>& error_dictionary() noexcept {
 }
 
 ValidationResult validate_fleet_plan(const FleetPlanRequest& request) {
+  return validate_fleet_plan(request, nullptr);
+}
+
+ValidationResult validate_fleet_plan(const FleetPlanRequest& request,
+                                     const stl::Specification* specification) {
   ValidationResult result;
   result.ruleset_version = request.ruleset_version;
   NormalizedPlan normalized;
@@ -1102,6 +1108,35 @@ ValidationResult validate_fleet_plan(const FleetPlanRequest& request) {
   validate_task_dependencies(request, normalized, result);
   validate_workstation_capacity(request, normalized, result);
   validate_fleet_conflicts(request, normalized, result);
+
+  if (specification != nullptr) {
+    // P1-1 第二判定层：STL 监控器只读取原始请求，不读取 normalized 或上面的
+    // errors，因此它的结论与规则层相互独立；gate 模式把每条违反实例追加成
+    // 稳定错误证据，shadow 模式只把报告挂在结果上。
+    result.stl = monitor_fleet_plan(request, *specification);
+    if (specification->enforcement == stl::Enforcement::kGate) {
+      for (const auto& instance : result.stl->results) {
+        if (instance.satisfied) continue;
+        std::string message = "STL 规约 " + instance.formula_id + " 被违反";
+        if (instance.robustness.has_value()) {
+          message += "，鲁棒度 " + std::to_string(*instance.robustness);
+        } else {
+          message += "，鲁棒度为空真/空假";
+        }
+        if (instance.weakest_time.has_value()) {
+          message += "，最薄弱时刻 " + std::to_string(*instance.weakest_time);
+        }
+        push_error(result, "stl_specification_violated", message, instance.scope.order_id,
+                   instance.scope.related_order_id, instance.scope.amr_id,
+                   instance.scope.related_amr_id, instance.coordinate,
+                   instance.related_coordinate, instance.weakest_time, std::nullopt,
+                   instance.robustness, instance.robustness.has_value()
+                                            ? std::optional<double>(0.0)
+                                            : std::nullopt);
+      }
+    }
+  }
+
   sort_errors(result);
   result.valid = result.errors.empty();
   result.status = result.valid ? "valid" : "invalid";

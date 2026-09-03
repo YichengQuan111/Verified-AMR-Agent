@@ -26,6 +26,256 @@
       "title": "GridPosition",
       "type": "object"
     },
+    "STLInstanceOutput": {
+      "additionalProperties": false,
+      "description": "一条 STL 公式在一个作用域上的判定：布尔结论 + 定量鲁棒度 + 最薄弱时刻。\n\n``robustness`` 为 None 表示鲁棒度为 ±inf（空窗口的空真/空假），此时\n``vacuous`` 为 True；``narrow_pass`` 表示满足但鲁棒度低于规约的 warn_below。",
+      "properties": {
+        "formula_id": {
+          "title": "Formula Id",
+          "type": "string"
+        },
+        "scope": {
+          "$ref": "#/$defs/STLScopeOutput"
+        },
+        "satisfied": {
+          "title": "Satisfied",
+          "type": "boolean"
+        },
+        "robustness": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Robustness"
+        },
+        "weakest_time": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Weakest Time"
+        },
+        "coordinate": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/GridPosition"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "related_coordinate": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/GridPosition"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "vacuous": {
+          "title": "Vacuous",
+          "type": "boolean"
+        },
+        "narrow_pass": {
+          "title": "Narrow Pass",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "formula_id",
+        "scope",
+        "satisfied",
+        "robustness",
+        "weakest_time",
+        "coordinate",
+        "related_coordinate",
+        "vacuous",
+        "narrow_pass"
+      ],
+      "title": "STLInstanceOutput",
+      "type": "object"
+    },
+    "STLMonitorOutput": {
+      "additionalProperties": false,
+      "description": "P1-1 STL 第二判定层报告；汇总计数必须能由 results 逐条重算。",
+      "properties": {
+        "spec_id": {
+          "title": "Spec Id",
+          "type": "string"
+        },
+        "spec_version": {
+          "title": "Spec Version",
+          "type": "string"
+        },
+        "enforcement": {
+          "enum": [
+            "gate",
+            "shadow"
+          ],
+          "title": "Enforcement",
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "satisfied",
+            "violated",
+            "skipped"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "satisfied": {
+          "title": "Satisfied",
+          "type": "boolean"
+        },
+        "skip_reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Skip Reason"
+        },
+        "formula_count": {
+          "minimum": 0,
+          "title": "Formula Count",
+          "type": "integer"
+        },
+        "instance_count": {
+          "minimum": 0,
+          "title": "Instance Count",
+          "type": "integer"
+        },
+        "violated_count": {
+          "minimum": 0,
+          "title": "Violated Count",
+          "type": "integer"
+        },
+        "narrow_pass_count": {
+          "minimum": 0,
+          "title": "Narrow Pass Count",
+          "type": "integer"
+        },
+        "min_robustness": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Min Robustness"
+        },
+        "min_robustness_formula_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Min Robustness Formula Id"
+        },
+        "min_robustness_scope": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/STLScopeOutput"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "results": {
+          "items": {
+            "$ref": "#/$defs/STLInstanceOutput"
+          },
+          "title": "Results",
+          "type": "array"
+        }
+      },
+      "required": [
+        "spec_id",
+        "spec_version",
+        "enforcement",
+        "status",
+        "satisfied",
+        "skip_reason",
+        "formula_count",
+        "instance_count",
+        "violated_count",
+        "narrow_pass_count",
+        "min_robustness",
+        "min_robustness_formula_id",
+        "min_robustness_scope",
+        "results"
+      ],
+      "title": "STLMonitorOutput",
+      "type": "object"
+    },
+    "STLScopeOutput": {
+      "additionalProperties": false,
+      "description": "P1-1 STL 公式实例的作用域身份；不适用的 ID 为空字符串而不是省略。",
+      "properties": {
+        "kind": {
+          "enum": [
+            "order",
+            "amr",
+            "pair",
+            "station",
+            "dependency"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "order_id": {
+          "title": "Order Id",
+          "type": "string"
+        },
+        "related_order_id": {
+          "title": "Related Order Id",
+          "type": "string"
+        },
+        "amr_id": {
+          "title": "Amr Id",
+          "type": "string"
+        },
+        "related_amr_id": {
+          "title": "Related Amr Id",
+          "type": "string"
+        },
+        "station_id": {
+          "title": "Station Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "order_id",
+        "related_order_id",
+        "amr_id",
+        "related_amr_id",
+        "station_id"
+      ],
+      "title": "STLScopeOutput",
+      "type": "object"
+    },
     "ValidationEvidenceOutput": {
       "additionalProperties": false,
       "description": "P0-10 错误证据的完整定位字段；不因字段不适用而省略。",
@@ -163,7 +413,7 @@
     }
   },
   "additionalProperties": false,
-  "description": "P0-10 验证响应；valid=false 是安全结论而非进程崩溃。",
+  "description": "P0-10 验证响应；valid=false 是安全结论而非进程崩溃。\n\nP1-1 起响应附带 ``stl`` 第二判定层报告：未传规约时为 None；gate 模式下\nSTL 违反必须同时体现为 ``stl_specification_violated`` 错误证据。",
   "properties": {
     "schema_version": {
       "const": "1.0",
@@ -197,6 +447,17 @@
       },
       "title": "Errors",
       "type": "array"
+    },
+    "stl": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/STLMonitorOutput"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
     }
   },
   "required": [

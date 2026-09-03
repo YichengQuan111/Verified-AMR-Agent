@@ -45,7 +45,8 @@
 | P0-07 | 已完成 | 6 份冻结文档、章节切块、本地 Embedding、Qdrant + BM25 混合检索、检索期 ACL、引用、拒答和 20 例评测。 |
 | P0-08 | 已完成 | 独立 C++17 `task_allocator` 库、Hungarian/最近空闲 baseline、严格 JSON stdin/stdout 和 7 个 CTest 场景。 |
 | P0-09 | 已完成 | 独立 C++17 `route_planner`、A*、时空 `(cell,t)/(edge,t)` 预约、Dijkstra baseline、严格 JSON CLI 和 12 个路由 CTest 场景。 |
-| P0-10 | 已完成 | 独立 C++17 `fleet_plan_validator`、稳定错误字典/证据、严格 JSON CLI 和 14 个正反例 CTest 场景。 |
+| P0-10 | 已完成 | 独立 C++17 `fleet_plan_validator`、稳定错误字典/证据、严格 JSON CLI 和 15 个正反例 CTest 场景。 |
+| P1-1 | 已完成（2026-09-03） | 验证器 STL 第二判定层：8 条 STL 公式从 `config/stl/fleet_plan_stl_spec.json` 加载，独立提取信号计算鲁棒度与最薄弱时刻，gate 模式违反即 invalid；14 个 `stl_*` CTest；`evals/stl_consistency` 453 个计划、3171 次公式级核对与规则层布尔一致 100%。 |
 | P0-11 | 已完成 | Python 固定时间步仿真、P0-10 前置门禁、P0-09 时间戳路径执行、Observation/事件日志、充电和 Eval 故障注入。 |
 | P0-12 | 已完成 | 九个统一白名单工具、Pydantic 输入/输出 Schema、角色/超时/错误/审计/幂等门禁、固定 C++ JSON 适配器、状态/审批/验证封装。 |
 | P0-13 | 已实现；HITL 三连已复验 | 固定八阶段 PEVR 图；正式 CLI 强制 JWT Principal、HITL Store 与签名 ApprovalGrant，不再接受 `--approve-dispatch` 布尔旁路。 |
@@ -210,7 +211,7 @@ python .\scripts\migrate_database.py check
 .\scripts\run_smoke.ps1 -SkipCpp
 ```
 
-最近一次完整验证基线（2026-08-21 收口复验）：
+最近一次完整验证（2026-09-03 P1-1 后）：`.\scripts\run_smoke.ps1` 退出码 0；pytest 422/422 通过（2 个既有弃用警告）；CTest 53/53 通过（38 个既有 + 14 个 `stl_*` + 1 个 `fleet_validator_release_preposition_wait`）；`evals/stl_consistency` 453 个计划 0 不一致。以下为 2026-08-21 收口复验基线，按原文保留：
 
 - pytest：272/272 通过；唯一警告为既有 `jieba/pkg_resources` 弃用警告，以及 Qdrant HTTP+api_key 提示。
 - CTest：38/38 通过，含 4 个 `release_time` 用例。
@@ -298,6 +299,10 @@ Get-Content .\fleet_plan_request.json -Raw | .\build\cpp\services\planner_cpp\fl
 ```
 
 业务计划非法时 CLI 仍返回结构化结果并使用退出码 `0`；只有 JSON/参数/内部错误使用非零退出码，调用方必须检查响应中的 `status`/`valid`。
+
+### 11.1 P1-1 STL 规约第二判定层
+
+规则层之外，验证器从 `config/stl/fleet_plan_stl_spec.json` 加载 8 条 STL 公式（时间窗、电量余量与派发门槛、禁行区/边/越界、载荷、两车间距与交换边、工位容量、前置关系 `¬pickup U dropoff`、低电量限时充电），用独立实现的离散时间有限轨迹监控器重新判定每个计划，输出每条公式实例的布尔结论、定量鲁棒度、最薄弱时刻与坐标；`enforcement=gate` 时违反追加为 `stl_specification_violated` 并使计划 invalid。规约只能由 CLI `--stl-spec` 显式加载，请求 JSON 无法指定或削弱它。Python 工具层与仿真门禁固定传入仓库内规约路径，鲁棒度摘要进入 Trace 与 `PEVRMetrics`（“险胜”只记录）。2026-09-03 用生产 Hungarian/A* 为 P0-18 的 32 个运输类用例生成真实计划，叠加 415 个变异与 6 个合成冲突场景，453 个计划、3171 次公式级判定与规则层布尔一致率 100%，单次验证增量 +1.2 ms。详见 [docs/P1_STL_VALIDATOR.md](P1_STL_VALIDATOR.md)。
 
 ## 12. P0-11 Python 离散事件仿真
 

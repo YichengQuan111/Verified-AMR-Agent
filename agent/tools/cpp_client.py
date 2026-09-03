@@ -25,6 +25,12 @@ class CppProgram(str, Enum):
     FLEET_PLAN_VALIDATOR = "fleet_plan_validator_cli.exe"
 
 
+# P1-1：STL 规约文件是 Validator 第二判定层的唯一输入，路径固定在仓库内，由
+# Python 以 argv 显式传给 CLI；工具参数、计划 JSON 或自然语言都不能改写它，
+# 因此 LLM 无法替换或削弱规约。文件缺失时必须 fail-closed，而不是退化成只跑规则层。
+STL_SPECIFICATION_RELATIVE_PATH = Path("config") / "stl" / "fleet_plan_stl_spec.json"
+
+
 class CppAdapterError(RuntimeError):
     """固定 C++ 边界失败；携带可直接映射到 ToolError 的稳定分类。"""
 
@@ -74,6 +80,12 @@ class FixedCppJsonClient:
         """取得固定程序路径，并拒绝把枚举之外的字符串当作命令。"""
 
         return self._build_root / program.value
+
+    @property
+    def stl_specification_path(self) -> Path:
+        """返回固定的 STL 规约文件路径；不从工具参数或环境变量读取。"""
+
+        return self._repository_root / STL_SPECIFICATION_RELATIVE_PATH
 
     def _run(
         self,
@@ -247,14 +259,29 @@ class FixedCppJsonClient:
         *,
         timeout_seconds: float,
     ) -> dict[str, Any]:
-        """调用 P0-10 Validator；status=invalid 仍由调用方读取为安全证据。"""
+        """调用 P0-10 Validator + P1-1 STL 层；status=invalid 仍由调用方读取为安全证据。"""
 
+        specification = self.stl_specification_path
+        if not specification.is_file():
+            raise CppAdapterError(
+                f"STL 规约文件不存在: {specification}",
+                category=ToolErrorCategory.UNAVAILABLE,
+                code="stl_specification_unavailable",
+                retryable=False,
+                details={"path": str(specification)},
+            )
         return self._run(
             CppProgram.FLEET_PLAN_VALIDATOR,
             payload,
-            arguments=("--validate",),
+            arguments=("--validate", "--stl-spec", str(specification)),
             timeout_seconds=timeout_seconds,
         )
 
 
-__all__ = ["CppAdapterError", "CppProgram", "FixedCppJsonClient", "ProcessRunnerProtocol"]
+__all__ = [
+    "CppAdapterError",
+    "CppProgram",
+    "FixedCppJsonClient",
+    "ProcessRunnerProtocol",
+    "STL_SPECIFICATION_RELATIVE_PATH",
+]

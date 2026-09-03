@@ -48,6 +48,14 @@
 - `Invoke-RestMethod http://127.0.0.1:8000/openapi.json`：通过；运行时标题 `AMR Agent API`，公开 12 个已实现路径，与 [`API.md`](API.md) 一致。
 - `python .\scripts\smoke_llm_structured.py`：20/20；`smoke_p005_prompts.py --profile fast`：5/5。两者是在线节点/结构化冒烟，不替代 P0-13 全链路。
 
+2026-09-03 P1-1（STL 规约第二判定层）后的实际命令与结果：
+
+- `.\scripts\run_smoke.ps1`：退出码 0；环境/迁移/Qdrant 检查通过；CTest **53/53**（含 14 个新增 `stl_*`）。
+- `python -m pytest -q -p no:cacheprovider`：**422 passed**、2 warnings（既有 `jieba/pkg_resources` 弃用警告）；含新增 `tests/unit/test_p1_stl_validator.py` 6 例。
+- `python -m evals.stl_consistency.harness`：453 个计划（32 个 P0-18 派生真实计划 + 415 变异 + 6 合成）计划级一致 **453/453**，3171 次公式级核对 **0 不一致**；单次 CLI 中位数 5.8 ms → 7.0 ms。
+- `stl_monitor_tests --case performance`：时间域 2000、4 车、34 个公式实例，`performance_ms=75`。
+- 未运行：在线 60 例（P0-18/P0-19）未重跑；P1-1 不改 Prompt、图结构或工具 Schema 的 LLM 可见部分，`valid` 仍由同一 CLI 决定，60 例派生计划的 STL 判定与规则层一致，因此在线口径保持不变。
+
 ## 5. 仍存在的限制
 
 - Compose API 默认关闭启动期模型门禁，原因是宿主 Fast 绑定 Windows `127.0.0.1:8080`；真实模型链路必须运行宿主机 `check_model_gateway.py --profile fast`。

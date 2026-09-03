@@ -13,5 +13,10 @@ json::Value result_to_value(const validator::ValidationResult& result);
 json::Value error_dictionary_to_value();
 json::Value error_to_value(const std::string& code, const std::string& message);
 
+// P1-1：STL 报告序列化。结果对象内的 `stl` 键在未传规约时为 null；报告中的
+// 每条实例固定携带 formula_id、scope、satisfied、robustness、weakest_time、
+// coordinate、vacuous、narrow_pass，便于 Trace 直接消费而不必解析 message。
+json::Value stl_report_to_value(const stl::MonitorReport& report);
+
 }  // namespace amr::planner::validator_json
 
