@@ -81,7 +81,9 @@ class ModelProfileSettings(StrictSettingsModel):
     parallel_slots: int = Field(default=1, ge=1)
     quantization: str = Field(default="unknown", min_length=1)
     reasoning_enabled: bool = False
-    reasoning_budget_tokens: int = Field(default=0, ge=0)
+    # llama.cpp 的 -1 表示不单独截断思考；请求总输出与业务累计预算仍生效。
+    # 仅显式实验配置采用 -1，Fast/Smart 的既有默认值保持不变。
+    reasoning_budget_tokens: int = Field(default=0, ge=-1)
     # Profile 可以保留 alias/量化等审计信息但禁止实际调用。是否启用不接受环境
     # 变量覆盖，避免部署残留的 LLM_PROFILE 把尚未验收的模型重新带回生产链。
     enabled: bool = True

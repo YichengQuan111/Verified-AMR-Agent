@@ -2439,3 +2439,14 @@ DAG 使用 `agent.planning.dag.topological_sort()` 中的 Kahn 算法：计算�
 - 外部服务当前状态：Compose `amr-api`/`amr-postgres`/`amr-qdrant` healthy（已运行约 41 小时）；本步未启动或停止 Fast/Smart；`8080` 状态未复核（P1-1 不需要模型）。
 - 已知限制/风险：时间窗鲁棒度按有限时间域截断（`deadline > max_time` 时裕量偏小，布尔不受影响）；含布尔子式的公式鲁棒度饱和在 1；`low_battery_charging` 在 P0 运输计划里无规则层对应，是 `battery_safety` 的推论；40 个结构/契约类错误码由规则层独占，harness 只在 17 个覆盖码上比较；31/32 基础计划因 A* 恰在 release 装货、贴停放车行驶而鲁棒度为 0 记为险胜（这是最优解的真实裕量，阈值可在规约文件调）；`route_action_invalid` 会与封路格变异共现（规则层把“移动进入禁行格”同时报为非法边），属既有行为。
 - 下一步直接需要的信息：修改公式/阈值只改 `config/stl/fleet_plan_stl_spec.json`，然后跑 `ctest -R ^stl_` 与 `.\scripts\run_stl_consistency.ps1`；新增信号必须同时更新 `stl_monitor.cpp` 的作用域目录与 `stl_fleet_monitor.cpp` 的提取；不要把 `enforcement` 改为 `shadow` 来“修”不一致——不一致就是 Bug。简历口径见 `docs/RESUME_FACTS.md` 的 P1-1 条目。P2-A 可直接把 `stl.min_robustness`/逐实例 `robustness` 当稠密奖励；P2-B 方向 1/3/6 复用 `stl::Formula` AST。
+
+### 2026-09-07 · VeryFast 模型切换实验（执行中，最终结果待补）
+
+- 用户范围：Spark-X2.5-4B Q4_K_M，alias `VeryFast`；16K 上下文和原输入上下文保持 Qwen 一致；先调优再完整 PEVR 60 例。Qwen 不启动不重跑，沿用 9/1 非流式有缓存 60 例报告。用户进一步明确：**严格沿用 Qwen 输出/时间预算，预算耗尽计失败**。
+- 已完成：模型加载/真实结构化思考预检；5 组全 GPU 吞吐调优；独立实验 CLI/配置/8 个反例测试；显式 Provider/Settings 注入；文件职责与方案。独立五节点采样校准执行中，60 例尚未开始。
+- 公共接口：`ModelProfileSettings.reasoning_budget_tokens` 允许 -1；`OnlineFastHarness(app_settings=None, model_provider=None)` 可显式注入。CLI `python -m evals.perf.veryfast tune|run|summarize`。无新 Schema、数据库字段、枚举或迁移。
+- 决策：开启思考且 reasoning_budget=-1，仍受 4096 单请求/120s 和原业务累计预算。模板 `supports_reasoning_effort=false`，不存在有效命名 max 分档。原 Fast 默认/Smart 禁用不变；生产非流式/Prompt/地图/安全边界不改。性能校准使用独立合成数据，五节点使用虚构样例，60 例不参与调参。
+- 已实测：专项 42 passed；新增实验与相关回归 58 passed；`E:\PowerShell7\7\pwsh.exe -NoProfile -File scripts/run_smoke.ps1` 退出码 0，Python 430 passed/2 warnings，CTest 53/53。首选候选 f16 KV/b2048/u512/t6/tb14，4,441 token 合成输入 Prefill p50=906.5ms、decode=106.0 token/s。调参仍非穷举全局最优。
+- 环境：本步 `docker desktop start` 后 Compose 三容器 healthy。VeryFast GGUF SHA-256=`dc08c21953fbdf797d77fbe7cdecb353d8dc6cb3517c2f911e209bb37633726a`；runtime b10839-0cae43063。模型后端独立 18081，正式实验代理 8081；调参子进程按句柄回收。Qwen/Smart 均未启动。
+- 限制：当前 STL gate 与历史版本不同；原生模板/tokenizer/运行时/思考模式不同，属于历史系统配置对比。Qwen 非流式基线无真实 TTFT。思考额度不足可能产生空答案；不得为抬分更改预算。新制品只在 `tmp/veryfast_20260907/`，旧目录只读。
+- 当前下一步：完成采样校准并冻结选择，按原预算跑 VeryFast 完整 60 例，汇总共同成功配对与失败原因，再补本条最终结果。项目主路线后续仍为 P1-2。

@@ -989,3 +989,9 @@
 - 原因：严格比较让“未满足”与“鲁棒度为 0”不再等价，单看鲁棒度选不出违反点。
 - 最终解决：min/max 归约时先比较满足性（违反优先），再比鲁棒度；CTest `stl_globally_eventually` 锁定该行为。
 - 后续避免：任何“证据定位”都要用布尔结论驱动，鲁棒度只用来在同类点里排序。
+## 2026-09-07 · 思考模型的输出预算必须包含思考与 Schema 修复
+
+- 现象：VeryFast 开启思考后，复杂 P0-05 节点出现 HTTP 200、`finish_reason=length`、`reasoning_content` 非空而 `content` 为空，Provider 抛 `EmptyModelResponseError`；另有首轮生成 JSON 但 Schema 不合法、修复仅剩少量 token 的情况。
+- 原因：llama.cpp 的 `max_tokens` 是思考与最终答案共用的总输出额度。`reasoning_budget=-1` 只是不单独截断思考，不代表可绕过 4096 总额度；生产 `generate_structured` 首次与唯一修复还会共享该额度。
+- 最终处理：用户明确要求保持 Qwen 输出/时间预算。实验保持 4096/120s 和业务累计预算，思考耗尽如实算失败，不调低思考、不扩大预算；额外记录真实 HTTP 请求、usage、finish_reason 和思考字符数。
+- 后续避免：不能把空最终答案解释成未调用模型，也不能用 `model_call_count=0` 推断未消耗 token。能力探测显示 `supports_reasoning_effort=false` 时，不把 `high/max` 字符串当成已生效强度。非流式仍没有 TTFT，禁止用 Prefill 代替。

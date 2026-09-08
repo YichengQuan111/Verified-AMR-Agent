@@ -1395,3 +1395,24 @@ Fast 运行。新增/修改的核心 Python 已补中文模块说明、docstring
 | 新建 | `docs/P1_STL_VALIDATOR.md` | DSL 文法与语义、规约文件、信号目录与规则层对齐表、输出契约、一致性实测、面试口径、限制。 | 面试与 P2-B 的入口文档。 |
 | 修改 | `docs/FLEET_PLAN_VALIDATOR.md`、`README.md`、`docs/RESUME_FACTS.md`、`docs/PROJECT_OVERVIEW.md`、`docs/TEST_REPORT.md`、`evals/README.md`、`docs/HANDOFF_CONTEXT.md`、`docs/LESSONS_LEARNED.md`、`docs/FILE_PURPOSES.md` | 登记两层验证、CLI 参数、指标与实测。部分文档无核心代码注释需求。 | 简历与后续 Agent。 |
 | 生成物 | `tmp/stl_consistency/stl_consistency.{json,md}` | 2026-09-03 一致性核对报告（453 计划、3171 次核对、0 不一致）。 | 可重跑覆盖。 |
+
+## 2026-09-07：VeryFast 调参及 PEVR 60 例历史模型对照
+
+核心 Python 已补充中文注释。JSON/方案与本机路径文档本步无核心代码注释需求；语义由实验专题说明。
+
+| 变更 | 文件 | 作用、调用者与公共边界 | 后续依赖 |
+|---|---|---|---|
+| 新建 | `evals/perf/veryfast.py` | 独立 CLI：tune/run/summarize；固定回环端口、精确进程回收、制品哈希、吞吐及虚构五节点校准、60 例执行和历史配对。复用生产 Provider，不修改 Prompt/业务预算。 | 后续模型切换实验复用；不是产品模型热切换 API。 |
+| 新建 | `config/veryfast_experiment.json` | 冻结候选、16K/单槽/最高可用思考及历史 Qwen 报告 SHA；由 VeryFast CLI 读取。 | 复现实验；不能据正式 60 例成绩回调。 |
+| 修改 | `services/config/settings.py` | reasoning_budget_tokens 支持 llama.cpp 的 -1，表示无单独思考上限；总输出/时间预算继续收紧。Fast/Smart 默认不变。 | 模型配置公共契约增加合法值 -1。 |
+| 修改 | `evals/p018/online.py` | OnlineFastHarness 增加显式 app_settings/model_provider 注入；默认仍用原 Fast。避免用全局环境伪装模型身份。 | 在线实验 Python 构造入口；P0-19/原 CLI 默认不变。 |
+| 新建 | `tests/unit/test_veryfast_experiment.py` | 8 项预算、失败留档、进程参数、选择规则、历史输入变化拒绝与 Provider 注入反例。 | 后续模型对照回归。 |
+| 新建 | `docs/VERYFAST_MODEL_EXPERIMENT.md` | 实验预注册方案、命令、对照限制与实测结论入口。 | 研究对比与跨任务交接。 |
+| 修改 | `docs/LOCAL_ENV.md` | 登记本机 VeryFast GGUF 与实验端口/环境变量。 | 本机复现，不是公共路径约定。 |
+| 修改 | `docs/FILE_PURPOSES.md`、`docs/HANDOFF_CONTEXT.md`、`docs/LESSONS_LEARNED.md` | 同步职责、结果、限制和新发现。 | 唯一职责/交接入口。 |
+| 新建 | `config/veryfast_nothink_experiment.json`、`config/veryfast_r3_experiment.json`、`config/veryfast_r4_experiment.json`、`config/veryfast_r5_experiment.json`、`config/veryfast_r6_experiment.json` | 第二至六轮实验条件：思考开关/预算、输出上限、入口累计预算覆盖、单例试探案例；由 `--config` 传入 CLI。 | 每轮独立目录复现；不改动首轮配置。 |
+| 修改 | `evals/perf/veryfast.py` | 新增 `--config`、`probe1` 单例试探阶段、`reasoning_of`/`output_caps`/`entry_budgets`（进程内覆盖 `PEVRGraphRunner.ENTRY_BUDGETS`，退出即还原）。 | 实验条件全部来自配置文件，脚本不再硬编码思考与 4096。 |
+| 修改 | `evals/p018/online.py` | OnlineFastHarness 新增可选 `requested_output_tokens`，默认 None 保持 PEVRRequest 的 4096。 | 仅实验注入使用。 |
+| 修改 | `README.md` | 新增「模型对照」一节与实验文档导航。 | 公开结果入口。 |
+| 生成物 | `tmp/veryfast_nothink_20260907/`、`tmp/veryfast_r3_20260907/`、`tmp/veryfast_r4_20260907_stopped/`、`tmp/veryfast_r5_20260907/`、`tmp/veryfast_r6_20260908/` | 第二至六轮原始证据；gitignore。 | 只读保留。 |
+| 生成物 | `tmp/veryfast_20260907/` | 本次 manifest、启动日志、props、请求样本、校准、60 例及汇总；gitignore，非源码交付。 | 保留原始证据；旧 Qwen 目录只读。 |

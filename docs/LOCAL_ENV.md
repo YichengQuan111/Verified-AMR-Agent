@@ -46,3 +46,11 @@
 $env:AMR_PYTHON_EXE = 'E:\Anaconda\envs\torch128\python.exe'
 & $env:AMR_PYTHON_EXE --version
 ```
+
+## VeryFast 模型实验（2026-09-07）
+
+- `VERYFAST_MODEL_PATH`：`E:\Llama.cpp\models\Spark-X2.5-4B-Q4_K_M.gguf`（实际下划线，无转义反斜杠）。
+- `LLAMA_SERVER_PATH`：`E:\Llama.cpp\llama-server.exe`；本次预检版本 build 10839 / commit 0cae43063。
+- alias 精确为 `VeryFast`；后端 `127.0.0.1:18081`，实验 Bearer 代理 `127.0.0.1:8081`。原 Fast 8080/18080 不变。
+- 启动和评测：`python -m evals.perf.veryfast tune|run`，细节见 [实验方案](VERYFAST_MODEL_EXPERIMENT.md)。
+- 本步无核心代码注释需求（本机环境登记）。

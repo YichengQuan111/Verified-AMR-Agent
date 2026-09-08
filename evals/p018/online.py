@@ -119,6 +119,9 @@ class OnlineFastHarness:
         control_strategy: OnlineControlStrategy | str = OnlineControlStrategy.PEVR,
         measure_ttft: bool = False,
         llm_only: bool = False,
+        app_settings=None,
+        model_provider=None,
+        requested_output_tokens: int | None = None,
     ) -> None:
         if str(config.get("execution_mode")) != "online_fast_closed_loop":
             raise ValueError("OnlineFastHarness 只接受 online_fast_closed_loop")
@@ -130,10 +133,16 @@ class OnlineFastHarness:
         self.config_path = config_path.resolve()
         self.verification_timeout_seconds = verification_timeout_seconds
         self.control_strategy = OnlineControlStrategy(control_strategy)
-        self.settings = load_settings()
+        # 模型切换实验显式注入配置与 Provider；默认入口仍加载原 Fast 配置。
+        # 不改环境变量或全局工厂，避免旁路核验子进程继承实验模型身份。
+        self.settings = app_settings if app_settings is not None else load_settings()
+        # 仅模型切换实验显式放宽单次申请输出；默认 None 保持 PEVRRequest 的 4096。
+        if requested_output_tokens is not None and requested_output_tokens <= 0:
+            raise ValueError("requested_output_tokens 必须为正")
+        self.requested_output_tokens = requested_output_tokens
         # 只认构造参数，不读进程环境。避免 LLM_EVAL_TTFT 泄漏进 P0-19 默认路径。
         self.measure_ttft = bool(measure_ttft)
-        self.provider = select_eval_provider(
+        self.provider = model_provider if model_provider is not None else select_eval_provider(
             self.settings.model_gateway,
             measure_ttft=self.measure_ttft,
         )
@@ -499,6 +508,7 @@ class OnlineFastHarness:
             seed=case.seed,
             principal=principal,
             trace_id=f"trace-p019-{self.control_strategy.value}-{case.case_id}"[:128],
+            **({"requested_output_tokens": self.requested_output_tokens} if self.requested_output_tokens is not None else {}),
         )
         resumes = 0
         current_request = request

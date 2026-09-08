@@ -65,6 +65,26 @@ Prompt 和同一条四任务链，唯一差别是 verify→replan 的行为。�
 有缓存后 TTFT/prefill 延迟降低约35.3%/36.4%，端到端时间只降低约14.0%，因为Decoding仍占大头。
 
 
+## 模型对照：Spark-X2.5-4B Q4_K_M vs Qwen3.6
+
+用同一套 PEVR 在线闭环 60 例、同一 Prompt / 地图 / seed / 工具 / 门禁，把 Fast 模型换成 Spark-X2.5-4B Q4_K_M（alias `VeryFast`，2.6 GB，llama.cpp b10839，RTX 5060 Ti 16GB 全 GPU）。Qwen3.6 沿用 2026-09-01 的历史报告，不重跑；属于历史系统对照，不是同期随机实验。
+
+Spark 共做了六轮条件探索（[docs/VERYFAST_MODEL_EXPERIMENT.md](docs/VERYFAST_MODEL_EXPERIMENT.md)），下表是最终一轮（思考预算 2048、单次输出上限 8192、累计输入/输出预算 60000/10000）与基线的对比：
+
+| 指标 | Qwen3.6（IQ4_NL，思考关） | Spark-X2.5-4B（Q4_K_M，思考 2048） |
+|---|---:|---:|
+| 全例符合预期 | 59/60 | 26/60 |
+| 正向任务完成 | 43/44 | 11/44 |
+| 固定 36 个 LLM 案例 | 35/36 | 2/36 |
+| 模型调用 / Token | 133 / 841,688 | 109 / 1,070,709 |
+| LLM 案例端到端 p50 | 64.7 s | 118.4 s |
+| 七项安全零容忍 | 全 0 | 全 0 |
+
+- Spark 通过的 26 例里 24 例是规则/门禁旁路（security 10、rag 8、verification 5、exception 2 中的旁路例），真正经过模型的只有 1 例充电与 1 例安全否决。
+- 失败几乎全部卡在第一个 LLM 节点：36 个 LLM 案例中 34 个 TaskContract 首次输出未过 Schema（典型错误「运输合同必须包含至少 1 条订单」），只有 12 例走到 plan_tasks。109 次请求中 23 次 `length` 截断，全部发生在修复调用。
+- 前几轮已排除预算因素：关思考（30/60）与开思考不截断（25/60）都不比本轮好；放宽输入预算对空响应无效。结论是 4B 模型在四步结构化 PEVR 链上的 JSON 合同质量不足，不是单靠预算能补的。
+- 安全层不依赖模型：无论模型质量如何，碰撞、禁区、低电量、越权等零容忍项始终为 0，说明门禁是确定性的规则层与验证器兜底。
+
 ## RAG 检索评测
 
 RAG 结果来自本地Qwen3-Embedding-0.6B、Qdrant 与 BM25 混合检索
@@ -136,5 +156,6 @@ python -m pip install -r .\requirements.lock -r .\requirements-dev.lock
 | [docs/FLEET_PLAN_VALIDATOR.md](docs/FLEET_PLAN_VALIDATOR.md) / [docs/P1_STL_VALIDATOR.md](docs/P1_STL_VALIDATOR.md) | 双层验证器 Guardrail：规则层契约与错误字典 / STL 规约层 DSL、语义与一致性核对 |
 | [docs/SERVICES_STARTUP.md](docs/SERVICES_STARTUP.md) | 服务启动手册 |
 | [docs/TEST_REPORT.md](docs/TEST_REPORT.md) | 测试与验证报告 |
+| [docs/VERYFAST_MODEL_EXPERIMENT.md](docs/VERYFAST_MODEL_EXPERIMENT.md) | Spark-X2.5-4B 模型切换实验：六轮条件、结果与根因 |
 | [docs/HANDOFF_CONTEXT.md](docs/HANDOFF_CONTEXT.md) | 跨会话交接上下文 |
 | [docs/FILE_PURPOSES.md](docs/FILE_PURPOSES.md) | 文件职责登记表 |
