@@ -164,6 +164,28 @@ class TaskContract(PlanningContract):
         return self.charging is not None and not self.orders
 
 
+class TransportContract(TaskContract):
+    """运输专用合同：把「至少 1 条订单、不带充电目标」从 validator 前移到 Schema。
+
+    llama.cpp 只按 JSON Schema 的 required/minItems 生成 grammar，父类 validator
+    的互斥规则在生成阶段对小模型不可见，4B 模型会稳定只输出 required 的 9 个字段。
+    """
+
+    orders: list[TransportOrder] = Field(min_length=1)
+    charging: None = None
+
+
+class ChargingContract(TaskContract):
+    """充电专用合同：charging 进入 required，orders 在 Schema 层只允许空数组。
+
+    充电还是运输由 harness 的注入快照决定而非模型选择，因此调用前就能锁定唯一
+    合法子类，不需要让 grammar 同时容纳两种互斥形态。
+    """
+
+    charging: ChargingGoal
+    orders: list[TransportOrder] = Field(default_factory=list, max_length=0)
+
+
 class PlanTask(PlanningContract):
     """计划 DAG 中一个可独立校验、执行和追踪的原子步骤。"""
 
@@ -211,6 +233,7 @@ class PlanTask(PlanningContract):
 
 __all__ = [
     "ApprovalRequirement",
+    "ChargingContract",
     "ChargingGoal",
     "ExecutionBudgets",
     "FallbackStrategy",
@@ -219,4 +242,5 @@ __all__ = [
     "RiskLevel",
     "TaskConstraints",
     "TaskContract",
+    "TransportContract",
 ]

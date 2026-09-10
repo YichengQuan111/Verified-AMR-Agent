@@ -236,18 +236,37 @@ def _run_named_node(
     node_name: PromptNodeName,
     provider: ModelProviderProtocol,
     context: NodeContext,
+    *,
+    definition: PromptDefinition | None = None,
 ) -> NodeExecutionResult[BaseModel]:
-    """五个具名入口共享同一执行器，但各自绑定独立 Prompt 和输出模型。"""
+    """五个具名入口共享同一执行器，但各自绑定独立 Prompt 和输出模型。
 
-    return StandalonePromptNode(get_prompt_definition(node_name), provider).run(context)
+    ``definition`` 是小模型适配层的唯一入口：调用方可以按运行时开关换掉本次调用的
+    响应模型，注册表里的默认绑定必须原样保留，否则默认路径的 Schema 会随实验漂移。
+    """
+
+    resolved = definition if definition is not None else get_prompt_definition(node_name)
+    if resolved.node_name is not node_name:
+        raise ValueError(
+            f"覆盖定义属于 {resolved.node_name.value}，不能用于 {node_name.value}"
+        )
+    return StandalonePromptNode(resolved, provider).run(context)
 
 
 def understand_goal(
-    provider: ModelProviderProtocol, context: NodeContext
+    provider: ModelProviderProtocol,
+    context: NodeContext,
+    *,
+    definition: PromptDefinition | None = None,
 ) -> NodeExecutionResult[TaskContract]:
     return cast(
         NodeExecutionResult[TaskContract],
-        _run_named_node(PromptNodeName.UNDERSTAND_GOAL, provider, context),
+        _run_named_node(
+            PromptNodeName.UNDERSTAND_GOAL,
+            provider,
+            context,
+            definition=definition,
+        ),
     )
 
 

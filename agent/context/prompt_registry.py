@@ -282,11 +282,58 @@ def get_prompt_definition(node_name: PromptNodeName) -> PromptDefinition:
     return PROMPT_DEFINITIONS[node_name]
 
 
+# 小模型适配层：严格模式追加的显式规则。只在开关打开时拼到 system 文本末尾，
+# 默认路径的模板文本、Prompt 版本与文件指纹保持不变。
+STRICT_CONTRACT_RULE = """## 严格合同 Schema（本次调用附加）
+
+- 运输请求：orders 必须至少包含 1 条订单，逐条抄写 available_orders 中与本请求相关的订单原字段，不得虚构 order_id，也不得留空数组；charging 必须为 null。
+- 充电请求：必须填写 charging（amr_id、charge_station、target_percent），orders 必须为空数组 []。
+- 上述两条已写进本次输出 Schema，违反会被 grammar 直接拒绝。
+"""
+
+
+@dataclass(frozen=True, slots=True)
+class StrictContractPromptDefinition(PromptDefinition):
+    """把严格合同子类与显式规则绑定到单次调用的 Prompt 定义。
+
+    llama.cpp 的 grammar 只看 Schema，模型正文只看 Prompt；两边同时收紧，4B 模型
+    才不会退回到「只写 required 的 9 个字段」的最省输出。
+    """
+
+    def validated_examples(self) -> tuple[PromptExample, ...]:
+        """示例仍按父类 TaskContract 校验：两组教学示例是运输场景，充电子类无法接受。"""
+
+        return _load_validated_examples(self.template_filename, TaskContract)
+
+    def render_system_prompt(self) -> str:
+        """规则追加在末尾，默认模式渲染出的文本仍是严格模式的公共前缀，KV 缓存不失效。"""
+
+        return f"{PromptDefinition.render_system_prompt(self)}\n{STRICT_CONTRACT_RULE}"
+
+
+def build_strict_understand_definition(
+    response_model: type[BaseModel],
+) -> PromptDefinition:
+    """按本次调用的严格响应模型派生 understand_goal 定义；注册表默认绑定不变。"""
+
+    base = PROMPT_DEFINITIONS[PromptNodeName.UNDERSTAND_GOAL]
+    return StrictContractPromptDefinition(
+        node_name=base.node_name,
+        prompt_id=base.prompt_id,
+        version=base.version,
+        template_filename=base.template_filename,
+        response_model=response_model,
+    )
+
+
 __all__ = [
     "P005_PROMPT_VERSION",
     "PROMPT_DEFINITIONS",
     "PROMPT_DIRECTORY",
+    "STRICT_CONTRACT_RULE",
     "PromptExample",
     "PromptDefinition",
+    "StrictContractPromptDefinition",
+    "build_strict_understand_definition",
     "get_prompt_definition",
 ]

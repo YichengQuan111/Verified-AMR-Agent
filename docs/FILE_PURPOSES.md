@@ -1410,9 +1410,24 @@ Fast 运行。新增/修改的核心 Python 已补中文模块说明、docstring
 | 新建 | `docs/VERYFAST_MODEL_EXPERIMENT.md` | 实验预注册方案、命令、对照限制与实测结论入口。 | 研究对比与跨任务交接。 |
 | 修改 | `docs/LOCAL_ENV.md` | 登记本机 VeryFast GGUF 与实验端口/环境变量。 | 本机复现，不是公共路径约定。 |
 | 修改 | `docs/FILE_PURPOSES.md`、`docs/HANDOFF_CONTEXT.md`、`docs/LESSONS_LEARNED.md` | 同步职责、结果、限制和新发现。 | 唯一职责/交接入口。 |
-| 新建 | `config/veryfast_nothink_experiment.json`、`config/veryfast_r3_experiment.json`、`config/veryfast_r4_experiment.json`、`config/veryfast_r5_experiment.json`、`config/veryfast_r6_experiment.json` | 第二至六轮实验条件：思考开关/预算、输出上限、入口累计预算覆盖、单例试探案例；由 `--config` 传入 CLI。 | 每轮独立目录复现；不改动首轮配置。 |
+| 新建 | `config/veryfast_nothink_experiment.json`、`config/veryfast_r3_experiment.json`、`config/veryfast_r4_experiment.json`、`config/veryfast_r5_experiment.json`、`config/veryfast_r6_experiment.json`、`config/veryfast_r7_experiment.json` | 第二至七轮实验条件（第七轮为 Q8_0 量化，新增 `quantization` 字段）：思考开关/预算、输出上限、入口累计预算覆盖、单例试探案例；由 `--config` 传入 CLI。 | 每轮独立目录复现；不改动首轮配置。 |
 | 修改 | `evals/perf/veryfast.py` | 新增 `--config`、`probe1` 单例试探阶段、`reasoning_of`/`output_caps`/`entry_budgets`（进程内覆盖 `PEVRGraphRunner.ENTRY_BUDGETS`，退出即还原）。 | 实验条件全部来自配置文件，脚本不再硬编码思考与 4096。 |
 | 修改 | `evals/p018/online.py` | OnlineFastHarness 新增可选 `requested_output_tokens`，默认 None 保持 PEVRRequest 的 4096。 | 仅实验注入使用。 |
 | 修改 | `README.md` | 新增「模型对照」一节与实验文档导航。 | 公开结果入口。 |
-| 生成物 | `tmp/veryfast_nothink_20260907/`、`tmp/veryfast_r3_20260907/`、`tmp/veryfast_r4_20260907_stopped/`、`tmp/veryfast_r5_20260907/`、`tmp/veryfast_r6_20260908/` | 第二至六轮原始证据；gitignore。 | 只读保留。 |
+| 生成物 | `tmp/veryfast_nothink_20260907/`、`tmp/veryfast_r3_20260907/`、`tmp/veryfast_r4_20260907_stopped/`、`tmp/veryfast_r5_20260907/`、`tmp/veryfast_r6_20260908/`、`tmp/veryfast_r7_20260909/` | 第二至七轮原始证据；gitignore。 | 只读保留。 |
 | 生成物 | `tmp/veryfast_20260907/` | 本次 manifest、启动日志、props、请求样本、校准、60 例及汇总；gitignore，非源码交付。 | 保留原始证据；旧 Qwen 目录只读。 |
+
+## 2026-09-09：小模型严格合同 Schema 适配层（第八轮实验）
+
+核心代码改动均带中文注释说明「为什么」。默认路径（Fast/Smart、P0-18/P0-19）不受影响：`TaskContract` Schema 与 understand_goal 渲染文本的 SHA-256 与改动前一致，由单测锁定。
+
+| 变更 | 文件 | 作用、调用者与公共边界 | 后续依赖 |
+|---|---|---|---|
+| 修改 | `agent/planning/contracts.py` | 新增 `TransportContract`（`orders` 进 required 且 `minItems:1`，`charging` 为 `type:null`）与 `ChargingContract`（`charging` 进 required，`orders` 为 `maxItems:0`）两个 `TaskContract` 子类；父类 Schema、validator 与语义不变。 | 只由严格模式的 understand 调用；下游仍按 `TaskContract` 消费。 |
+| 修改 | `agent/context/prompt_registry.py` | 新增 `STRICT_CONTRACT_RULE`、`StrictContractPromptDefinition`（示例仍按父类校验、规则追加在 system 文本末尾）与 `build_strict_understand_definition()`；`PROMPT_DEFINITIONS` 与 Prompt 1.2.0 模板不变。 | 严格模式下派生单次调用的 Prompt 定义。 |
+| 修改 | `agent/context/nodes.py` | `_run_named_node`/`understand_goal` 增加可选 `definition` 覆盖参数，并校验节点名一致；默认 `None` 时与改动前完全等价。 | 覆盖响应模型的唯一入口。 |
+| 修改 | `agent/runtime/prefix.py` | `SharedPrefixService._strict_understand_definition()`：按 `provider.settings.active_profile.strict_contract_schema` 和 `injected_charging` 选择运输/充电子类；关闭时返回 `None`。 | PEVR 与 ReAct 共用的 understand 路径。 |
+| 修改 | `services/config/settings.py` | `ModelProfileSettings` 新增 `strict_contract_schema: bool = False`；Fast/Smart 保持 False，`config/default.toml` 与 Fast manifest 无需改动。 | 模型 Profile 公共契约新增一个默认关闭的开关。 |
+| 修改 | `evals/perf/veryfast.py` | 新增 `strict_schema(config)`；`make_settings` 把开关写入 veryfast profile；`probe1` verdict 与 60 例 `model_switch_experiment` 记录 `strict_contract_schema` 及对照 caveat。 | 实验条件可追溯；tune 校准仍走默认路径。 |
+| 新建 | `config/veryfast_r8_experiment.json` | 第八轮条件：复制 r7（Q8_0、思考 2048、输出 8192、入口 60000/10000），仅新增 `"strict_contract_schema": true`。 | 与 r7 的唯一变量是严格 Schema。 |
+| 新建 | `tests/unit/test_strict_contract_schema.py` | 9 例：子类正反例与 Schema 断言、父类 Schema 与默认 Prompt 文本的 SHA-256 锁定、默认/严格模式下 understand 实际传给 provider 的响应模型。 | 默认路径漂移会立即失败。 |

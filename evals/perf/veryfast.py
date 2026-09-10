@@ -168,14 +168,21 @@ def output_caps(config):
             "requested_output_tokens": config.get("requested_output_tokens")}
 
 
-def make_settings(sampling, url, key, reasoning=None, max_output_tokens=4096):
+def strict_schema(config):
+    """严格 Schema 适配层只对本实验 profile 生效；缺省即 Qwen 基线的默认路径。"""
+    return bool(config.get("strict_contract_schema", False))
+
+
+def make_settings(sampling, url, key, reasoning=None, max_output_tokens=4096, quantization="Q4_K_M",
+                  strict_contract_schema=False):
     """创建仅本实验可用的 VeryFast 配置，保留同一 RAG/安全和 120s 上限；输出上限由实验配置给出。"""
     reasoning = reasoning or DEFAULT_REASONING
     settings = load_settings()
     gateway = settings.model_gateway
     gateway.profiles["veryfast"] = ModelProfileSettings(alias="VeryFast", context_window=16384,
         temperature=sampling["temperature"], top_p=sampling["top_p"], top_k=sampling["top_k"],
-        parallel_slots=1, quantization="Q4_K_M", reasoning_enabled=reasoning["enabled"], reasoning_budget_tokens=reasoning["budget"])
+        parallel_slots=1, quantization=quantization, reasoning_enabled=reasoning["enabled"], reasoning_budget_tokens=reasoning["budget"],
+        strict_contract_schema=bool(strict_contract_schema))
     gateway.profile = "veryfast"
     gateway.expected_alias_override = None
     gateway.base_url = url
@@ -241,7 +248,7 @@ class VeryFastProvider(ModelProvider):
             version = version.model_copy(update={"artifact_id": "veryfast-" + model["sha256"][:16],
                 "model_path": model["path"], "model_size_bytes": model["size_bytes"], "model_sha256": model["sha256"],
                 "runtime_binary_path": runtime["path"], "runtime_binary_sha256": runtime["sha256"],
-                "quantization": "Q4_K_M", "context_window": 16384, "temperature": self.settings.active_profile.temperature,
+                "quantization": self.settings.active_profile.quantization, "context_window": 16384, "temperature": self.settings.active_profile.temperature,
                 "top_p": self.settings.active_profile.top_p, "top_k": self.settings.active_profile.top_k,
                 "parallel_slots": 1, "reasoning_enabled": self.settings.active_profile.reasoning_enabled})
             self._version_record = version
@@ -346,7 +353,7 @@ def tune(args, config, manifest):
         for sampling in config["sampling_candidates"]:
             out = directory / sampling["id"]
             out.mkdir()
-            rows = calibration(make_settings(sampling, url, key, reasoning, output_caps(config)["gateway_max_output_tokens"]), manifest, out)
+            rows = calibration(make_settings(sampling, url, key, reasoning, output_caps(config)["gateway_max_output_tokens"], config.get("quantization", "Q4_K_M")), manifest, out)
             sampling_results.append({"sampling": sampling, "passed": sum(r["passed"] for r in rows), "wall_ms": sum(r["wall_ms"] for r in rows)})
     # 同分优先沿用 Qwen 采样，减少混杂；预检错误如实保留，不要求模型质量必须满分才评测。
     sampling = sorted(sampling_results, key=lambda r: (-r["passed"], r["sampling"]["id"] != "qwen_sampling"))[0]
@@ -387,7 +394,7 @@ def probe_one(args, config, manifest):
     out.mkdir(exist_ok=False)
     online_config = deepcopy(load_config(PROJECT_ROOT / "evals/p018/online_config.json"))
     online_config["eval_config_id"] = config["experiment_id"] + "-probe1"
-    online_config["model"].update(profile="veryfast", alias="VeryFast", family="Spark-X2.5", quantization="Q4_K_M",
+    online_config["model"].update(profile="veryfast", alias="VeryFast", family="Spark-X2.5", quantization=config.get("quantization", "Q4_K_M"),
         reasoning_enabled=reasoning["enabled"], reasoning_budget_tokens=reasoning["budget"],
         **{k: v for k, v in selection["sampling"].items() if k != "id"})
     config_path = out / "online_config.json"
@@ -395,7 +402,8 @@ def probe_one(args, config, manifest):
     key = secrets.token_urlsafe(36)
     caps = output_caps(config)
     with serve(args.server, args.model, selection["candidate"], out / "service", key, proxy=True, reasoning=reasoning) as url, entry_budgets(config) as budgets:
-        settings = make_settings(selection["sampling"], url, key, reasoning, caps["gateway_max_output_tokens"])
+        settings = make_settings(selection["sampling"], url, key, reasoning, caps["gateway_max_output_tokens"], config.get("quantization", "Q4_K_M"),
+                                 strict_schema(config))
         provider = VeryFastProvider(settings.model_gateway, out / "requests.jsonl", manifest)
         harness = OnlineFastHarness(dataset=load_dataset(), config=online_config, dataset_path=DEFAULT_DATASET_PATH,
             config_path=config_path, verification_timeout_seconds=120, app_settings=settings, model_provider=provider,
@@ -410,7 +418,7 @@ def probe_one(args, config, manifest):
     result = json.loads((out / "p018_online_progress.jsonl").read_text(encoding="utf-8").splitlines()[0])
     verdict = {"case_id": case_id, "evaluation_passed": result["evaluation_passed"], "observed_outcome": result["observed_outcome"],
                "failure_reason": (result.get("failure_reason") or "")[:200], "entry_budgets": budgets, "output_caps": caps,
-               "reasoning": reasoning,
+               "reasoning": reasoning, "strict_contract_schema": strict_schema(config),
                "failure_code": result.get("failure_code"), "model_calls": len(rows),
                "finish_reasons": [r.get("finish_reason") for r in rows],
                "completion_tokens": [(r.get("usage") or {}).get("completion_tokens") for r in rows],
@@ -433,7 +441,7 @@ def run_pevr(args, config, manifest):
     out.mkdir(exist_ok=False)
     online_config = deepcopy(load_config(PROJECT_ROOT / "evals/p018/online_config.json"))
     online_config["eval_config_id"] = config["experiment_id"]
-    online_config["model"].update(profile="veryfast", alias="VeryFast", family="Spark-X2.5", quantization="Q4_K_M",
+    online_config["model"].update(profile="veryfast", alias="VeryFast", family="Spark-X2.5", quantization=config.get("quantization", "Q4_K_M"),
         reasoning_enabled=reasoning["enabled"], reasoning_budget_tokens=reasoning["budget"],
         artifact_ref=(args.output / "artifact_manifest.json").relative_to(PROJECT_ROOT).as_posix(),
         artifact_manifest_sha256=sha256_file(args.output / "artifact_manifest.json"), model_sha256=manifest["model"]["sha256"],
@@ -444,7 +452,8 @@ def run_pevr(args, config, manifest):
     key = secrets.token_urlsafe(36)
     caps = output_caps(config)
     with serve(args.server, args.model, selection["candidate"], out / "service", key, proxy=True, reasoning=reasoning) as url, entry_budgets(config) as budgets:
-        settings = make_settings(selection["sampling"], url, key, reasoning, caps["gateway_max_output_tokens"])
+        settings = make_settings(selection["sampling"], url, key, reasoning, caps["gateway_max_output_tokens"], config.get("quantization", "Q4_K_M"),
+                                 strict_schema(config))
         provider = VeryFastProvider(settings.model_gateway, out / "requests.jsonl", manifest)
         harness = OnlineFastHarness(dataset=load_dataset(), config=online_config, dataset_path=DEFAULT_DATASET_PATH,
             config_path=config_path, verification_timeout_seconds=120, app_settings=settings, model_provider=provider,
@@ -453,11 +462,13 @@ def run_pevr(args, config, manifest):
         harness.reproducibility["model_switch_experiment"] = {"historical_baseline": config["baseline_report"],
             "baseline_sha256": config["baseline_sha256"], "same_inputs": checks, "official_p018_publish": False,
             "reasoning_enabled": reasoning["enabled"], "reasoning_budget": reasoning["budget"],
+            "strict_contract_schema": strict_schema(config),
             "entry_budgets": budgets, "output_caps": caps, "sampling": selection["sampling"], "server_settings": selection["candidate"],
             "caveats": ["历史对照，非同期随机实验", "当前 STL gate 为 p1-1.v1，历史无 STL", "模型模板/tokenizer/运行时不同",
                         "思考计入相同输出预算" if reasoning["enabled"] else "思考已关闭，与 Qwen 基线 --reasoning off 一致",
                         *([f"入口累计预算已放宽: {budgets['overrides']}（Qwen 基线为 SHARED_ENTRY_BUDGETS）"] if budgets["overrides"] else []),
-                        *([f"输出上限已改: {caps}（Qwen 基线为网关 4096 / 申请 4096）"] if caps != {"gateway_max_output_tokens": 4096, "requested_output_tokens": None} else [])]}
+                        *([f"输出上限已改: {caps}（Qwen 基线为网关 4096 / 申请 4096）"] if caps != {"gateway_max_output_tokens": 4096, "requested_output_tokens": None} else []),
+                        *(["understand_goal 使用严格合同 Schema 适配层（Qwen 基线为默认 TaskContract）"] if strict_schema(config) else [])]}
         report = harness.run(output_dir=out)
         write_report(report, output_dir=out, json_name="p018_online_eval.json", markdown_name="p018_online_eval.md")
         provider.real_client.close()

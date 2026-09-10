@@ -2,6 +2,7 @@
 
 from agent.planning.contracts import (
     ApprovalRequirement,
+    ChargingContract,
     ChargingGoal,
     ExecutionBudgets,
     FallbackStrategy,
@@ -10,11 +11,13 @@ from agent.planning.contracts import (
     RiskLevel,
     TaskConstraints,
     TaskContract,
+    TransportContract,
 )
 from agent.planning.dag import DAGValidationError, topological_sort, validate_dag
 
 __all__ = [
     "ApprovalRequirement",
+    "ChargingContract",
     "ChargingGoal",
     "DAGValidationError",
     "ExecutionBudgets",
@@ -24,6 +27,7 @@ __all__ = [
     "RiskLevel",
     "TaskConstraints",
     "TaskContract",
+    "TransportContract",
     "topological_sort",
     "validate_dag",
     "NORMAL_PEVR_TOOL_CHAIN",

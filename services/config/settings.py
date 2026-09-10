@@ -84,6 +84,10 @@ class ModelProfileSettings(StrictSettingsModel):
     # llama.cpp 的 -1 表示不单独截断思考；请求总输出与业务累计预算仍生效。
     # 仅显式实验配置采用 -1，Fast/Smart 的既有默认值保持不变。
     reasoning_budget_tokens: int = Field(default=0, ge=-1)
+    # 小模型适配层开关：把「运输至少 1 条订单 / 充电不带订单」压进响应 Schema，让
+    # llama.cpp 的 grammar 在生成阶段就强制这条规则。Fast/Smart 保持 False，Qwen
+    # 基线的 TaskContract Schema 与 Prompt 文本必须逐字节不变。
+    strict_contract_schema: bool = False
     # Profile 可以保留 alias/量化等审计信息但禁止实际调用。是否启用不接受环境
     # 变量覆盖，避免部署残留的 LLM_PROFILE 把尚未验收的模型重新带回生产链。
     enabled: bool = True

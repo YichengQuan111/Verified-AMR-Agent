@@ -201,7 +201,11 @@ class SharedPrefixService:
             requested_output_tokens=output_tokens,
             generated_at=self._clock(),
         )
-        result = understand_goal(self.provider, context)
+        result = understand_goal(
+            self.provider,
+            context,
+            definition=self._strict_understand_definition(),
+        )
         if result.route is not NodeRoute.SUCCESS or result.output is None:
             raise SharedPrefixError(
                 "understand",
@@ -242,6 +246,26 @@ class SharedPrefixService:
             node_result=result,
             budget_usage=result.usage_after,
         )
+
+    def _strict_understand_definition(self):
+        """小模型适配层：开关打开时才把运输/充电互斥规则压进本次调用的响应 Schema。
+
+        充电还是运输由 harness 的 ``injected_charging`` 决定而不是模型自选，因此调用前
+        就能锁定唯一合法子类；开关关闭时返回 None，走与改动前完全一致的默认绑定。
+        """
+
+        profile = getattr(getattr(self.provider, "settings", None), "active_profile", None)
+        if not getattr(profile, "strict_contract_schema", False):
+            return None
+        from agent.context.prompt_registry import build_strict_understand_definition
+        from agent.planning import ChargingContract, TransportContract
+
+        response_model = (
+            ChargingContract
+            if getattr(self.snapshot_provider, "injected_charging", None)
+            else TransportContract
+        )
+        return build_strict_understand_definition(response_model)
 
     def retrieve(
         self,

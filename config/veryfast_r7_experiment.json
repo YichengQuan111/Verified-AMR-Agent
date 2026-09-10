@@ -1,0 +1,71 @@
+{
+  "experiment_id": "veryfast-r7-q8-think2048-out8192-pevr60-20260909",
+  "alias": "VeryFast",
+  "context_window": 16384,
+  "parallel_slots": 1,
+  "reasoning_enabled": true,
+  "reasoning_budget_tokens": 2048,
+  "prompt_cache_enabled": true,
+  "max_output_tokens": 8192,
+  "generation_timeout_seconds": 120,
+  "baseline_report": "tmp/p018_pevr_llm36_20260901/p018_online_eval.json",
+  "baseline_sha256": "4daeaec24bf684a47b7f3a2ee80a8a7889431d17cd322335ec56fe062f98cd8c",
+  "candidate_settings": [
+    {
+      "id": "f16_b2048_u512_t6",
+      "kv": "f16",
+      "batch": 2048,
+      "ubatch": 512,
+      "threads": 6,
+      "threads_batch": 14
+    },
+    {
+      "id": "q8_b2048_u512_t6",
+      "kv": "q8_0",
+      "batch": 2048,
+      "ubatch": 512,
+      "threads": 6,
+      "threads_batch": 14
+    },
+    {
+      "id": "f16_b2048_u1024_t6",
+      "kv": "f16",
+      "batch": 2048,
+      "ubatch": 1024,
+      "threads": 6,
+      "threads_batch": 14
+    },
+    {
+      "id": "f16_b4096_u1024_t6",
+      "kv": "f16",
+      "batch": 4096,
+      "ubatch": 1024,
+      "threads": 6,
+      "threads_batch": 14
+    },
+    {
+      "id": "f16_b2048_u512_t14",
+      "kv": "f16",
+      "batch": 2048,
+      "ubatch": 512,
+      "threads": 14,
+      "threads_batch": 20
+    }
+  ],
+  "sampling_candidates": [
+    {
+      "id": "user_temperature_01",
+      "temperature": 0.1,
+      "top_p": 0.95,
+      "top_k": 0
+    }
+  ],
+  "probe_case_id": "p018-normal-001",
+  "entry_budget_overrides": {
+    "max_input_tokens": 60000,
+    "max_output_tokens": 10000
+  },
+  "requested_output_tokens": 8192,
+  "quantization": "Q8_0",
+  "model_file": "Spark-X2.5-4B-Q8_0.gguf"
+}
